@@ -1766,6 +1766,53 @@ function vistaResumen_(ctx, p) {
   return { data: out, warnings: [] };
 }
 
+/**
+ * CLIENTES (solo administración): cada cliente con sus vehículos.
+ * Intervención = trabajo En curso o Ejecutado (no anulado). Orden: primero lo que está en curso,
+ * luego la intervención más reciente; dentro de cada cliente, sus vehículos con el mismo criterio.
+ */
+function vistaClientes_(ctx, p) {
+  requireAdmin_(ctx);
+  var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return t.estado_comercial !== 'Anulado'; });
+  var pendientes = activeRows_(ctx, 'PENDIENTES');
+  var equipos = rows_(ctx, 'EQUIPOS').filter(function (e) { return e.anulado !== true; });
+  var contactos = activeRows_(ctx, 'CONTACTOS');
+  function clave(x) { return x.en_curso ? '9999' : (x.ultima_fecha || ''); }
+  function ordenar(a, b) {
+    var ka = clave(a), kb = clave(b);
+    if (ka !== kb) return ka < kb ? 1 : -1;
+    return String(a.nombre || a.nombre_corto).localeCompare(String(b.nombre || b.nombre_corto));
+  }
+  var out = activeRows_(ctx, 'CLIENTES').map(function (c) {
+    var vs = equipos.filter(function (e) { return e.cliente_id === c.id; }).map(function (e) {
+      var te = trabajos.filter(function (t) { return t.equipo_id === e.id; });
+      var curso = te.filter(function (t) { return t.estado_ejecucion === 'En curso'; });
+      var ej = te.filter(function (t) { return t.estado_ejecucion === 'Ejecutado'; });
+      var ult = null, uf = '';
+      ej.concat(curso).forEach(function (t) {
+        var f = t.estado_ejecucion === 'Ejecutado' ? (t.fecha_fin || t.fecha_inicio || '') : (t.fecha_inicio || '');
+        if (!ult || f > uf) { ult = t; uf = f; }
+      });
+      return {
+        equipo_id: e.id, codigo: e.codigo, nombre_corto: e.nombre_corto, patente: e.patente, activo: e.activo !== false,
+        ultima_fecha: uf, ultima_descripcion: ult ? String(ult.descripcion || '').slice(0, 160) : '', ultimo_trabajo: ult ? ult.codigo : '',
+        km: ult ? ult.km : '', en_curso: curso.length, trabajos: te.length,
+        pendientes_vigentes: pendientes.filter(function (x) { return x.equipo_id === e.id && pendienteVigente_(x); }).length
+      };
+    }).sort(ordenar);
+    var top = vs[0] || null;
+    return {
+      cliente_id: c.id, codigo: c.codigo, nombre: c.nombre, tipo: c.tipo, estado: c.estado,
+      ultima_fecha: top ? top.ultima_fecha : '', en_curso: vs.reduce(function (s, v) { return s + v.en_curso; }, 0),
+      pendientes_vigentes: vs.reduce(function (s, v) { return s + v.pendientes_vigentes; }, 0),
+      contactos: contactos.filter(function (k) { return k.cliente_id === c.id; }).map(function (k) { return { nombre: k.nombre, tipo: k.tipo, telefono: k.telefono, correo: k.correo }; }),
+      equipos: vs
+    };
+  });
+  out.sort(ordenar);
+  return { data: out, warnings: [] };
+}
+
 function horasDe_(sesiones) {
   var t = 0, f = 0;
   sesiones.forEach(function (s) { if (s.estado !== 'Anulada') { t += Number(s.duracion_min) || 0; f += Number(s.min_facturables) || 0; } });
@@ -2434,6 +2481,7 @@ function handleInner_(ctx, action, p) {
     case 'ficha': return vistaFicha_(ctx, p);
     case 'mis_trabajos': return vistaMisTrabajos_(ctx, p);
     case 'control_economico': return vistaControlEconomico_(ctx, p);
+    case 'clientes': return vistaClientes_(ctx, p);
     case 'stock': return vistaStock_(ctx, p);
     case 'horas': return vistaHoras_(ctx, p);
     case 'integridad': requireAdmin_(ctx); return { data: revisarIntegridad_(ctx), warnings: [] };
@@ -2629,7 +2677,7 @@ function cargar(){
 
 function renderTabs(){
   var tabs = [['trabajos','Trabajos'],['vehiculos','Vehículos'],['horas','Horas']];
-  if (isAdmin()) { tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
+  if (isAdmin()) { tabs.splice(2, 0, ['clientes','Clientes']); tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
   $('tabsIn').innerHTML = tabs.map(function(t){ return '<button type="button" data-act="tab" data-tab="' + t[0] + '"' + (S.tab === t[0] ? ' aria-current="page"' : '') + '>' + t[1] + '</button>'; }).join('');
   $('tabs').hidden = false;
 }
@@ -2637,6 +2685,7 @@ function renderTabs(){
 function render(){
   if (S.tab === 'trabajos') return renderTrabajos();
   if (S.tab === 'vehiculos') return renderVehiculos();
+  if (S.tab === 'clientes') return renderClientes();
   if (S.tab === 'horas') return renderHoras();
   if (S.tab === 'revisar') return renderRevisar();
   if (S.tab === 'datos') return renderDatos();
@@ -2824,6 +2873,59 @@ function renderVehiculos(){
       (v.en_curso ? '<span class="chip warn">En curso</span>' : '') + (v.pendientes_vigentes ? '<span class="chip warn">' + v.pendientes_vigentes + ' pendiente' + (v.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') + '</div></div></button>';
   }).join('') + '</div>';
   $('main').innerHTML = h;
+}
+
+/* ───── pestaña Clientes (administración) ───── */
+function ultimaTxt(x){
+  if (x.en_curso) return 'En curso ahora';
+  return x.ultima_fecha ? 'Última intervención: ' + fmtFecha(x.ultima_fecha) : 'Sin intervenciones';
+}
+function renderClientes(){
+  $('main').innerHTML = '<h2 class="section-title">Clientes</h2><p style="margin:-6px 0 12px;color:var(--acero)">Primero el cliente con la intervención más reciente; debajo, sus vehículos en el mismo orden.</p>' +
+    '<input id="cliBuscar" type="search" placeholder="Buscar cliente o patente" autocomplete="off" style="width:100%;margin-bottom:12px;padding:10px 12px;border:1px solid var(--linea);border-radius:var(--radio);background:var(--chapa);font-size:16px" value="' + esc(S.cliBuscar || '') + '">' +
+    '<div id="cliLista" class="empty">Cargando…</div>';
+  $('cliBuscar').addEventListener('input', function(){ S.cliBuscar = this.value; pintarClientes(); });
+  call('clientes', {}).then(function(r){ S.clientes = r.data; pintarClientes(); }).catch(function(){ $('cliLista').textContent = 'No se pudo cargar.'; });
+}
+function pintarClientes(){
+  var cont = $('cliLista'); if (!cont || !S.clientes) return;
+  var q = String(S.cliBuscar || '').trim().toLowerCase(), qp = q.replace(/[\s·.-]/g, '');
+  var cs = S.clientes.filter(function(c){
+    if (!q) return true;
+    return String(c.nombre).toLowerCase().indexOf(q) >= 0 || c.equipos.some(function(v){ return qp && String(v.patente || '').toLowerCase().replace(/[\s·.-]/g, '').indexOf(qp) >= 0; });
+  });
+  cont.className = cs.length ? 'list' : 'empty';
+  if (!cs.length) { cont.innerHTML = q ? 'Ningún cliente coincide.' : 'No hay clientes.'; return; }
+  cont.innerHTML = cs.map(function(c){
+    var h = '<div class="item" style="display:block;cursor:default">' +
+      '<button type="button" data-act="cliente" data-id="' + esc(c.cliente_id) + '" style="all:unset;cursor:pointer;display:block;width:100%">' +
+      '<div class="t">' + esc(c.nombre) + ' <span style="font-weight:400;color:var(--acero)">· ' + esc(c.codigo) + '</span></div>' +
+      '<div class="s">' + esc(ultimaTxt(c)) + '</div>' +
+      '<div class="chips"><span class="chip">' + c.equipos.length + ' vehículo' + (c.equipos.length === 1 ? '' : 's') + '</span>' +
+      (c.en_curso ? '<span class="chip live">En curso</span>' : '') +
+      (c.pendientes_vigentes ? '<span class="chip warn">' + c.pendientes_vigentes + ' pendiente' + (c.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') +
+      (c.estado && c.estado !== 'Activo' ? '<span class="chip">' + esc(c.estado) + '</span>' : '') + '</div></button>';
+    if (c.equipos.length) h += '<div style="margin-top:10px;display:grid;gap:6px">' + c.equipos.map(function(v){
+      return '<button type="button" data-act="ficha" data-id="' + esc(v.equipo_id) + '" style="all:unset;cursor:pointer;display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--linea)">' + plate(v.patente) +
+        '<span style="min-width:0"><span style="display:block;font-weight:600">' + esc(v.nombre_corto) + '</span>' +
+        '<span style="display:block;font-size:14px;color:var(--acero)">' + esc(ultimaTxt(v)) + (v.km ? ' · ' + fmtKm(v.km) : '') + (v.pendientes_vigentes ? ' · ' + v.pendientes_vigentes + ' pend.' : '') + '</span></span></button>';
+    }).join('') + '</div>';
+    return h + '</div>';
+  }).join('');
+}
+function abrirCliente(id){
+  var c = (S.clientes || []).filter(function(x){ return x.cliente_id === id; })[0]; if (!c) return;
+  var h = '<div class="block"><dl class="kv"><dt>Código</dt><dd>' + esc(c.codigo) + '</dd><dt>Tipo</dt><dd>' + esc(c.tipo || '') + '</dd><dt>Estado</dt><dd>' + esc(c.estado || '') + '</dd><dt>Actividad</dt><dd>' + esc(ultimaTxt(c)) + '</dd></dl></div>';
+  if (c.contactos.length) h += '<div class="block"><h3>Contactos</h3><ul style="margin:0;padding-left:18px">' + c.contactos.map(function(k){
+    return '<li>' + esc(k.nombre) + (k.tipo ? ' · ' + esc(k.tipo) : '') + (k.telefono ? '<br><span style="user-select:all">' + esc(k.telefono) + '</span>' : '') + (k.correo ? '<br><span style="user-select:all">' + esc(k.correo) + '</span>' : '') + '</li>';
+  }).join('') + '</ul></div>';
+  h += '<div class="block"><h3>Vehículos</h3>' + (c.equipos.length ? '<div class="list">' + c.equipos.map(function(v){
+    return '<button class="item" type="button" data-act="ficha" data-id="' + esc(v.equipo_id) + '">' + plate(v.patente) + '<div class="body"><div class="t">' + esc(v.nombre_corto) + '</div>' +
+      '<div class="s">' + esc(ultimaTxt(v)) + (v.ultima_descripcion ? ' · ' + esc(v.ultima_descripcion.slice(0, 70)) : '') + '</div>' +
+      '<div class="chips"><span class="chip">' + v.trabajos + ' trabajo' + (v.trabajos === 1 ? '' : 's') + '</span>' + (v.en_curso ? '<span class="chip live">En curso</span>' : '') + (v.pendientes_vigentes ? '<span class="chip warn">' + v.pendientes_vigentes + ' pendiente' + (v.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') + '</div></div></button>';
+  }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin vehículos registrados.</p>') + '</div>';
+  h += '<button class="btn big ghost" type="button" data-act="cli-control" data-id="' + esc(c.cliente_id) + '">Control económico</button>';
+  abrirHoja(c.nombre, h);
 }
 
 function abrirFicha(equipoId){
@@ -3080,6 +3182,8 @@ document.addEventListener('click', function(ev){
   if (a === 'tab'){ S.tab = el.getAttribute('data-tab'); renderTabs(); render(); }
   else if (a === 'trabajo') abrirTrabajo(id);
   else if (a === 'ficha') abrirFicha(id);
+  else if (a === 'cliente') abrirCliente(id);
+  else if (a === 'cli-control'){ D.cliente = id; mostrarControl(); }
   else if (a === 'cerrar-hoja') cerrarHoja();
   else if (a === 'iniciar') iniciar(id, el);
   else if (a === 'pausar') pedirPausa();
