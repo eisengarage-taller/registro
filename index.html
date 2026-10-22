@@ -682,7 +682,9 @@ var CONTRACT = {
     { clave: 'pago_trabajadores_id', valor: '', nota: 'ID del archivo PAGO TRABAJADORES. Lo llena el script de creación.' },
     { clave: 'respaldos_carpeta_id', valor: '', nota: 'Carpeta de respaldos diarios. Lo llena el script de creación.' },
     { clave: 'respaldos_conservar', valor: '30', nota: 'Copias diarias que se conservan.' },
-    { clave: 'administracion_ve_pago_trabajadores', valor: 'No', nota: 'Decisión pendiente de Víctor. Mientras sea No, Victoria no accede.' }
+    { clave: 'administracion_ve_pago_trabajadores', valor: 'No', nota: 'Decisión pendiente de Víctor. Mientras sea No, Victoria no accede.' },
+    { clave: 'bandeja_carpeta_id', valor: '', nota: 'Carpeta "Bandeja EG" donde la IA deja paquetes por revisar. La crea crearBandeja().' },
+    { clave: 'bandeja_editores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden DEJAR paquetes en la Bandeja (separadas por coma). Solo dejan archivos: revisar y aplicar sigue siendo en la app, con usuario habilitado.' }
   ]
 };
 
@@ -2231,7 +2233,7 @@ function paqueteAplicar_(ctx, p) {
   var reg = findByOp_(ctx, 'PAQUETES', opPq) || insertSystem_(ctx, 'PAQUETES', {
     fuente: String(pq.fuente).slice(0, 500), autor_ia: String(pq.autor_ia || '').slice(0, 100), operaciones: pq.operaciones.length,
     resumen: resumen, dudas: [].concat(pq.dudas || []).join('\n'), texto_original: tt.texto,
-    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s).' + (tt.cortado ? ' Texto original cortado.' : '')
+    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s).' + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
   }, { opId: opPq });
   var avisos = [];
   r.resultados.forEach(function (x) { (x.avisos || []).forEach(function (w) { avisos.push({ code: w.code, message: 'Op. ' + x.n + ' ' + x.tabla + ': ' + w.message }); }); });
@@ -2852,6 +2854,7 @@ function renderDatos(){
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
+  contarBandeja();
   refsDe('CLIENTES').then(function(cs){ $('dtCliente').innerHTML = '<option value="">Todos</option>' + cs.map(function(c){ return '<option value="' + esc(c.id) + '"' + (c.id === D.cliente ? ' selected' : '') + '>' + esc(c.nombre) + '</option>'; }).join(''); }).catch(function(){});
   cargarDatos();
 }
@@ -2951,12 +2954,29 @@ function mostrarIntegridad(){
 }
 
 /* ───── cargar desde IA: pegar paquete, vista previa, aplicar ───── */
-var PQ = { texto:'', paquete:null, op:null };
+var PQ = { texto:'', paquete:null, op:null, archivo:null };
 function abrirPaquete(){
-  var h = '<p style="margin-top:0;color:var(--acero)">Pega aquí el paquete que armó Claude o GPT en el chat. Primero se revisa sin guardar nada; después confirmas.</p>' +
+  var h = '<div class="block"><h3>Bandeja EG</h3><div id="pqBandeja" class="s" style="color:var(--acero)">Buscando paquetes…</div></div>' +
+    '<p style="margin-top:0;color:var(--acero)">O pega aquí el paquete que armó Claude o GPT en el chat. Primero se revisa sin guardar nada; después confirmas.</p>' +
     '<label class="f"><span>Paquete</span><textarea class="i" id="pqTexto" style="min-height:220px;font-family:ui-monospace,Menlo,monospace;font-size:13px" placeholder="{ &quot;formato&quot;: &quot;EG-PAQUETE-1&quot;, … }">' + esc(PQ.texto) + '</textarea></label>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="pq-validar">Revisar</button><button class="btn ghost" data-act="pq-limpiar">Limpiar</button></div>';
   abrirHoja('Cargar desde IA', h);
+  api('bandeja_listar', {}).then(function(r){
+    var el = $('pqBandeja'); if (!el) return;
+    if (!r.ok) { el.textContent = r.error && r.error.code === 'CONFIG' ? 'La Bandeja aún no está creada.' : (DEMO ? 'La Bandeja no está disponible en modo demostración.' : (r.error && r.error.message) || 'No se pudo leer la Bandeja.'); return; }
+    if (!r.data.length) { el.textContent = 'No hay paquetes por revisar.'; return; }
+    el.outerHTML = '<div class="list">' + r.data.map(function(f){
+      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + esc(f.nombre) + '</div><div class="s">' + esc(fmtFecha(f.creado)) + (f.autor ? ' · ' + esc(f.autor) : '') + '</div>' +
+        '<div class="inline" style="margin-top:8px"><button class="btn go" data-act="pq-archivo" data-id="' + esc(f.id) + '" data-n="' + esc(f.nombre) + '">Revisar</button></div></div></div>';
+    }).join('') + '</div>';
+  });
+}
+function contarBandeja(){
+  if (DEMO || !isAdmin()) return;
+  api('bandeja_listar', {}).then(function(r){
+    var b = document.querySelector('[data-act="pq-abrir"]');
+    if (b && r.ok) b.textContent = 'Cargar desde IA' + (r.data.length ? ' (' + r.data.length + ')' : '');
+  });
 }
 /** Acepta el JSON solo o rodeado de texto o de ``` (lo que suele copiarse desde un chat). */
 function leerPaquete(txt){
@@ -2965,17 +2985,26 @@ function leerPaquete(txt){
   try { return JSON.parse(txt.slice(a, b + 1)); }
   catch (e) { throw new Error('El paquete está incompleto o mal copiado. Cópialo de nuevo completo desde el chat.'); }
 }
-function validarPaquete(btn){
-  var txt = $('pqTexto').value;
-  var pq;
-  try { pq = leerPaquete(txt); } catch (e) { return toast(e.message, 'err'); }
-  // Mismo texto = misma operación: un doble toque en Aplicar no carga dos veces.
-  if (txt !== PQ.texto || !PQ.op) { PQ.op = opId(); }
-  PQ.texto = txt; PQ.paquete = pq;
+function validarPaquete(btn, archivo){
+  var payload;
+  if (archivo) {
+    if (!PQ.archivo || PQ.archivo.id !== archivo.id || !PQ.op) PQ.op = opId();
+    PQ.archivo = archivo; PQ.paquete = null;
+    payload = { archivo_id: archivo.id };
+  } else {
+    var txt = $('pqTexto').value;
+    var pq;
+    try { pq = leerPaquete(txt); } catch (e) { return toast(e.message, 'err'); }
+    // Mismo texto = misma operación: un doble toque en Aplicar no carga dos veces.
+    if (txt !== PQ.texto || !PQ.op || PQ.archivo) { PQ.op = opId(); }
+    PQ.texto = txt; PQ.paquete = pq; PQ.archivo = null;
+    payload = { paquete: pq };
+  }
   btn.disabled = true;
-  call('paquete_validar', { paquete: pq }).then(function(r){
+  call('paquete_validar', payload).then(function(r){
     var d = r.data;
-    var h = '<div class="block"><h3>' + esc(d.fuente) + '</h3><p class="s" style="margin:0;color:var(--acero)">' + (d.autor_ia ? 'Armado por ' + esc(d.autor_ia) + ' · ' : '') + d.resultados.length + ' de ' + pq.operaciones.length + ' operaciones revisadas</p></div>';
+    var total = PQ.paquete ? PQ.paquete.operaciones.length : null;
+    var h = '<div class="block"><h3>' + esc(d.fuente) + '</h3><p class="s" style="margin:0;color:var(--acero)">' + (PQ.archivo ? 'Bandeja: ' + esc(PQ.archivo.nombre) + ' · ' : '') + (d.autor_ia ? 'Armado por ' + esc(d.autor_ia) + ' · ' : '') + d.resultados.length + (total ? ' de ' + total : '') + ' operaciones revisadas</p></div>';
     if (!d.valido) h += '<div class="block" style="border-color:var(--freno)"><h3 style="color:var(--freno)">No se puede aplicar</h3><p style="margin:0">' + esc(d.error.message) + '</p><p class="s" style="margin:8px 0 0;color:var(--acero)">Pídele a la IA que corrija esa operación y vuelve a pegar el paquete.</p></div>';
     if (d.dudas && d.dudas.length) h += '<div class="block" style="border-color:#E9C46A;background:#FFF6DD"><h3>Dudas que dejó la IA</h3><ul style="margin:0;padding-left:18px">' + d.dudas.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
     var nuevos = d.resultados.filter(function(x){ return x.resultado === 'Nuevo'; }).length;
@@ -2984,17 +3013,18 @@ function validarPaquete(btn){
       var av = (x.avisos || []).map(function(w){ return '<div class="s" style="color:var(--senal-osc);margin-top:4px">' + esc(w.message) + '</div>'; }).join('');
       return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + x.n + '. ' + esc(NOMBRES[x.tabla] || x.tabla) + '</div><div class="s">' + esc(x.etiqueta) + '</div><div class="chips">' + chip + '</div>' + av + '</div></div>';
     }).join('') + '</div>';
-    h += '<div class="inline" style="flex-wrap:wrap;margin-top:12px">' + (d.valido ? '<button class="btn go" data-act="pq-aplicar">Aplicar paquete (' + nuevos + ' nuevos)</button>' : '') + '<button class="btn ghost" data-act="pq-abrir">Volver al texto</button></div>';
+    h += '<div class="inline" style="flex-wrap:wrap;margin-top:12px">' + (d.valido ? '<button class="btn go" data-act="pq-aplicar">Aplicar paquete (' + nuevos + ' nuevos)</button>' : '') + '<button class="btn ghost" data-act="pq-abrir">Volver</button></div>';
+    if (PQ.archivo) h += '<div class="block" style="margin-top:12px"><label class="f"><span>Si no corresponde, descártalo (queda marcado en Drive)</span><input class="i" id="pqMotivo" placeholder="Motivo, ej. duplicado o datos equivocados"></label><button class="btn danger" data-act="pq-descartar">Descartar archivo</button></div>';
     abrirHoja('Vista previa', h);
   }).catch(function(){ btn.disabled = false; });
 }
 function aplicarPaquete(btn){
-  if (!PQ.paquete) return;
+  if (!PQ.paquete && !PQ.archivo) return;
   btn.disabled = true;
-  call('paquete_aplicar', { paquete: PQ.paquete, op_id: PQ.op }).then(function(r){
+  call('paquete_aplicar', PQ.archivo ? { archivo_id: PQ.archivo.id, op_id: PQ.op } : { paquete: PQ.paquete, op_id: PQ.op }).then(function(r){
     toast('Paquete ' + r.data.codigo + ' aplicado: ' + r.data.nuevos + ' registro(s) nuevo(s).');
-    PQ = { texto:'', paquete:null, op:null };
-    cerrarHoja(); D.refs = {}; if (S.tab === 'datos') cargarDatos(); return cargar();
+    PQ = { texto:'', paquete:null, op:null, archivo:null };
+    cerrarHoja(); D.refs = {}; if (S.tab === 'datos') { cargarDatos(); contarBandeja(); } return cargar();
   }).catch(function(){ btn.disabled = false; });
 }
 
@@ -3043,7 +3073,14 @@ document.addEventListener('click', function(ev){
     }).catch(function(){});
   }
   else if (a === 'pq-abrir') abrirPaquete();
-  else if (a === 'pq-limpiar'){ PQ = { texto:'', paquete:null, op:null }; $('pqTexto').value = ''; $('pqTexto').focus(); }
+  else if (a === 'pq-limpiar'){ PQ = { texto:'', paquete:null, op:null, archivo:null }; $('pqTexto').value = ''; $('pqTexto').focus(); }
+  else if (a === 'pq-archivo') validarPaquete(el, { id: id, nombre: el.getAttribute('data-n') });
+  else if (a === 'pq-descartar'){
+    var mot = $('pqMotivo') ? $('pqMotivo').value.trim() : '';
+    if (!mot) { toast('Escribe el motivo antes de descartar.', 'err'); if ($('pqMotivo')) $('pqMotivo').focus(); return; }
+    el.disabled = true;
+    call('bandeja_descartar', { archivo_id: PQ.archivo.id, motivo: mot }).then(function(){ toast('Archivo descartado.'); PQ = { texto:'', paquete:null, op:null, archivo:null }; abrirPaquete(); contarBandeja(); }).catch(function(){ el.disabled = false; });
+  }
   else if (a === 'pq-validar') validarPaquete(el);
   else if (a === 'pq-aplicar') aplicarPaquete(el);
   else if (a === 'demo-user'){ DemoApi.login(el.getAttribute('data-u')); S.tab = 'trabajos'; cargar(); }
