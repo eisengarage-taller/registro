@@ -1,0 +1,2841 @@
+<!doctype html>
+<html lang="es-CL">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Registro del taller</title>
+<meta name="theme-color" content="#1F2A30">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<style>
+:root{
+  --asfalto:#1F2A30; --acero:#5B6B73; --concreto:#EEF1F2; --linea:#D5DBDE; --chapa:#FFFFFF;
+  --senal:#E8A317; --senal-osc:#8A5A00; --ok:#2E7D4F; --freno:#B3362B;
+  --radio:10px; --sombra:0 1px 0 rgba(31,42,48,.08);
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--concreto);color:var(--asfalto);font:16px/1.45 Barlow,system-ui,sans-serif}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--senal);outline-offset:2px}
+.app{max-width:760px;margin:0 auto;min-height:100vh;padding-bottom:84px}
+header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:var(--asfalto);color:#fff;box-shadow:0 0 0 100vmax var(--asfalto);clip-path:inset(0 -100vmax)}
+.top .bar{display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.top h1{font:600 20px/1 'Barlow Condensed',sans-serif;letter-spacing:.02em;margin:0;white-space:nowrap}
+.top .who{font-size:14px;opacity:.85;background:none;border:0;color:#fff;cursor:pointer}
+.run{display:none;background:var(--senal);color:var(--asfalto);padding:12px 16px;box-shadow:0 0 0 100vmax var(--senal);clip-path:inset(0 -100vmax)}
+.run.on{display:block}
+.run .row{display:flex;align-items:center;gap:12px}
+.run .clock{font:700 34px/1 'Barlow Condensed',sans-serif;font-variant-numeric:tabular-nums;min-width:110px}
+.run .what{flex:1;min-width:0}
+.run .what b{display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.run .what span{font-size:14px}
+.run .acts{display:flex;gap:8px;margin-top:10px}
+main{padding:16px}
+.section-title{font:600 22px/1.1 'Barlow Condensed',sans-serif;margin:8px 0 12px}
+.empty{background:var(--chapa);border:1px dashed var(--linea);border-radius:var(--radio);padding:20px;color:var(--acero)}
+.list{display:flex;flex-direction:column;gap:10px}
+.item{display:flex;gap:12px;align-items:center;background:var(--chapa);border:1px solid var(--linea);border-radius:var(--radio);padding:12px;cursor:pointer;text-align:left;width:100%}
+.item:hover{border-color:var(--acero)}
+.item .body{flex:1;min-width:0}
+.item .t{font-weight:600;line-height:1.25}
+.item .s{font-size:14px;color:var(--acero);margin-top:2px}
+.plate{flex:none;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;border:2px solid var(--asfalto);border-radius:5px;padding:1px 7px 3px;min-width:84px;box-shadow:inset 0 0 0 2px #fff,inset 0 0 0 3px var(--linea)}
+.plate small{font:600 8px/1.2 Barlow,sans-serif;letter-spacing:.3em;color:var(--acero)}
+.plate b{font:700 20px/1 'Barlow Condensed',sans-serif;letter-spacing:.05em;white-space:nowrap}
+.plate.big{min-width:150px;padding:3px 14px 6px}
+.plate.big b{font-size:38px}
+.plate.big small{font-size:10px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.chip{font-size:13px;border:1px solid var(--linea);border-radius:999px;padding:1px 9px;background:var(--concreto)}
+.chip.warn{border-color:#E9C46A;background:#FFF6DD}
+.chip.ok{border-color:#A7D3B5;background:#EAF6EE}
+.chip.live{border-color:var(--senal);background:#FCEFD2;color:var(--senal-osc);font-weight:600}
+.btn{appearance:none;border:2px solid var(--asfalto);background:var(--asfalto);color:#fff;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;min-height:44px}
+.btn.ghost{background:transparent;color:var(--asfalto)}
+.btn.big{width:100%;font:700 20px 'Barlow Condensed',sans-serif;letter-spacing:.02em;padding:14px}
+.btn.go{background:var(--ok);border-color:var(--ok)}
+.btn.danger{background:var(--freno);border-color:var(--freno)}
+.run .btn{border-color:var(--asfalto)}
+.btn:disabled{opacity:.5;cursor:default}
+nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:20;background:var(--chapa);border-top:1px solid var(--linea);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
+nav.tabs .in{display:flex;max-width:760px;width:100%}
+nav.tabs button{flex:1;background:none;border:0;padding:12px 4px 14px;font:600 16px 'Barlow Condensed',sans-serif;color:var(--acero);cursor:pointer;border-top:3px solid transparent}
+nav.tabs button[aria-current="page"]{color:var(--asfalto);border-top-color:var(--senal)}
+.sheet-back{position:fixed;inset:0;background:rgba(31,42,48,.45);z-index:40;display:none}
+.sheet-back.on{display:block}
+.sheet{position:fixed;left:0;right:0;bottom:0;z-index:50;max-height:92vh;overflow:auto;background:var(--concreto);border-radius:16px 16px 0 0;transform:translateY(100%);visibility:hidden;transition:transform .22s ease-out,visibility 0s linear .22s;max-width:760px;margin:0 auto}
+.sheet.on{transform:none;visibility:visible;transition:transform .22s ease-out,visibility 0s}
+.sheet .head{position:sticky;top:0;background:var(--concreto);display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--linea)}
+.sheet .head h2{flex:1;margin:0;font:600 22px/1.1 'Barlow Condensed',sans-serif}
+.sheet .head .x{background:none;border:0;font-size:26px;line-height:1;cursor:pointer;padding:4px 8px}
+.sheet .content{padding:16px}
+.block{background:var(--chapa);border:1px solid var(--linea);border-radius:var(--radio);padding:14px;margin-bottom:12px}
+.block h3{font:600 18px 'Barlow Condensed',sans-serif;margin:0 0 8px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 14px;font-size:15px}
+.kv dt{color:var(--acero)}
+.kv dd{margin:0}
+label.f{display:block;margin-bottom:12px}
+label.f span{display:block;font-size:14px;color:var(--acero);margin-bottom:4px}
+input.i,select.i,textarea.i{width:100%;border:1px solid var(--linea);background:#fff;border-radius:8px;padding:10px 12px;min-height:44px}
+textarea.i{min-height:90px;resize:vertical}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.inline{display:flex;gap:8px;align-items:center}
+.photo-prev{max-width:160px;border-radius:8px;display:none;margin-top:8px}
+.history{display:flex;flex-direction:column;gap:10px}
+.hist{border-left:3px solid var(--linea);padding:2px 0 2px 12px}
+.hist.ej{border-left-color:var(--ok)}
+.hist .d{font-size:14px;color:var(--acero)}
+.hist ul{margin:6px 0 0;padding-left:18px;font-size:15px}
+.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--asfalto);color:#fff;padding:10px 16px;border-radius:8px;z-index:60;max-width:92vw;display:none;font-size:15px}
+.toast.on{display:block}
+.toast.err{background:var(--freno)}
+.toast.warn{background:#7A5200}
+.tw{overflow-x:auto;border-radius:var(--radio)}
+table.h{width:100%;border-collapse:collapse;background:var(--chapa);border:1px solid var(--linea);border-radius:var(--radio);overflow:hidden;font-size:15px}
+table.h th,table.h td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--linea)}
+table.h th{font:600 15px 'Barlow Condensed',sans-serif;background:var(--concreto)}
+table.h td.n,table.h th.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (max-width:480px){ table.h .ses{display:none} table.h th,table.h td{padding:8px 9px} }
+.login{padding:40px 20px;text-align:center}
+.login h2{font:700 34px/1.1 'Barlow Condensed',sans-serif;margin:0 0 8px}
+.login p{color:var(--acero)}
+.roles{display:flex;flex-direction:column;gap:10px;max-width:360px;margin:20px auto 0}
+.demo-note{font-size:14px;background:#FFF6DD;border:1px solid #E9C46A;border-radius:8px;padding:8px 12px;margin:0 16px}
+@media (min-width:640px){ .item{padding:14px 16px} main{padding:20px} }
+@media (prefers-reduced-motion:reduce){ .sheet{transition:none} }
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="bar"><h1>Eisen Garage · Registro</h1><button class="who" id="who" type="button"></button></div>
+    <div class="run" id="run" aria-live="polite">
+      <div class="row">
+        <div class="clock" id="runClock">0:00</div>
+        <div class="what"><b id="runWhat"></b><span id="runSub"></span></div>
+      </div>
+      <div class="acts">
+        <button class="btn" type="button" data-act="pausar">Pausar</button>
+        <button class="btn ghost" type="button" data-act="terminar">Terminar sesión</button>
+      </div>
+    </div>
+  </header>
+  <div id="demoNote" class="demo-note" hidden>Modo demostración: datos ficticios, nada se guarda.</div>
+  <main id="main"></main>
+</div>
+<nav class="tabs" id="tabs" hidden><div class="in" id="tabsIn"></div></nav>
+<div class="sheet-back" id="sheetBack"></div>
+<section class="sheet" id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="head"><h2 id="sheetTitle"></h2><button class="x" type="button" data-act="cerrar-hoja" aria-label="Cerrar">×</button></div>
+  <div class="content" id="sheetBody"></div>
+</section>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+/* ═════════ CONFIGURACIÓN DE PRODUCCIÓN ═════════
+   API_URL: URL de la aplicación web de Apps Script (termina en /exec).
+   CLIENT_ID: ID de cliente OAuth de Google Cloud (el mismo de CONFIG.oauth_client_id).
+   Si API_URL está vacío, o se abre con ?demo=1, la pantalla funciona en modo demostración. */
+var APP_CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycby8W2UZmUiPr8cy_5X-EqjbRkN46ZTTNZUXzQ0pAnMrijFRZmsA9YHbCyOWdDdYhAgh/exec', CLIENT_ID: '54891325199-rr6nsj5fpctqu7u7jtoh858uu0ikuu6p.apps.googleusercontent.com' };
+</script>
+<script>
+/* ── apps-script/Contract.gs ── */
+/**
+ * EISEN GARAGE SpA — Contrato de datos del registro interno.
+ * Fuente única de verdad de la estructura: la usan la API, el script de creación,
+ * la pantalla (modo demo) y las pruebas. Cambiar aquí = nueva versión del contrato.
+ *
+ * Tipos: text, long, int, num, money (CLP entero), date (yyyy-MM-dd),
+ *        datetime (ISO con zona), bool, enum (lista fija), lista (lista editable en LISTAS),
+ *        ref (clave interna id de otra tabla), email, url.
+ * tec: permiso del rol Tecnico sobre la columna: 'r' lectura, 'w' lectura y escritura.
+ *      Sin tec = el técnico no ve la columna.
+ * calc: la llena el sistema; nadie la escribe a mano.
+ */
+var CONTRACT = {
+  version: 'EG-REG-1.4-BORRADOR',
+  timezone: 'America/Santiago',
+  roles: ['Administrador', 'Administracion', 'Tecnico'],
+
+  technicalColumns: [
+    { k: 'id', t: 'text', calc: true, tec: 'r', d: 'Clave interna estable (UUID). Nunca cambia.' },
+    { k: 'codigo', t: 'text', calc: true, tec: 'r', d: 'Código corto visible (ej. TR-0015). Los históricos se conservan (ej. EG-TR-0001).' },
+    { k: 'version', t: 'int', calc: true, tec: 'r', d: 'Sube en cada edición. Detecta ediciones simultáneas.' },
+    { k: 'op_id', t: 'text', calc: true, d: 'Identificador de la operación que creó el registro. Evita duplicados por doble toque o reintento.' },
+    { k: 'ultima_op', t: 'text', calc: true, d: 'Identificador de la última operación aplicada. Un reintento de la misma edición no se aplica dos veces.' },
+    { k: 'op_hash', t: 'text', calc: true, d: 'Huella del contenido de la última operación. Si se repite un op_id con otro contenido, se rechaza (REINTENTO_DISTINTO).' },
+    { k: 'creado_por', t: 'text', calc: true, d: 'Correo de quien creó.' },
+    { k: 'creado_en', t: 'datetime', calc: true, d: 'Fecha y hora de creación.' },
+    { k: 'editado_por', t: 'text', calc: true, d: 'Correo de quien editó por última vez.' },
+    { k: 'editado_en', t: 'datetime', calc: true, d: 'Fecha y hora de la última edición.' },
+    { k: 'anulado', t: 'bool', calc: true, tec: 'r', d: 'Los registros no se borran: se anulan.' }
+  ],
+
+  /** Listas fijas: el código depende de ellas. Cambiarlas requiere nueva versión. */
+  enums: {
+    tipo_cliente: ['Persona', 'Empresa', 'Por confirmar'],
+    estado_cliente: ['Activo', 'Inactivo', 'Prueba'],
+    tipo_contacto: ['Persona', 'Empresa'],
+    unidad_uso: ['km', 'horas', 'km y horas'],
+    tipo_cantidad: ['Capacidad', 'Cargado', 'Consumido', 'Medido', 'Comprado', 'Informado'],
+    estado_comercial: ['Por confirmar', 'Propuesto', 'Cotizado', 'Autorizado', 'Anulado'],
+    estado_ejecucion: ['Pendiente', 'En curso', 'Ejecutado'],
+    estado_revision: ['Sin revisar', 'Revisado', 'Observado'],
+    estado_pago_trabajo: ['Por confirmar', 'No aplica', 'Pendiente', 'Parcial', 'Pagado'],
+    modalidad_sesion: ['En vivo', 'Posterior'],
+    dispositivo: ['Celular', 'Tablet', 'PC', 'Otro'],
+    precision_tiempo: ['Exacta', 'Informada', 'Estimada'],
+    estado_sesion: ['Abierta', 'Cerrada', 'Anulada'],
+    tipo_detalle: ['Procedimiento', 'Herramienta', 'Fluido', 'Medición', 'Repuesto', 'Diagnóstico', 'Hallazgo', 'Observación'],
+    aportante: ['Taller', 'Cliente', 'Por confirmar'],
+    estado_aporte: ['Borrador', 'Aprobado', 'Rechazado'],
+    estado_pendiente: ['Abierto', 'Programado', 'En curso', 'Por verificar', 'Resuelto', 'Descartado'],
+    tipo_concepto: ['Mano de obra', 'Repuesto', 'Envío', 'Insumo', 'Otro'],
+    iva_concepto: ['Incluido', 'Más IVA', 'Exento', 'Por confirmar'],
+    aportante_concepto: ['Taller', 'Cliente'],
+    etapa_concepto: ['Cotizado', 'Confirmado', 'Anulado'],
+    tipo_documento: ['Boleta', 'Factura', 'Nota de crédito', 'Nota de débito', 'Otro'],
+    estado_documento: ['Por emitir', 'Emitido', 'Anulado'],
+    estado_pedido: ['Por pedir', 'Pedido', 'Cancelado'],
+    estado_recepcion: ['Por comprobar', 'Confirmada', 'Rechazada'],
+    rol: ['Administrador', 'Administracion', 'Tecnico'],
+    propietario_item: ['Taller', 'Cliente'],
+    tipo_movimiento: ['Entrada', 'Salida', 'Ajuste positivo', 'Ajuste negativo'],
+    estado_herramienta: ['Operativa', 'En reparación', 'Baja', 'Por confirmar']
+  },
+
+  /** Listas editables (hoja LISTAS). Se agregan filas sin cambiar la estructura; se desactivan, no se borran. */
+  listas: {
+    tipos_trabajo: ['Mantención', 'Cambio de aceite', 'Diagnóstico', 'Reparación', 'Electricidad', 'Revisión', 'Otro'],
+    actividades: ['Diagnóstico', 'Desarme', 'Reparación', 'Armado', 'Prueba', 'Mantención', 'Limpieza', 'Gestión de repuestos', 'Otro'],
+    motivos_pausa: ['Esperando repuesto', 'Almuerzo', 'Otro trabajo', 'Fin de jornada', 'Esperando autorización', 'Clima', 'Otro'],
+    unidades: ['L', 'ml', 'kg', 'g', 'un', 'kit', 'juego', 'm', 'Nm', 'km', 'h'],
+    tipos_vehiculo: ['Automóvil', 'Camioneta', 'SUV', 'Camión', 'Tracto camión', 'Maquinaria', 'Grúa horquilla', 'Moto', 'Otro'],
+    medios_pago: ['Transferencia', 'Efectivo', 'Débito', 'Crédito', 'Otro'],
+    calidades: ['Original', 'Alternativo', 'Usado', 'Por confirmar'],
+    ubicaciones: ['Taller', 'Bodega', 'Vehículo del cliente'],
+    tipos_referencia: ['Aceite motor', 'Filtro', 'Fluido', 'Torque', 'Procedimiento', 'Herramienta', 'Repuesto', 'Documento', 'Otro'],
+    tipos_pendiente: ['Mantención', 'Reparación', 'Revisión', 'Repuesto', 'Administrativo', 'Otro'],
+    tipos_biblioteca: ['Procedimiento', 'Torque', 'Capacidad', 'Diagrama', 'Manual', 'Nota técnica']
+  },
+
+  /**
+   * acceso.Tecnico:
+   *  'ninguno'  no ve la tabla
+   *  'propio'   solo filas propias (usuario_id = él)
+   *  'asignado' solo filas ligadas a trabajos asignados a él
+   *  'visible'  solo filas con visible_tecnico = true
+   *  'lectura'  todas las filas activas (solo columnas con tec)
+   */
+  tables: {
+    CLIENTES: {
+      file: 'BASE', scope: 'cliente', prefix: 'C', tecnico: 'ninguno',
+      d: 'Un registro por cliente. Los datos fiscales van en CONTACTOS.',
+      columns: [
+        { k: 'nombre', t: 'text', req: true },
+        { k: 'tipo', t: 'enum', e: 'tipo_cliente', req: true },
+        { k: 'estado', t: 'enum', e: 'estado_cliente', req: true },
+        { k: 'historico_id', t: 'text', d: 'ID del archivo HISTÓRICO de este cliente (solo lectura).' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    CONTACTOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'CT', tecnico: 'ninguno',
+      d: 'Personas y empresas ligadas al cliente, con sus roles confirmados. Incluye identidad fiscal.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'nombre', t: 'text', req: true },
+        { k: 'tipo', t: 'enum', e: 'tipo_contacto' },
+        { k: 'rut', t: 'text' },
+        { k: 'razon_social', t: 'text' },
+        { k: 'giro', t: 'text' },
+        { k: 'direccion', t: 'text' },
+        { k: 'comuna', t: 'text' },
+        { k: 'telefono', t: 'text' },
+        { k: 'correo', t: 'email' },
+        { k: 'rol_solicitante', t: 'bool' },
+        { k: 'rol_propietario', t: 'bool' },
+        { k: 'rol_pagador', t: 'bool' },
+        { k: 'rol_destinatario_fiscal', t: 'bool' },
+        { k: 'roles_confirmados', t: 'bool', d: 'Sí = los roles fueron confirmados, no deducidos por nombre.' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    EQUIPOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'EQ', tecnico: 'asignado',
+      d: 'Vehículos y máquinas del cliente.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'nombre_corto', t: 'text', req: true, tec: 'r' },
+        { k: 'tipo_vehiculo', t: 'lista', l: 'tipos_vehiculo', tec: 'r' },
+        { k: 'marca', t: 'text', tec: 'r' },
+        { k: 'modelo', t: 'text', tec: 'r' },
+        { k: 'version_modelo', t: 'text', tec: 'r' },
+        { k: 'anio', t: 'int', tec: 'r' },
+        { k: 'patente', t: 'text', tec: 'r', d: 'Tal como viene en el documento.' },
+        { k: 'patente_busqueda', t: 'text', calc: true, tec: 'r', d: 'Patente normalizada (mayúsculas, sin espacios ni guiones). No reemplaza la original.' },
+        { k: 'vin', t: 'text' },
+        { k: 'motor_codigo', t: 'text', tec: 'r' },
+        { k: 'motor_numero', t: 'text' },
+        { k: 'motor_informado', t: 'text', d: 'Dato de motor tal como vino, cuando no se sabe si es código o número.' },
+        { k: 'transmision', t: 'text', tec: 'r' },
+        { k: 'unidad_uso', t: 'enum', e: 'unidad_uso', tec: 'r' },
+        { k: 'propietario_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'activo', t: 'bool' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    REFERENCIAS: {
+      file: 'BASE', scope: 'cliente', prefix: 'RF', tecnico: 'visible',
+      d: 'Datos técnicos de referencia por equipo: capacidades, filtros, torques, herramientas.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS', req: true, tec: 'r' },
+        { k: 'tipo', t: 'lista', l: 'tipos_referencia', req: true, tec: 'r' },
+        { k: 'componente', t: 'text', tec: 'r' },
+        { k: 'descripcion', t: 'long', tec: 'r' },
+        { k: 'especificacion', t: 'text', tec: 'r', d: 'Código, norma o especificación (ej. 15W-40, A 541 180 02 09).' },
+        { k: 'cantidad', t: 'num', tec: 'r' },
+        { k: 'unidad', t: 'lista', l: 'unidades', tec: 'r' },
+        { k: 'tipo_cantidad', t: 'enum', e: 'tipo_cantidad', tec: 'r' },
+        { k: 'torque', t: 'text', tec: 'r' },
+        { k: 'herramienta_id', t: 'ref', ref: 'HERRAMIENTAS', tec: 'r' },
+        { k: 'herramienta_texto', t: 'text', tec: 'r' },
+        { k: 'confirmado', t: 'bool', tec: 'r' },
+        { k: 'visible_tecnico', t: 'bool' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    TRABAJOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'TR', tecnico: 'asignado',
+      d: 'Una intervención por fila. Cinco dimensiones independientes: comercial, programación, ejecución, revisión y pago.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS', req: true, tec: 'r' },
+        { k: 'tipo_trabajo', t: 'lista', l: 'tipos_trabajo', tec: 'r' },
+        { k: 'descripcion', t: 'long', req: true, tec: 'r' },
+        { k: 'estado_comercial', t: 'enum', e: 'estado_comercial', req: true },
+        { k: 'prog_desde', t: 'datetime', tec: 'r', d: 'Programación: inicio agendado.' },
+        { k: 'prog_hasta', t: 'datetime', tec: 'r', d: 'Programación: término agendado.' },
+        { k: 'estado_ejecucion', t: 'enum', e: 'estado_ejecucion', req: true, tec: 'r' },
+        { k: 'fecha_inicio', t: 'datetime', tec: 'r', d: 'Inicio real.' },
+        { k: 'fecha_fin', t: 'datetime', tec: 'r', d: 'Término real.' },
+        { k: 'estado_revision', t: 'enum', e: 'estado_revision', req: true },
+        { k: 'estado_pago', t: 'enum', e: 'estado_pago_trabajo', req: true },
+        { k: 'km', t: 'int', tec: 'r', d: 'Lectura al momento del trabajo.' },
+        { k: 'horas_equipo', t: 'num', tec: 'r', d: 'Horómetro al momento del trabajo.' },
+        { k: 'proxima_km', t: 'int', tec: 'r' },
+        { k: 'proxima_horas', t: 'num', tec: 'r' },
+        { k: 'proxima_fecha', t: 'date', tec: 'r' },
+        { k: 'solicitante_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'pagador_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'publicable', t: 'bool', d: 'Sí = el resumen para el cliente puede publicarse (portal futuro).' },
+        { k: 'resumen_cliente', t: 'long' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    ASIGNACIONES: {
+      file: 'BASE', scope: 'cliente', prefix: 'AS', tecnico: 'propio',
+      d: 'Qué trabajadores están asignados a cada trabajo.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS', req: true, tec: 'r' },
+        { k: 'usuario_id', t: 'ref', ref: 'USUARIOS', req: true, tec: 'r' },
+        { k: 'notas', t: 'long', tec: 'r' }
+      ]
+    },
+    SESIONES: {
+      file: 'BASE', scope: 'cliente', prefix: 'SE', tecnico: 'propio',
+      d: 'Tiempo efectivo trabajado. Una pausa cierra la sesión; reanudar abre otra.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS', req: true, tec: 'r' },
+        { k: 'usuario_id', t: 'ref', ref: 'USUARIOS', req: true, tec: 'r', d: 'Quién trabajó.' },
+        { k: 'registrado_por', t: 'ref', ref: 'USUARIOS', req: true, tec: 'r', d: 'Quién registró (puede ser otra persona).' },
+        { k: 'actividad', t: 'lista', l: 'actividades', tec: 'w' },
+        { k: 'modalidad', t: 'enum', e: 'modalidad_sesion', req: true, tec: 'r' },
+        { k: 'dispositivo', t: 'enum', e: 'dispositivo', tec: 'r' },
+        { k: 'fecha', t: 'date', req: true, tec: 'r', d: 'Fecha de ejecución (define la tarifa vigente). Se toma del inicio si existe.' },
+        { k: 'inicio', t: 'datetime', tec: 'r' },
+        { k: 'fin', t: 'datetime', tec: 'r' },
+        { k: 'duracion_min', t: 'int', tec: 'r', d: 'Minutos trabajados. Calculado si hay inicio y fin; informado si solo se conoce la duración.' },
+        { k: 'sin_horario', t: 'bool', calc: true, tec: 'r', d: 'Sí = solo se conoce la duración; no se puede comprobar solapamiento.' },
+        { k: 'precision', t: 'enum', e: 'precision_tiempo', req: true, tec: 'r' },
+        { k: 'min_facturables', t: 'int', d: 'Minutos a cobrar. Se definen en la revisión; pueden diferir de los trabajados.' },
+        { k: 'tarifa_id', t: 'ref', ref: 'TARIFAS', calc: true, d: 'Tarifa vigente en la fecha de ejecución.' },
+        { k: 'tarifa_valor', t: 'money', calc: true, d: 'Valor hora congelado al cerrar.' },
+        { k: 'concepto_id', t: 'ref', ref: 'CONCEPTOS', d: 'Cobro que respalda esta sesión. Una sesión respalda un solo cobro.' },
+        { k: 'estado', t: 'enum', e: 'estado_sesion', req: true, tec: 'r' },
+        { k: 'motivo_pausa', t: 'lista', l: 'motivos_pausa', tec: 'w' },
+        { k: 'notas', t: 'long', tec: 'w' }
+      ]
+    },
+    DETALLE: {
+      file: 'BASE', scope: 'cliente', prefix: 'DT', tecnico: 'asignado',
+      d: 'Detalle técnico de cada trabajo. Lo que aporta un técnico entra como Borrador. El técnico ve solo lo marcado como visible y sus propios aportes.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS', req: true, tec: 'w' },
+        { k: 'tipo', t: 'enum', e: 'tipo_detalle', req: true, tec: 'w' },
+        { k: 'componente', t: 'text', tec: 'w' },
+        { k: 'descripcion', t: 'long', req: true, tec: 'w' },
+        { k: 'especificacion', t: 'text', tec: 'w' },
+        { k: 'cantidad', t: 'num', tec: 'w' },
+        { k: 'unidad', t: 'lista', l: 'unidades', tec: 'w' },
+        { k: 'tipo_cantidad', t: 'enum', e: 'tipo_cantidad', tec: 'w' },
+        { k: 'resultado', t: 'text', tec: 'w' },
+        { k: 'herramienta_id', t: 'ref', ref: 'HERRAMIENTAS', tec: 'w' },
+        { k: 'biblioteca_id', t: 'ref', ref: 'BIBLIOTECA', tec: 'w' },
+        { k: 'aportante', t: 'enum', e: 'aportante' },
+        { k: 'foto_url', t: 'url', tec: 'w' },
+        { k: 'estado_aporte', t: 'enum', e: 'estado_aporte', req: true, tec: 'r' },
+        { k: 'revisado_por', t: 'ref', ref: 'USUARIOS' },
+        { k: 'visible_tecnico', t: 'bool', d: 'Sí = el técnico asignado puede ver esta fila. Sus propios aportes los ve siempre.' },
+        { k: 'fuente', t: 'text', tec: 'w' },
+        { k: 'notas', t: 'long', tec: 'w' }
+      ]
+    },
+    PENDIENTES: {
+      file: 'BASE', scope: 'cliente', prefix: 'PD', tecnico: 'asignado',
+      d: 'Trabajos o revisiones por hacer en un equipo.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS', req: true, tec: 'w' },
+        { k: 'trabajo_origen_id', t: 'ref', ref: 'TRABAJOS', tec: 'w' },
+        { k: 'fecha', t: 'date', tec: 'w' },
+        { k: 'tipo', t: 'lista', l: 'tipos_pendiente', tec: 'w' },
+        { k: 'descripcion', t: 'long', req: true, tec: 'w' },
+        { k: 'estado', t: 'enum', e: 'estado_pendiente', req: true, tec: 'r' },
+        { k: 'objetivo', t: 'text', tec: 'w', d: 'Condición u objetivo (ej. a los 100.000 km).' },
+        { k: 'fecha_cierre', t: 'date', tec: 'r' },
+        { k: 'motivo_cierre', t: 'text', tec: 'r' },
+        { k: 'estado_aporte', t: 'enum', e: 'estado_aporte', req: true, tec: 'r' },
+        { k: 'revisado_por', t: 'ref', ref: 'USUARIOS' },
+        { k: 'visible_tecnico', t: 'bool', d: 'Sí = el técnico asignado puede ver este pendiente. Los que él crea los ve siempre.' },
+        { k: 'notas', t: 'long', tec: 'w' }
+      ]
+    },
+    CONCEPTOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'CO', tecnico: 'ninguno',
+      d: 'Cada cosa que se cobra (o que aporta el cliente). Importe comercial, no dinero recibido.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS' },
+        { k: 'tipo', t: 'enum', e: 'tipo_concepto', req: true },
+        { k: 'descripcion', t: 'text', req: true },
+        { k: 'monto_cliente', t: 'money', d: 'Importe comercial. Vacío = desconocido (no cero).' },
+        { k: 'iva', t: 'enum', e: 'iva_concepto' },
+        { k: 'aportante', t: 'enum', e: 'aportante_concepto', req: true, d: 'Cliente = material aportado por el cliente; no es venta.' },
+        { k: 'etapa', t: 'enum', e: 'etapa_concepto', req: true },
+        { k: 'costo_proveedor', t: 'money' },
+        { k: 'doc_proveedor', t: 'text' },
+        { k: 'facturar_a_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    PAGOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'MV', tecnico: 'ninguno',
+      d: 'Dinero recibido. Cada pago se registra una sola vez y se reparte con IMPUTACIONES.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'fecha', t: 'date', req: true },
+        { k: 'pagador_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'pagador_texto', t: 'text', d: 'Nombre del remitente tal como aparece en el comprobante.' },
+        { k: 'monto', t: 'money', req: true },
+        { k: 'medio', t: 'lista', l: 'medios_pago' },
+        { k: 'cuenta_destino', t: 'text' },
+        { k: 'comprobante', t: 'text' },
+        { k: 'confirmado', t: 'bool', req: true },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    IMPUTACIONES: {
+      file: 'BASE', scope: 'cliente', prefix: 'IM', tecnico: 'ninguno',
+      d: 'Reparto de un pago entre conceptos. No es otra entrada de dinero.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'pago_id', t: 'ref', ref: 'PAGOS', req: true },
+        { k: 'concepto_id', t: 'ref', ref: 'CONCEPTOS', req: true },
+        { k: 'monto', t: 'money', req: true },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    DOC_VENTA: {
+      file: 'BASE', scope: 'cliente', prefix: 'DV', tecnico: 'ninguno',
+      d: 'Boletas, facturas y notas. Un documento no es un pago.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'tipo', t: 'enum', e: 'tipo_documento', req: true },
+        { k: 'folio', t: 'text' },
+        { k: 'fecha', t: 'date' },
+        { k: 'destinatario_id', t: 'ref', ref: 'CONTACTOS' },
+        { k: 'neto', t: 'money' },
+        { k: 'iva', t: 'money' },
+        { k: 'total', t: 'money' },
+        { k: 'estado', t: 'enum', e: 'estado_documento', req: true },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    DOC_CONCEPTOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'DC', tecnico: 'ninguno',
+      d: 'Qué conceptos cubre cada documento y por cuánto (también parcial).',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'documento_id', t: 'ref', ref: 'DOC_VENTA', req: true },
+        { k: 'concepto_id', t: 'ref', ref: 'CONCEPTOS', req: true },
+        { k: 'monto', t: 'money', req: true },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    PEDIDOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'PE', tecnico: 'ninguno',
+      d: 'Encargos a proveedores. Lo recibido se registra en RECEPCIONES, una fila por entrega.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'concepto_id', t: 'ref', ref: 'CONCEPTOS' },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS' },
+        { k: 'item_id', t: 'ref', ref: 'INVENTARIO', d: 'Artículo de inventario al que entra lo recibido. Si falta, se crea al confirmar la primera recepción.' },
+        { k: 'articulo', t: 'text', req: true },
+        { k: 'codigo_articulo', t: 'text' },
+        { k: 'calidad', t: 'lista', l: 'calidades' },
+        { k: 'cantidad', t: 'num', d: 'Cantidad pedida. Vacío = desconocida.' },
+        { k: 'unidad', t: 'lista', l: 'unidades' },
+        { k: 'precio_cliente_informado', t: 'money', d: 'Informativo. El cobro está en CONCEPTOS.' },
+        { k: 'proveedor', t: 'text' },
+        { k: 'costo_proveedor', t: 'money' },
+        { k: 'estado', t: 'enum', e: 'estado_pedido', req: true },
+        { k: 'fecha_pedido', t: 'date' },
+        { k: 'entrega_esperada', t: 'date' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    RECEPCIONES: {
+      file: 'BASE', scope: 'cliente', prefix: 'RC', tecnico: 'ninguno',
+      d: 'Cada entrega física de un pedido. Solo una recepción Confirmada cambia el inventario, una sola vez.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'pedido_id', t: 'ref', ref: 'PEDIDOS', req: true },
+        { k: 'fecha', t: 'date', req: true },
+        { k: 'cantidad', t: 'num', req: true },
+        { k: 'unidad', t: 'lista', l: 'unidades' },
+        { k: 'evidencia', t: 'text', d: 'Obligatoria para confirmar (guía, factura, foto).' },
+        { k: 'estado', t: 'enum', e: 'estado_recepcion', req: true },
+        { k: 'responsable_id', t: 'ref', ref: 'USUARIOS' },
+        { k: 'mov_id', t: 'ref', ref: 'MOV_INVENTARIO', calc: true, d: 'Entrada de inventario generada al confirmar.' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    RECTIFICACIONES: {
+      file: 'BASE', scope: 'cliente', prefix: 'RT', tecnico: 'ninguno',
+      d: 'Bitácora de correcciones. Se escribe sola en cada edición.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
+        { k: 'tabla', t: 'text', req: true },
+        { k: 'registro_id', t: 'text', req: true },
+        { k: 'campo', t: 'text', req: true },
+        { k: 'valor_anterior', t: 'long' },
+        { k: 'valor_nuevo', t: 'long' },
+        { k: 'motivo', t: 'text' },
+        { k: 'fuente', t: 'text' },
+        { k: 'autor', t: 'text', req: true },
+        { k: 'fecha', t: 'datetime', req: true }
+      ]
+    },
+
+    USUARIOS: {
+      file: 'BASE', scope: 'central', prefix: 'US', tecnico: 'propio',
+      d: 'Quién puede entrar y con qué rol. El correo debe ser una cuenta Google. Solo el rol Administrador crea o cambia usuarios.',
+      columns: [
+        { k: 'nombre', t: 'text', req: true, tec: 'r' },
+        { k: 'correo', t: 'email', req: true, tec: 'r' },
+        { k: 'rol', t: 'enum', e: 'rol', req: true, tec: 'r' },
+        { k: 'activo', t: 'bool', req: true },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    TARIFAS: {
+      file: 'BASE', scope: 'central', prefix: 'TF', tecnico: 'ninguno',
+      d: 'Valor hora que se cobra al cliente, por trabajador y tipo de trabajo. Tipo vacío = cualquier tipo.',
+      columns: [
+        { k: 'usuario_id', t: 'ref', ref: 'USUARIOS', req: true },
+        { k: 'tipo_trabajo', t: 'lista', l: 'tipos_trabajo' },
+        { k: 'valor_hora', t: 'money', req: true },
+        { k: 'desde', t: 'date', req: true },
+        { k: 'hasta', t: 'date', d: 'Vacío = vigente.' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    LISTAS: {
+      file: 'BASE', scope: 'central', prefix: 'LI', tecnico: 'lectura',
+      d: 'Valores de las listas editables. Agregar filas para sumar opciones; desactivar en vez de borrar.',
+      columns: [
+        { k: 'lista', t: 'text', req: true, tec: 'r' },
+        { k: 'valor', t: 'text', req: true, tec: 'r' },
+        { k: 'activo', t: 'bool', req: true, tec: 'r' },
+        { k: 'orden', t: 'int', tec: 'r' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    INVENTARIO: {
+      file: 'BASE', scope: 'central', prefix: 'IT', tecnico: 'ninguno',
+      d: 'Artículos físicos. El stock se calcula: conteo inicial confirmado + movimientos.',
+      columns: [
+        { k: 'articulo', t: 'text', req: true },
+        { k: 'codigo_articulo', t: 'text' },
+        { k: 'unidad', t: 'lista', l: 'unidades', req: true },
+        { k: 'propietario', t: 'enum', e: 'propietario_item', req: true },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', d: 'Obligatorio si el propietario es Cliente.' },
+        { k: 'ubicacion', t: 'lista', l: 'ubicaciones' },
+        { k: 'conteo_inicial', t: 'num', d: 'Vacío = no contado.' },
+        { k: 'conteo_confirmado', t: 'bool', req: true, d: 'No = stock desconocido, aunque haya movimientos.' },
+        { k: 'fecha_conteo', t: 'date' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    MOV_INVENTARIO: {
+      file: 'BASE', scope: 'central', prefix: 'MI', tecnico: 'ninguno',
+      d: 'Movimientos físicos de inventario. Cantidad siempre positiva; el tipo da el signo.',
+      columns: [
+        { k: 'item_id', t: 'ref', ref: 'INVENTARIO', req: true },
+        { k: 'fecha', t: 'datetime', req: true },
+        { k: 'tipo', t: 'enum', e: 'tipo_movimiento', req: true },
+        { k: 'cantidad', t: 'num', req: true },
+        { k: 'unidad', t: 'lista', l: 'unidades', req: true },
+        { k: 'recepcion_id', t: 'ref', ref: 'RECEPCIONES' },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
+        { k: 'responsable_id', t: 'ref', ref: 'USUARIOS' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    HERRAMIENTAS: {
+      file: 'BASE', scope: 'central', prefix: 'HE', tecnico: 'visible',
+      d: 'Herramientas del taller.',
+      columns: [
+        { k: 'nombre', t: 'text', req: true, tec: 'r' },
+        { k: 'medida', t: 'text', tec: 'r' },
+        { k: 'ubicacion', t: 'lista', l: 'ubicaciones', tec: 'r' },
+        { k: 'estado', t: 'enum', e: 'estado_herramienta', tec: 'r' },
+        { k: 'visible_tecnico', t: 'bool', req: true },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long', tec: 'r' }
+      ]
+    },
+    BIBLIOTECA: {
+      file: 'BASE', scope: 'central', prefix: 'BI', tecnico: 'visible',
+      d: 'Procedimientos, torques, capacidades y notas técnicas comunes.',
+      columns: [
+        { k: 'tipo', t: 'lista', l: 'tipos_biblioteca', req: true, tec: 'r' },
+        { k: 'titulo', t: 'text', req: true, tec: 'r' },
+        { k: 'contenido', t: 'long', tec: 'r' },
+        { k: 'aplica_a', t: 'text', tec: 'r', d: 'Marca, modelo o motor al que aplica.' },
+        { k: 'especificacion', t: 'text', tec: 'r' },
+        { k: 'visible_tecnico', t: 'bool', req: true },
+        { k: 'fuente', t: 'text' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+
+    VALORES_TRABAJADOR: {
+      file: 'PAGO', scope: 'central', prefix: 'VT', tecnico: 'ninguno', soloAdministrador: true,
+      d: 'Archivo aparte, solo Víctor. Valor que se le paga a cada persona por actividad.',
+      columns: [
+        { k: 'usuario_id', t: 'ref', ref: 'USUARIOS', req: true },
+        { k: 'actividad', t: 'lista', l: 'actividades', d: 'Vacío = cualquier actividad.' },
+        { k: 'valor_hora', t: 'money', req: true },
+        { k: 'desde', t: 'date', req: true },
+        { k: 'hasta', t: 'date' },
+        { k: 'notas', t: 'long' }
+      ]
+    }
+  },
+
+  /** Hoja CONFIG (clave/valor). No lleva columnas técnicas. */
+  config: [
+    { clave: 'version_contrato', valor: 'EG-REG-1.4-BORRADOR', nota: 'Debe coincidir con el contrato del código.' },
+    { clave: 'zona_horaria', valor: 'America/Santiago', nota: '' },
+    { clave: 'oauth_client_id', valor: '', nota: 'ID de cliente OAuth de Google Cloud. Lo completa Víctor.' },
+    { clave: 'pago_trabajadores_id', valor: '', nota: 'ID del archivo PAGO TRABAJADORES. Lo llena el script de creación.' },
+    { clave: 'respaldos_carpeta_id', valor: '', nota: 'Carpeta de respaldos diarios. Lo llena el script de creación.' },
+    { clave: 'respaldos_conservar', valor: '30', nota: 'Copias diarias que se conservan.' },
+    { clave: 'administracion_ve_pago_trabajadores', valor: 'No', nota: 'Decisión pendiente de Víctor. Mientras sea No, Victoria no accede.' }
+  ]
+};
+
+/** Columnas completas de una tabla (técnicas + propias), en orden. */
+function contractColumns(table) {
+  var t = CONTRACT.tables[table];
+  if (!t) throw new Error('Tabla desconocida: ' + table);
+  return CONTRACT.technicalColumns.concat(t.columns);
+}
+
+/** Orden de columnas en la hoja: código visible primero, luego las propias, luego las técnicas (ocultas). */
+function sheetColumns(table) {
+  var t = CONTRACT.tables[table];
+  var tech = CONTRACT.technicalColumns.filter(function (c) { return c.k !== 'codigo'; });
+  return [CONTRACT.technicalColumns[1]].concat(t.columns, tech);
+}
+
+if (typeof module !== 'undefined') module.exports = { CONTRACT: CONTRACT, contractColumns: contractColumns, sheetColumns: sheetColumns };
+
+/* ── apps-script/Util.gs ── */
+/**
+ * Utilidades comunes. Funcionan en Apps Script (V8), en node (pruebas) y en el navegador (modo demo).
+ */
+
+/** Error controlado de la aplicación. code es estable (la pantalla lo usa); message es para personas. */
+function AppError(code, message, details) {
+  this.name = 'AppError';
+  this.code = code;
+  this.message = message;
+  this.details = details || null;
+}
+AppError.prototype = Object.create(Error.prototype);
+
+function fail_(code, message, details) { throw new AppError(code, message, details); }
+
+function newId_() {
+  if (typeof Utilities !== 'undefined' && Utilities.getUuid) return Utilities.getUuid();
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // Respaldo (no criptográfico) para navegadores antiguos.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+    var r = Math.random() * 16 | 0; return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+}
+
+function isEmpty_(v) { return v === null || v === undefined || v === ''; }
+
+/** Texto para búsquedas: minúsculas, sin tildes, espacios simples (idea de Taller Pro v10). */
+function normTxt_(s) {
+  return String(s == null ? '' : s).trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ');
+}
+
+/** Patente o VIN normalizado: mayúsculas, sin espacios, guiones ni puntos. */
+function normPlate_(s) {
+  return String(s == null ? '' : s).toUpperCase().replace(/[\s\-\.·]/g, '');
+}
+
+/** Fecha local (yyyy-MM-dd) en la zona del contrato para un instante ISO. */
+function localDate_(iso, tz) {
+  if (isEmpty_(iso)) return '';
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  tz = tz || CONTRACT.timezone;
+  if (typeof Utilities !== 'undefined' && Utilities.formatDate) return Utilities.formatDate(d, tz, 'yyyy-MM-dd');
+  var parts = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d);
+  var o = {}; parts.forEach(function (p) { o[p.type] = p.value; });
+  return o.year + '-' + o.month + '-' + o.day;
+}
+
+function toMs_(iso) { var t = Date.parse(iso); return isNaN(t) ? null : t; }
+
+function isIsoDate_(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s) && !isNaN(Date.parse(s + 'T00:00:00Z')); }
+
+function isIsoDateTime_(s) { return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s) && toMs_(s) !== null; }
+
+/** SHA-256 en hexadecimal (Apps Script o node). */
+function sha256hex_(text) {
+  if (typeof Utilities !== 'undefined' && Utilities.computeDigest) {
+    return Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, text, Utilities.Charset.UTF_8)
+      .map(function (b) { return ('0' + (b & 0xff).toString(16)).slice(-2); }).join('');
+  }
+  return crypto.createHash('sha256').update(text).digest('hex');
+}
+
+/** Huella corta y determinista de un texto (no criptográfica). Igual en Apps Script, node y navegador. */
+function hashTxt_(str) {
+  str = String(str);
+  var h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (var i = 0; i < str.length; i++) {
+    var ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return ('00000000' + (h2 >>> 0).toString(16)).slice(-8) + ('00000000' + (h1 >>> 0).toString(16)).slice(-8);
+}
+
+/** JSON con claves ordenadas (para comparar contenidos). */
+function stableJson_(v) {
+  if (v === null || typeof v !== 'object') return JSON.stringify(v === undefined ? null : v);
+  if (Array.isArray(v)) return '[' + v.map(stableJson_).join(',') + ']';
+  return '{' + Object.keys(v).sort().filter(function (k) { return v[k] !== undefined; }).map(function (k) { return JSON.stringify(k) + ':' + stableJson_(v[k]); }).join(',') + '}';
+}
+
+function round_(n) { return Math.round(Number(n)); }
+
+function clone_(o) { return JSON.parse(JSON.stringify(o)); }
+
+if (typeof module !== 'undefined') {
+  module.exports = { AppError: AppError, fail_: fail_, newId_: newId_, isEmpty_: isEmpty_, normTxt_: normTxt_, normPlate_: normPlate_, localDate_: localDate_, toMs_: toMs_, isIsoDate_: isIsoDate_, isIsoDateTime_: isIsoDateTime_, round_: round_, clone_: clone_, hashTxt_: hashTxt_, stableJson_: stableJson_ };
+}
+
+/* ── apps-script/Core.gs ── */
+/**
+ * EISEN GARAGE — Lógica de negocio del registro interno.
+ * No conoce Google Sheets: trabaja sobre un "store" (SheetStore en producción, MemoryStore en pruebas y demo).
+ *
+ * ctx = { store, user (fila de USUARIOS), config (CONFIG como objeto), clock() → ISO }
+ * Todas las acciones devuelven { data, warnings }. Los errores se lanzan como AppError(code, message, details).
+ */
+
+var ROLES_ADMIN = ['Administrador', 'Administracion'];
+var ESTADOS_PENDIENTE_CERRADOS = ['Resuelto', 'Descartado'];
+
+/* ───────────────────────── contexto y permisos ───────────────────────── */
+
+function now_(ctx) { return ctx.clock ? ctx.clock() : new Date().toISOString(); }
+function today_(ctx) { return localDate_(now_(ctx)); }
+function rol_(ctx) { return ctx.user && ctx.user.rol; }
+function isSystem_(ctx) { return !!(ctx.user && ctx.user.id === 'sistema'); }
+function isAdmin_(ctx) { return isSystem_(ctx) || ROLES_ADMIN.indexOf(rol_(ctx)) >= 0; }
+function isTecnico_(ctx) { return rol_(ctx) === 'Tecnico' && !isSystem_(ctx); }
+
+function systemCtx_(store, config) {
+  return { store: store, config: config || {}, user: { id: 'sistema', correo: 'sistema', nombre: 'Sistema', rol: 'Administrador' } };
+}
+
+function colMap_(table) {
+  var m = {};
+  contractColumns(table).forEach(function (c) { m[c.k] = c; });
+  return m;
+}
+
+function requireAdmin_(ctx) { if (!isAdmin_(ctx)) fail_('NO_PERMITIDO', 'Esta acción es solo para administración.'); }
+
+/** Tablas del archivo PAGO: solo Administrador (y Administracion si CONFIG lo habilita). */
+function canSeeTable_(ctx, table) {
+  var t = CONTRACT.tables[table];
+  if (!t) return false;
+  if (isSystem_(ctx)) return true;
+  if (t.soloAdministrador) {
+    if (rol_(ctx) === 'Administrador') return true;
+    return rol_(ctx) === 'Administracion' && String((ctx.config || {}).administracion_ve_pago_trabajadores) === 'Sí';
+  }
+  if (isTecnico_(ctx)) return t.tecnico !== 'ninguno';
+  return isAdmin_(ctx);
+}
+
+function active_(rows) { return rows.filter(function (r) { return r.anulado !== true; }); }
+function rows_(ctx, table) { return ctx.store.list(table); }
+function activeRows_(ctx, table) { return active_(ctx.store.list(table)); }
+function getRow_(ctx, table, id) { return id ? ctx.store.get(table, id) : null; }
+
+function mustGet_(ctx, table, id, label) {
+  var r = getRow_(ctx, table, id);
+  if (!r) fail_('NO_EXISTE', (label || table) + ' no existe: ' + id);
+  return r;
+}
+
+/** Trabajos asignados al usuario actual (técnico). Se calcula una vez por solicitud. */
+function assigned_(ctx) {
+  if (ctx._assigned) return ctx._assigned;
+  var uid = ctx.user.id;
+  var trabajos = {};
+  activeRows_(ctx, 'ASIGNACIONES').forEach(function (a) { if (a.usuario_id === uid) trabajos[a.trabajo_id] = true; });
+  var equipos = {};
+  activeRows_(ctx, 'TRABAJOS').forEach(function (t) { if (trabajos[t.id]) equipos[t.equipo_id] = true; });
+  ctx._assigned = { trabajos: trabajos, equipos: equipos };
+  return ctx._assigned;
+}
+
+function rowVisible_(ctx, table, row) {
+  if (!canSeeTable_(ctx, table)) return false;
+  if (!isTecnico_(ctx)) return true;
+  if (row.anulado === true) return false;
+  var mode = CONTRACT.tables[table].tecnico;
+  var a = assigned_(ctx);
+  if (mode === 'lectura') return true;
+  if (mode === 'propio') return table === 'USUARIOS' ? row.id === ctx.user.id : row.usuario_id === ctx.user.id;
+  if (mode === 'visible') {
+    if (row.visible_tecnico !== true) return false;
+    return table === 'REFERENCIAS' ? !!a.equipos[row.equipo_id] : true;
+  }
+  if (mode === 'asignado') {
+    if (table === 'TRABAJOS') return !!a.trabajos[row.id];
+    if (table === 'EQUIPOS') return !!a.equipos[row.id];
+    // DETALLE y PENDIENTES: lista blanca por fila. El técnico ve lo marcado como visible y lo que él aportó.
+    var propio = row.creado_por === ctx.user.correo;
+    if (table === 'DETALLE') return !!a.trabajos[row.trabajo_id] && (row.visible_tecnico === true || propio);
+    if (table === 'PENDIENTES') return !!a.equipos[row.equipo_id] && (row.visible_tecnico === true || propio);
+  }
+  return false;
+}
+
+/** Columnas que ve cada rol. El técnico solo ve las marcadas con tec. */
+function project_(ctx, table, row) {
+  if (!isTecnico_(ctx)) return row;
+  var out = {};
+  contractColumns(table).forEach(function (c) { if (c.tec) out[c.k] = row[c.k]; });
+  return out;
+}
+
+function visibleRows_(ctx, table, includeAnulados) {
+  return rows_(ctx, table).filter(function (r) {
+    if (!includeAnulados && r.anulado === true) return false;
+    return rowVisible_(ctx, table, r);
+  }).map(function (r) { return project_(ctx, table, r); });
+}
+
+/* ───────────────────────── validación ───────────────────────── */
+
+function listaActiva_(ctx, lista, valor) {
+  return activeRows_(ctx, 'LISTAS').some(function (r) { return r.lista === lista && r.valor === valor && r.activo === true; });
+}
+
+function normalizeValue_(ctx, table, col, v, prevValue) {
+  if (isEmpty_(v)) return '';
+  var where = table + '.' + col.k;
+  switch (col.t) {
+    case 'text': case 'long': return String(v);
+    case 'email':
+      v = String(v).trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) fail_('VALOR_INVALIDO', where + ': correo no válido');
+      return v;
+    case 'url': return String(v).trim();
+    case 'int': case 'money':
+      var n = Number(v);
+      if (!isFinite(n) || Math.round(n) !== n) fail_('VALOR_INVALIDO', where + ': debe ser un número entero');
+      if (col.t === 'money' && n < 0) fail_('VALOR_INVALIDO', where + ': el monto no puede ser negativo');
+      return n;
+    case 'num':
+      var x = Number(v);
+      if (!isFinite(x)) fail_('VALOR_INVALIDO', where + ': debe ser un número');
+      return x;
+    case 'date':
+      if (!isIsoDate_(String(v))) fail_('VALOR_INVALIDO', where + ': fecha con formato aaaa-mm-dd');
+      return String(v);
+    case 'datetime':
+      if (!isIsoDateTime_(String(v))) fail_('VALOR_INVALIDO', where + ': fecha y hora no válida');
+      return new Date(String(v)).toISOString();
+    case 'bool':
+      if (v === true || v === 'true' || v === 'Sí') return true;
+      if (v === false || v === 'false' || v === 'No') return false;
+      fail_('VALOR_INVALIDO', where + ': debe ser sí o no');
+      break;
+    case 'enum':
+      if (CONTRACT.enums[col.e].indexOf(v) < 0) fail_('VALOR_INVALIDO', where + ': "' + v + '" no está en la lista ' + col.e);
+      return v;
+    case 'lista':
+      v = String(v);
+      if (v !== prevValue && !listaActiva_(ctx, col.l, v)) fail_('VALOR_INVALIDO', where + ': "' + v + '" no está activo en LISTAS (' + col.l + '). Agrégalo primero.');
+      return v;
+    case 'ref':
+      v = String(v);
+      if (v !== prevValue) {
+        var target = getRow_(ctx, col.ref, v);
+        if (!target) fail_('REFERENCIA', where + ': no existe el registro ' + v + ' en ' + col.ref);
+        if (target.anulado === true) fail_('REFERENCIA', where + ': el registro ' + v + ' de ' + col.ref + ' está anulado');
+      }
+      return v;
+  }
+  return v;
+}
+
+/** Revisa obligatorios y que las referencias pertenezcan al mismo cliente. */
+function validateRow_(ctx, table, row) {
+  var t = CONTRACT.tables[table];
+  t.columns.forEach(function (c) {
+    if (c.req && !c.calc && isEmpty_(row[c.k])) fail_('REQUERIDO', table + '.' + c.k + ' es obligatorio');
+    if (c.t === 'ref' && !isEmpty_(row[c.k]) && c.ref !== 'CLIENTES' && !isEmpty_(row.cliente_id)) {
+      var target = getRow_(ctx, c.ref, row[c.k]);
+      if (target && !isEmpty_(target.cliente_id) && target.cliente_id !== row.cliente_id && CONTRACT.tables[c.ref].scope === 'cliente') {
+        fail_('CLIENTE_DISTINTO', table + '.' + c.k + ' pertenece a otro cliente');
+      }
+    }
+  });
+}
+
+/** Si falta cliente_id, se toma del registro padre (trabajo, equipo, pedido, pago, documento). */
+function deriveCliente_(ctx, table, row) {
+  if (!isEmpty_(row.cliente_id) || !colMap_(table).cliente_id) return;
+  var parents = [['trabajo_id', 'TRABAJOS'], ['equipo_id', 'EQUIPOS'], ['pedido_id', 'PEDIDOS'], ['pago_id', 'PAGOS'], ['documento_id', 'DOC_VENTA'], ['concepto_id', 'CONCEPTOS'], ['recepcion_id', 'RECEPCIONES']];
+  for (var i = 0; i < parents.length; i++) {
+    var k = parents[i][0];
+    if (!isEmpty_(row[k]) && colMap_(table)[k]) {
+      var p = getRow_(ctx, parents[i][1], row[k]);
+      if (p && !isEmpty_(p.cliente_id)) { row.cliente_id = p.cliente_id; return; }
+    }
+  }
+}
+
+/* ───────────────────────── códigos visibles ───────────────────────── */
+
+function nextCode_(ctx, table) {
+  var prefix = CONTRACT.tables[table].prefix;
+  var re = new RegExp('^(?:EG-)?' + prefix + '-(\\d+)$');
+  var max = 0;
+  rows_(ctx, table).forEach(function (r) { var m = re.exec(String(r.codigo || '')); if (m) max = Math.max(max, Number(m[1])); });
+  var n = String(max + 1);
+  while (n.length < 4) n = '0' + n;
+  return prefix + '-' + n;
+}
+
+/* ───────────────────────── escritura genérica ───────────────────────── */
+
+function findByOp_(ctx, table, opId) {
+  if (!opId) return null;
+  var rs = rows_(ctx, table);
+  for (var i = 0; i < rs.length; i++) if (rs[i].op_id === opId) return rs[i];
+  return null;
+}
+
+/** Un op_id repetido solo es un reintento si trae el mismo contenido. Si no, se rechaza. */
+function checkSameOp_(ctx, row, opId) {
+  if (!row || !opId || row.ultima_op !== opId) return;
+  if (row.op_hash && ctx._opHash && row.op_hash !== ctx._opHash) {
+    fail_('REINTENTO_DISTINTO', 'La operación ' + opId + ' ya se aplicó con otro contenido. Si es un registro nuevo, la pantalla debe usar otro identificador.');
+  }
+}
+
+function blankRow_(table) {
+  var r = {};
+  contractColumns(table).forEach(function (c) { r[c.k] = c.t === 'bool' ? false : ''; });
+  return r;
+}
+
+/**
+ * Inserta una fila. opts: { opId, system (salta permisos), allowCodigo (migración), allowCalc }
+ * Devuelve { row, duplicate, warnings }.
+ */
+function insertRow_(ctx, table, data, opts) {
+  opts = opts || {};
+  var warnings = [];
+  if (!CONTRACT.tables[table]) fail_('TABLA', 'Tabla desconocida: ' + table);
+  var dup = findByOp_(ctx, table, opts.opId);
+  if (dup) { checkSameOp_(ctx, dup, opts.opId); return { row: dup, duplicate: true, warnings: [] }; }
+
+  var cols = colMap_(table);
+  var row = blankRow_(table);
+  Object.keys(data || {}).forEach(function (k) {
+    var c = cols[k];
+    if (!c) fail_('CAMPO_DESCONOCIDO', table + ' no tiene la columna ' + k);
+    var tecnica = CONTRACT.technicalColumns.some(function (t) { return t.k === k; });
+    if (tecnica && !(k === 'codigo' && opts.allowCodigo) && !(opts.system && opts.allowCalc)) fail_('CAMPO_CALCULADO', k + ' lo llena el sistema');
+    if (c.calc && !tecnica && !opts.allowCalc) fail_('CAMPO_CALCULADO', table + '.' + k + ' lo llena el sistema');
+    row[k] = data[k];
+  });
+  if (!opts.system) checkWrite_(ctx, table, 'crear', row, null);
+  deriveCliente_(ctx, table, row);
+
+  Object.keys(cols).forEach(function (k) {
+    var c = cols[k];
+    if (CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) return;
+    row[k] = normalizeValue_(ctx, table, c, row[k], undefined);
+    if (c.t === 'bool' && row[k] === '') row[k] = false;
+  });
+
+  var at = now_(ctx);
+  row.id = (opts.system && opts.allowCalc && data.id) ? data.id : newId_();
+  row.codigo = (opts.allowCodigo && !isEmpty_(data.codigo)) ? String(data.codigo) : nextCode_(ctx, table);
+  row.version = 1;
+  row.op_id = opts.opId || '';
+  row.ultima_op = opts.opId || '';
+  row.op_hash = opts.opId ? (ctx._opHash || '') : '';
+  row.creado_por = ctx.user.correo;
+  row.creado_en = at;
+  row.editado_por = '';
+  row.editado_en = '';
+  row.anulado = false;
+
+  beforeWrite_(ctx, table, row, null, warnings);
+  validateRow_(ctx, table, row);
+  ctx.store.insert(table, row);
+  afterWrite_(ctx, table, row, null, warnings);
+  return { row: row, duplicate: false, warnings: warnings };
+}
+
+function insertSystem_(ctx, table, data, extra) {
+  var o = { system: true, allowCodigo: true, allowCalc: true, opId: (extra && extra.opId) || '' };
+  return insertRow_(ctx, table, data, o).row;
+}
+
+/**
+ * Edita una fila con control de versión. meta: { opId, motivo, fuente, system, allowCalc, skipVersion }
+ */
+function updateRow_(ctx, table, id, version, changes, meta) {
+  meta = meta || {};
+  var warnings = [];
+  var prev = mustGet_(ctx, table, id);
+  // Lo que el usuario no puede ver no se edita ni se confirma que exista (ni en mensajes de conflicto).
+  if (!meta.system && !rowVisible_(ctx, table, prev)) fail_('NO_EXISTE', table + ' no existe: ' + id);
+  if (meta.opId && prev.ultima_op === meta.opId) { checkSameOp_(ctx, prev, meta.opId); return { row: prev, duplicate: true, warnings: [] }; }
+  if (prev.anulado === true && !meta.system) fail_('ANULADO', 'El registro ' + prev.codigo + ' está anulado.');
+  if (!meta.skipVersion && Number(version) !== Number(prev.version)) {
+    fail_('CONFLICTO', 'Otra persona modificó ' + prev.codigo + ' mientras lo editabas. Revisa la versión actual.', { actual: project_(ctx, table, prev) });
+  }
+  var cols = colMap_(table);
+  var row = clone_(prev);
+  Object.keys(changes || {}).forEach(function (k) {
+    var c = cols[k];
+    if (!c) fail_('CAMPO_DESCONOCIDO', table + ' no tiene la columna ' + k);
+    var tecnica = CONTRACT.technicalColumns.some(function (t) { return t.k === k; });
+    if (tecnica && !(meta.system && k === 'anulado')) fail_('CAMPO_CALCULADO', k + ' lo llena el sistema');
+    if (c.calc && !tecnica && !meta.allowCalc) fail_('CAMPO_CALCULADO', table + '.' + k + ' lo llena el sistema');
+    row[k] = tecnica ? changes[k] : normalizeValue_(ctx, table, c, changes[k], prev[k]);
+    if (c.t === 'bool' && row[k] === '') row[k] = false;
+  });
+  if (!meta.system) checkWrite_(ctx, table, 'editar', row, prev);
+
+  beforeWrite_(ctx, table, row, prev, warnings);
+  validateRow_(ctx, table, row);
+
+  var at = now_(ctx);
+  var rects = [];
+  // Las transiciones de flujo (sesiones, revisión de aportes, confirmar recepción) no son correcciones.
+  // Un aporte en borrador aún no es dato oficial: sus cambios no son correcciones.
+  if (table !== 'RECTIFICACIONES' && !meta.noRect && prev.estado_aporte !== 'Borrador') {
+    Object.keys(cols).forEach(function (k) {
+      if (CONTRACT.technicalColumns.some(function (t) { return t.k === k; }) && k !== 'anulado') return;
+      var a = prev[k], b = row[k];
+      if (String(a) === String(b)) return;
+      // Completar un dato vacío no es una corrección; cambiar un dato existente sí.
+      if (isEmpty_(a) || a === false && k !== 'anulado') return;
+      rects.push({ cliente_id: row.cliente_id || '', tabla: table, registro_id: row.codigo || row.id, campo: k, valor_anterior: String(a), valor_nuevo: String(b), motivo: meta.motivo || '', fuente: meta.fuente || '', autor: ctx.user.correo, fecha: at });
+    });
+  }
+  if (!meta.system && rects.some(function (r) { return !campoDeFlujo_(r.campo); })) {
+    if (isEmpty_(meta.motivo) || isEmpty_(meta.fuente)) {
+      fail_('MOTIVO_REQUERIDO', 'Estás corrigiendo un dato ya registrado (' + rects.filter(function (r) { return !campoDeFlujo_(r.campo); }).map(function (r) { return r.campo; }).join(', ') + '). Indica el motivo y la fuente de la corrección.');
+    }
+  }
+  row.version = Number(prev.version) + 1;
+  row.editado_por = ctx.user.correo;
+  row.editado_en = at;
+  // Un cambio interno del sistema conserva la última operación del usuario (para reintentos idempotentes).
+  row.ultima_op = meta.opId || (meta.system ? prev.ultima_op : '');
+  row.op_hash = meta.opId ? (ctx._opHash || '') : (meta.system ? (prev.op_hash || '') : '');
+  ctx.store.update(table, id, row);
+  rects.forEach(function (r) {
+    if (r.cliente_id && !getRow_(ctx, 'CLIENTES', r.cliente_id)) r.cliente_id = '';
+    insertSystem_(ctx, 'RECTIFICACIONES', r);
+  });
+  afterWrite_(ctx, table, row, prev, warnings);
+  return { row: row, duplicate: false, warnings: warnings };
+}
+
+/** Campos de flujo (estados y etapa): su cambio se registra, pero no exige motivo ni fuente. */
+function campoDeFlujo_(k) { return k === 'etapa' || k.indexOf('estado') === 0; }
+
+/** Cambio interno del sistema (estados derivados). Sin control de versión ni permisos. */
+function sysUpdate_(ctx, table, id, changes, motivo) {
+  return updateRow_(ctx, table, id, null, changes, { system: true, allowCalc: true, skipVersion: true, noRect: true, motivo: motivo || 'Automático' }).row;
+}
+
+function anularRow_(ctx, table, id, version, motivo, opId, fuente) {
+  if (isEmpty_(motivo)) fail_('REQUERIDO', 'Para anular hay que indicar el motivo.');
+  var prev = mustGet_(ctx, table, id);
+  if (!rowVisible_(ctx, table, prev)) fail_('NO_EXISTE', table + ' no existe: ' + id);
+  if (opId && prev.ultima_op === opId) { checkSameOp_(ctx, prev, opId); return { row: prev, duplicate: true, warnings: [] }; }
+  if (prev.anulado === true) fail_('ANULADO', 'Ya estaba anulado.');
+  checkWrite_(ctx, table, 'anular', prev, prev);
+  beforeAnular_(ctx, table, prev);
+  var changes = { anulado: true };
+  if (table === 'SESIONES') changes.estado = 'Anulada';
+  return updateRow_(ctx, table, id, version, changes, { system: true, allowCalc: true, motivo: motivo, fuente: fuente || 'Anulación', opId: opId, skipVersion: false });
+}
+
+/* ───────────────────────── permisos de escritura ───────────────────────── */
+
+function checkWrite_(ctx, table, kind, row, prev) {
+  if (isSystem_(ctx)) return;
+  if (table === 'RECTIFICACIONES') fail_('NO_PERMITIDO', 'Las rectificaciones las escribe el sistema.');
+  if (!canSeeTable_(ctx, table)) fail_('NO_PERMITIDO', 'No tienes acceso a ' + table + '.');
+  // Roles y accesos: solo el Administrador. Evita que alguien se eleve el rol a sí mismo.
+  if (table === 'USUARIOS' && rol_(ctx) !== 'Administrador') fail_('NO_PERMITIDO', 'Solo el Administrador crea o cambia usuarios.');
+  if (isAdmin_(ctx)) return;
+  if (!isTecnico_(ctx)) fail_('NO_PERMITIDO', 'Usuario sin rol válido.');
+
+  var a = assigned_(ctx);
+  var cols = colMap_(table);
+  var writable = {};
+  contractColumns(table).forEach(function (c) { if (c.tec === 'w') writable[c.k] = true; });
+
+  if (table === 'DETALLE' || table === 'PENDIENTES') {
+    if (kind === 'crear') {
+      Object.keys(row).forEach(function (k) {
+        if (CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) return;
+        if (k === 'cliente_id' || k === 'estado_aporte' || k === 'estado') return;
+        if (!isEmpty_(row[k]) && row[k] !== false && !writable[k]) fail_('NO_PERMITIDO', 'El técnico no puede completar ' + table + '.' + k);
+      });
+      checkAporteAsignado_(ctx, table, row);
+      if (table === 'PENDIENTES') row.estado = 'Abierto';
+      row.estado_aporte = 'Borrador';
+      row.cliente_id = '';
+      return;
+    }
+    if (prev.creado_por !== ctx.user.correo || prev.estado_aporte !== 'Borrador') fail_('NO_PERMITIDO', 'Solo puedes cambiar tus aportes que aún están en borrador.');
+    if (kind === 'anular') return;
+    Object.keys(cols).forEach(function (k) {
+      if (String(prev[k]) !== String(row[k]) && !writable[k] && !CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) fail_('NO_PERMITIDO', 'El técnico no puede cambiar ' + table + '.' + k);
+    });
+    // El destino nuevo también tiene que estar asignado (no se puede mover un borrador a otro trabajo o equipo).
+    checkAporteAsignado_(ctx, table, row);
+    return;
+  }
+  if (table === 'SESIONES' && kind === 'editar') {
+    if (prev.usuario_id !== ctx.user.id) fail_('NO_PERMITIDO', 'Solo puedes editar tus propias sesiones.');
+    Object.keys(cols).forEach(function (k) {
+      if (String(prev[k]) !== String(row[k]) && !writable[k] && !CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) fail_('NO_PERMITIDO', 'El técnico no puede cambiar SESIONES.' + k + '. Pide la corrección a administración.');
+    });
+    return;
+  }
+  fail_('NO_PERMITIDO', 'El técnico no puede ' + kind + ' en ' + table + '.');
+}
+
+function checkAporteAsignado_(ctx, table, row) {
+  var a = assigned_(ctx);
+  if (table === 'DETALLE' && !a.trabajos[row.trabajo_id]) fail_('NO_PERMITIDO', 'Solo puedes registrar detalle en tus trabajos asignados.');
+  if (table === 'PENDIENTES') {
+    if (!a.equipos[row.equipo_id]) fail_('NO_PERMITIDO', 'Solo puedes registrar pendientes en equipos de tus trabajos.');
+    if (!isEmpty_(row.trabajo_origen_id) && !a.trabajos[row.trabajo_origen_id]) fail_('NO_PERMITIDO', 'El trabajo de origen no está asignado a ti.');
+  }
+}
+
+/* ───────────────────────── reglas por tabla ───────────────────────── */
+
+function sumBy_(rows, field) { return rows.reduce(function (s, r) { return s + (Number(r[field]) || 0); }, 0); }
+
+function beforeWrite_(ctx, table, row, prev, warnings) {
+  var f = RULES_[table];
+  if (f && f.before) f.before(ctx, row, prev, warnings);
+}
+function afterWrite_(ctx, table, row, prev, warnings) {
+  var f = RULES_[table];
+  if (f && f.after) f.after(ctx, row, prev, warnings);
+}
+function beforeAnular_(ctx, table, row) {
+  var f = RULES_[table];
+  if (f && f.anular) f.anular(ctx, row);
+}
+
+/** Intervalo de una sesión para comprobar solapamientos: [inicio, fin); abierta = hasta el infinito. */
+function sessionInterval_(s) {
+  if (isEmpty_(s.inicio)) return null;
+  var a = toMs_(s.inicio);
+  var b = s.estado === 'Abierta' ? Infinity : toMs_(s.fin);
+  if (a === null || b === null) return null;
+  return [a, b];
+}
+
+function checkSessionOverlap_(ctx, row) {
+  var mine = sessionInterval_(row);
+  if (!mine) return;
+  activeRows_(ctx, 'SESIONES').forEach(function (s) {
+    if (s.id === row.id || s.usuario_id !== row.usuario_id || s.estado === 'Anulada') return;
+    var o = sessionInterval_(s);
+    if (!o) return;
+    if (mine[0] < o[1] && o[0] < mine[1]) {
+      fail_('SOLAPAMIENTO', 'La sesión se cruza con ' + s.codigo + ' de la misma persona.', { sesion: s.codigo });
+    }
+  });
+}
+
+function tarifaVigente_(ctx, usuarioId, tipoTrabajo, fecha) {
+  if (isEmpty_(fecha)) return null;
+  var c = activeRows_(ctx, 'TARIFAS').filter(function (t) {
+    return t.usuario_id === usuarioId && t.desde <= fecha && (isEmpty_(t.hasta) || t.hasta >= fecha);
+  });
+  var exact = c.filter(function (t) { return !isEmpty_(tipoTrabajo) && t.tipo_trabajo === tipoTrabajo; });
+  var general = c.filter(function (t) { return isEmpty_(t.tipo_trabajo); });
+  var pick = (exact.length ? exact : general).sort(function (a, b) { return a.desde < b.desde ? 1 : -1; });
+  return pick[0] || null;
+}
+
+var RULES_ = {
+  EQUIPOS: {
+    before: function (ctx, row, prev, w) {
+      row.patente_busqueda = normPlate_(row.patente);
+      var vin = normPlate_(row.vin);
+      activeRows_(ctx, 'EQUIPOS').forEach(function (e) {
+        if (e.id === row.id) return;
+        if ((row.patente_busqueda && e.patente_busqueda === row.patente_busqueda) || (vin && normPlate_(e.vin) === vin)) {
+          w.push({ code: 'DUPLICADO_POSIBLE', message: 'Posible duplicado de ' + e.codigo + ' (' + e.nombre_corto + '). Revisa antes de seguir.' });
+        }
+      });
+    }
+  },
+
+  TRABAJOS: {
+    before: function (ctx, row, prev, w) {
+      if (isEmpty_(row.estado_comercial)) row.estado_comercial = 'Por confirmar';
+      if (isEmpty_(row.estado_ejecucion)) row.estado_ejecucion = 'Pendiente';
+      if (isEmpty_(row.estado_revision)) row.estado_revision = 'Sin revisar';
+      if (isEmpty_(row.estado_pago)) row.estado_pago = 'Por confirmar';
+      if (!isEmpty_(row.fecha_inicio) && !isEmpty_(row.fecha_fin) && toMs_(row.fecha_fin) < toMs_(row.fecha_inicio)) fail_('FECHAS', 'El término real es anterior al inicio.');
+      if (!isEmpty_(row.prog_desde) && !isEmpty_(row.prog_hasta) && toMs_(row.prog_hasta) < toMs_(row.prog_desde)) fail_('FECHAS', 'La programación termina antes de empezar.');
+      var pasaAEjecutado = row.estado_ejecucion === 'Ejecutado' && (!prev || prev.estado_ejecucion !== 'Ejecutado');
+      if (pasaAEjecutado && prev) {
+        var abiertas = activeRows_(ctx, 'SESIONES').filter(function (s) { return s.trabajo_id === row.id && s.estado === 'Abierta'; });
+        if (abiertas.length) fail_('SESIONES_ABIERTAS', 'Hay ' + abiertas.length + ' sesión(es) abierta(s) en este trabajo. Ciérralas antes de marcarlo ejecutado.');
+        if (isEmpty_(row.fecha_fin)) row.fecha_fin = now_(ctx);
+      }
+      if (row.estado_ejecucion === 'Ejecutado' && isEmpty_(row.fecha_fin) && isEmpty_(row.fecha_inicio)) {
+        w.push({ code: 'SIN_FECHA', message: 'Trabajo ejecutado sin fecha real: no se podrá ordenar en el resumen.' });
+      }
+    }
+  },
+
+  ASIGNACIONES: {
+    before: function (ctx, row) {
+      var u = mustGet_(ctx, 'USUARIOS', row.usuario_id, 'Usuario');
+      if (u.activo !== true) fail_('USUARIO_INACTIVO', u.nombre + ' está inactivo.');
+      var dup = activeRows_(ctx, 'ASIGNACIONES').some(function (a) { return a.id !== row.id && a.trabajo_id === row.trabajo_id && a.usuario_id === row.usuario_id; });
+      if (dup) fail_('DUPLICADO', u.nombre + ' ya está asignado a este trabajo.');
+    }
+  },
+
+  SESIONES: {
+    before: function (ctx, row, prev, w) {
+      if (prev && !isEmpty_(prev.concepto_id) && row.concepto_id !== prev.concepto_id) fail_('DOBLE_COBRO', 'Esta sesión ya respalda el cobro ' + prev.concepto_id + '. No se puede asignar a otro.');
+      if (prev && !isEmpty_(prev.concepto_id) && (row.min_facturables !== prev.min_facturables || row.tarifa_valor !== prev.tarifa_valor)) fail_('DOBLE_COBRO', 'La sesión ya está cobrada: corrige el cobro, no la sesión.');
+      if (row.estado === 'Anulada') return;
+      var trabajo = mustGet_(ctx, 'TRABAJOS', row.trabajo_id, 'Trabajo');
+      if (row.estado === 'Abierta') {
+        if (isEmpty_(row.inicio)) fail_('REQUERIDO', 'Una sesión abierta necesita hora de inicio.');
+        if (!isEmpty_(row.fin)) fail_('VALOR_INVALIDO', 'Una sesión abierta no tiene término.');
+        var otra = activeRows_(ctx, 'SESIONES').filter(function (s) { return s.id !== row.id && s.usuario_id === row.usuario_id && s.estado === 'Abierta'; })[0];
+        if (otra) fail_('SESION_ABIERTA', 'Ya hay una sesión abierta de esta persona (' + otra.codigo + ').', { sesion: otra });
+      }
+      if (!isEmpty_(row.inicio)) {
+        row.sin_horario = false;
+        row.fecha = localDate_(row.inicio);
+        if (row.estado === 'Cerrada') {
+          if (isEmpty_(row.fin)) fail_('REQUERIDO', 'Una sesión cerrada con hora de inicio necesita hora de término.');
+          if (toMs_(row.fin) < toMs_(row.inicio)) fail_('FECHAS', 'El término de la sesión es anterior al inicio.');
+          row.duracion_min = Math.round((toMs_(row.fin) - toMs_(row.inicio)) / 60000);
+          if (row.duracion_min > 720) w.push({ code: 'SESION_LARGA', message: 'Sesión de más de 12 horas: revisa si quedó abierta por olvido.' });
+        }
+      } else {
+        if (!isEmpty_(row.fin)) fail_('VALOR_INVALIDO', 'No puede haber término sin inicio.');
+        if (row.estado === 'Cerrada' && isEmpty_(row.duracion_min)) fail_('REQUERIDO', 'Sin horario hay que informar la duración en minutos.');
+        if (isEmpty_(row.fecha)) fail_('REQUERIDO', 'Sin horario hay que informar la fecha de ejecución.');
+        if (row.precision === 'Exacta') fail_('VALOR_INVALIDO', 'Sin horario la precisión no puede ser Exacta: usa Informada o Estimada.');
+        row.sin_horario = true;
+        w.push({ code: 'SIN_HORARIO', message: 'Sesión sin horario: no se puede comprobar si se cruza con otras.' });
+      }
+      if (!isEmpty_(row.duracion_min) && Number(row.duracion_min) < 0) fail_('VALOR_INVALIDO', 'La duración no puede ser negativa.');
+      checkSessionOverlap_(ctx, row);
+      // Tarifa vigente en la fecha de ejecución (no en la de registro). Se congela al cerrar.
+      var cambioFecha = !prev || prev.fecha !== row.fecha || prev.usuario_id !== row.usuario_id || isEmpty_(row.tarifa_id);
+      if (row.estado === 'Cerrada' && isEmpty_(row.concepto_id) && cambioFecha) {
+        var tf = tarifaVigente_(ctx, row.usuario_id, trabajo.tipo_trabajo, row.fecha);
+        row.tarifa_id = tf ? tf.id : '';
+        row.tarifa_valor = tf ? tf.valor_hora : '';
+        if (!tf) w.push({ code: 'SIN_TARIFA', message: 'No hay tarifa vigente para esta persona y tipo de trabajo en ' + row.fecha + '.' });
+      }
+    },
+    anular: function (ctx, row) {
+      if (!isEmpty_(row.concepto_id)) fail_('DOBLE_COBRO', 'La sesión respalda un cobro: anula o corrige primero el cobro.');
+    }
+  },
+
+  DETALLE: {
+    before: function (ctx, row) { if (isEmpty_(row.estado_aporte)) row.estado_aporte = 'Aprobado'; }
+  },
+
+  PENDIENTES: {
+    before: function (ctx, row, prev) {
+      if (isEmpty_(row.estado_aporte)) row.estado_aporte = 'Aprobado';
+      if (isEmpty_(row.estado)) row.estado = 'Abierto';
+      if (isEmpty_(row.fecha)) row.fecha = today_(ctx);
+      if (ESTADOS_PENDIENTE_CERRADOS.indexOf(row.estado) >= 0 && isEmpty_(row.fecha_cierre)) row.fecha_cierre = today_(ctx);
+    }
+  },
+
+  CONCEPTOS: {
+    before: function (ctx, row, prev, w) {
+      if (row.aportante === 'Cliente' && Number(row.monto_cliente) > 0) w.push({ code: 'MATERIAL_CLIENTE', message: 'Material aportado por el cliente: el monto se guarda como referencia y no cuenta como venta.' });
+      if (row.etapa === 'Confirmado' && isEmpty_(row.monto_cliente) && row.aportante === 'Taller') w.push({ code: 'SIN_MONTO', message: 'Cobro confirmado sin monto.' });
+      if (prev) {
+        var imputado = sumBy_(activeRows_(ctx, 'IMPUTACIONES').filter(function (i) { return i.concepto_id === row.id; }), 'monto');
+        if (imputado > 0 && (row.aportante !== 'Taller' || row.etapa === 'Anulado')) fail_('IMPUTADO', 'Este cobro tiene pagos imputados ($' + imputado + '). Quita las imputaciones antes.');
+        if (imputado > 0 && !isEmpty_(row.monto_cliente) && Number(row.monto_cliente) < imputado) fail_('IMPUTADO', 'El monto no puede quedar bajo lo ya imputado ($' + imputado + ').');
+      }
+    },
+    anular: function (ctx, row) {
+      if (activeRows_(ctx, 'IMPUTACIONES').some(function (i) { return i.concepto_id === row.id; })) fail_('IMPUTADO', 'Tiene pagos imputados: anula primero las imputaciones.');
+      if (activeRows_(ctx, 'SESIONES').some(function (s) { return s.concepto_id === row.id; })) fail_('DOBLE_COBRO', 'Hay sesiones ligadas a este cobro: desvincúlalas primero.');
+    }
+  },
+
+  PAGOS: {
+    before: function (ctx, row, prev) {
+      if (!(Number(row.monto) > 0)) fail_('VALOR_INVALIDO', 'El pago debe ser mayor que cero.');
+      if (prev) {
+        var imputado = sumBy_(activeRows_(ctx, 'IMPUTACIONES').filter(function (i) { return i.pago_id === row.id; }), 'monto');
+        if (Number(row.monto) < imputado) fail_('IMPUTADO', 'El pago no puede quedar bajo lo ya imputado ($' + imputado + ').');
+        if (imputado > 0 && prev.confirmado === true && row.confirmado !== true) fail_('IMPUTADO', 'El pago tiene imputaciones ($' + imputado + '): anúlalas antes de quitarle la confirmación.');
+      }
+    },
+    anular: function (ctx, row) {
+      if (activeRows_(ctx, 'IMPUTACIONES').some(function (i) { return i.pago_id === row.id; })) fail_('IMPUTADO', 'Tiene imputaciones: anúlalas primero.');
+    }
+  },
+
+  IMPUTACIONES: {
+    before: function (ctx, row, prev, w) {
+      if (!(Number(row.monto) > 0)) fail_('VALOR_INVALIDO', 'La imputación debe ser mayor que cero.');
+      var pago = mustGet_(ctx, 'PAGOS', row.pago_id, 'Pago');
+      var con = mustGet_(ctx, 'CONCEPTOS', row.concepto_id, 'Cobro');
+      if (pago.cliente_id !== con.cliente_id) fail_('CLIENTE_DISTINTO', 'El pago y el cobro son de clientes distintos.');
+      if (pago.confirmado !== true) fail_('PAGO_NO_CONFIRMADO', 'El pago ' + pago.codigo + ' no está confirmado: confírmalo antes de imputarlo.');
+      if (con.aportante !== 'Taller') fail_('MATERIAL_CLIENTE', 'No se puede imputar dinero a material aportado por el cliente.');
+      if (con.etapa === 'Anulado') fail_('ANULADO', 'El cobro está anulado.');
+      if (isEmpty_(con.monto_cliente)) fail_('SIN_MONTO', 'El cobro ' + con.codigo + ' no tiene monto: no se le puede imputar.');
+      if (con.etapa !== 'Confirmado') w.push({ code: 'NO_CONFIRMADO', message: 'El cobro ' + con.codigo + ' está ' + con.etapa + ': queda como abono anticipado.' });
+      var otras = activeRows_(ctx, 'IMPUTACIONES').filter(function (i) { return i.id !== row.id; });
+      var enPago = sumBy_(otras.filter(function (i) { return i.pago_id === row.pago_id; }), 'monto') + Number(row.monto);
+      if (enPago > Number(pago.monto)) fail_('SOBRE_PAGO', 'Las imputaciones ($' + enPago + ') superan el pago ' + pago.codigo + ' ($' + pago.monto + ').');
+      var enCon = sumBy_(otras.filter(function (i) { return i.concepto_id === row.concepto_id; }), 'monto') + Number(row.monto);
+      if (enCon > Number(con.monto_cliente)) fail_('SOBRE_COBRO', 'Las imputaciones ($' + enCon + ') superan el cobro ' + con.codigo + ' ($' + con.monto_cliente + ').');
+    }
+  },
+
+  DOC_CONCEPTOS: {
+    before: function (ctx, row, prev, w) {
+      if (!(Number(row.monto) > 0)) fail_('VALOR_INVALIDO', 'El monto documentado debe ser mayor que cero.');
+      var doc = mustGet_(ctx, 'DOC_VENTA', row.documento_id, 'Documento');
+      var con = mustGet_(ctx, 'CONCEPTOS', row.concepto_id, 'Cobro');
+      if (doc.cliente_id !== con.cliente_id) fail_('CLIENTE_DISTINTO', 'Documento y cobro son de clientes distintos.');
+      var confirmado = (con.etapa === 'Confirmado' && con.aportante === 'Taller') ? Number(con.monto_cliente) || 0 : 0;
+      var documentado = sumBy_(activeRows_(ctx, 'DOC_CONCEPTOS').filter(function (d) { return d.id !== row.id && d.concepto_id === row.concepto_id; }), 'monto') + Number(row.monto);
+      if (documentado > confirmado) w.push({ code: 'DOCUMENTADO_SOBRE_CONFIRMADO', message: 'Se documentan $' + documentado + ' para ' + con.codigo + ', sobre el importe comercial confirmado ($' + confirmado + ').' });
+    }
+  },
+
+  DOC_VENTA: {
+    before: function (ctx, row, prev, w) {
+      if (!isEmpty_(row.neto) && !isEmpty_(row.iva) && !isEmpty_(row.total) && Number(row.neto) + Number(row.iva) !== Number(row.total)) w.push({ code: 'TOTAL', message: 'Neto + IVA no coincide con el total.' });
+    }
+  },
+
+  RECEPCIONES: {
+    before: function (ctx, row, prev, w) {
+      if (!(Number(row.cantidad) > 0)) fail_('VALOR_INVALIDO', 'La cantidad recibida debe ser mayor que cero.');
+      if (prev && prev.estado === 'Confirmada') {
+        // Ya entró al inventario: lo que define el movimiento físico no cambia (pedido, cliente, cantidad, unidad, estado, movimiento).
+        var fijos = ['cliente_id', 'pedido_id', 'cantidad', 'unidad', 'estado'];
+        if (!isEmpty_(prev.mov_id)) fijos.push('mov_id');
+        var cambiados = fijos.filter(function (k) { return String(row[k]) !== String(prev[k]); });
+        if (cambiados.length) fail_('CONFIRMADA', 'La recepción ya entró al inventario: no se puede cambiar ' + cambiados.join(', ') + '. Registra un ajuste en vez de cambiarla.');
+        if (isEmpty_(row.evidencia)) fail_('REQUERIDO', 'Una recepción confirmada no puede quedar sin evidencia.');
+      }
+      var ped = mustGet_(ctx, 'PEDIDOS', row.pedido_id, 'Pedido');
+      if (isEmpty_(row.unidad)) row.unidad = ped.unidad;
+      if (!isEmpty_(ped.unidad) && !isEmpty_(row.unidad) && ped.unidad !== row.unidad) w.push({ code: 'UNIDAD', message: 'La unidad recibida (' + row.unidad + ') no coincide con la del pedido (' + ped.unidad + ').' });
+      var confirmando = row.estado === 'Confirmada' && (!prev || prev.estado !== 'Confirmada');
+      if (confirmando) {
+        // Todo lo que podría fallar al entrar al inventario se revisa antes de guardar nada.
+        if (isEmpty_(row.evidencia)) fail_('REQUERIDO', 'Para confirmar una recepción indica la evidencia (guía, factura o foto).');
+        if (isEmpty_(row.unidad)) fail_('REQUERIDO', 'Para entrar al inventario la recepción necesita unidad.');
+        if (!isEmpty_(ped.item_id)) {
+          var it = mustGet_(ctx, 'INVENTARIO', ped.item_id, 'Artículo del pedido');
+          if (it.unidad !== row.unidad) fail_('UNIDAD_INCOMPATIBLE', 'El artículo ' + it.codigo + ' se lleva en ' + it.unidad + ': la recepción viene en ' + row.unidad + '. Corrige la unidad o el artículo antes de confirmar.');
+        }
+      }
+      if (row.estado === 'Confirmada' && !isEmpty_(ped.cantidad)) {
+        var recibido = sumBy_(activeRows_(ctx, 'RECEPCIONES').filter(function (r) { return r.id !== row.id && r.pedido_id === row.pedido_id && r.estado === 'Confirmada'; }), 'cantidad') + Number(row.cantidad);
+        if (recibido > Number(ped.cantidad)) w.push({ code: 'SOBRE_PEDIDO', message: 'Recibido ' + recibido + ' de ' + ped.cantidad + ' pedidos: se recibe más de lo pedido.' });
+      }
+    },
+    after: function (ctx, row, prev, w) {
+      if (row.estado !== 'Confirmada' || (prev && prev.estado === 'Confirmada') || !isEmpty_(row.mov_id)) return;
+      var ped = mustGet_(ctx, 'PEDIDOS', row.pedido_id, 'Pedido');
+      var itemId = ped.item_id;
+      if (isEmpty_(itemId)) {
+        var item = insertSystem_(ctx, 'INVENTARIO', {
+          articulo: ped.articulo, codigo_articulo: ped.codigo_articulo, unidad: row.unidad,
+          propietario: 'Cliente', cliente_id: row.cliente_id, conteo_inicial: 0, conteo_confirmado: true,
+          fecha_conteo: row.fecha, notas: 'Creado al recibir ' + ped.codigo
+        });
+        itemId = item.id;
+        sysUpdate_(ctx, 'PEDIDOS', ped.id, { item_id: itemId });
+      }
+      var mov;
+      ctx._recepcionEnCurso = row.id; // única vía para crear una entrada ligada a recepción
+      try {
+        mov = insertSystem_(ctx, 'MOV_INVENTARIO', {
+          item_id: itemId, fecha: now_(ctx), tipo: 'Entrada', cantidad: row.cantidad, unidad: row.unidad,
+          recepcion_id: row.id, cliente_id: row.cliente_id, responsable_id: row.responsable_id, notas: 'Recepción ' + row.codigo
+        });
+      } finally { delete ctx._recepcionEnCurso; }
+      sysUpdate_(ctx, 'RECEPCIONES', row.id, { mov_id: mov.id });
+    },
+    anular: function (ctx, row) {
+      if (row.estado === 'Confirmada') fail_('CONFIRMADA', 'La recepción ya entró al inventario. Registra un ajuste.');
+    }
+  },
+
+  PEDIDOS: {
+    before: function (ctx, row, prev) {
+      if (prev && !isEmpty_(prev.item_id) && row.item_id !== prev.item_id) {
+        var conf = activeRows_(ctx, 'RECEPCIONES').some(function (r) { return r.pedido_id === row.id && r.estado === 'Confirmada'; });
+        if (conf) fail_('CONFIRMADA', 'El pedido ya tiene recepciones en inventario: no se puede cambiar su artículo.');
+      }
+    }
+  },
+
+  INVENTARIO: {
+    before: function (ctx, row, prev) {
+      if (prev) {
+        // Con movimientos o recepciones confirmadas, el artículo no cambia de dueño ni de unidad: rompería su historia física.
+        var fijos = ['propietario', 'cliente_id', 'unidad'].filter(function (k) { return String(row[k]) !== String(prev[k]); });
+        if (fijos.length && articuloConHistoria_(ctx, row.id)) fail_('CON_MOVIMIENTOS', 'El artículo ' + prev.codigo + ' ya tiene movimientos: no se puede cambiar ' + fijos.join(', ') + '. Registra una salida y una entrada (traspaso) en vez de editarlo.');
+      }
+      if (row.propietario === 'Cliente' && isEmpty_(row.cliente_id)) fail_('REQUERIDO', 'Si el propietario es un cliente, indica cuál.');
+      if (row.conteo_confirmado === true && isEmpty_(row.conteo_inicial)) fail_('REQUERIDO', 'Conteo confirmado sin cantidad.');
+    },
+    anular: function (ctx, row) {
+      if (articuloConHistoria_(ctx, row.id)) fail_('CON_MOVIMIENTOS', 'El artículo ' + row.codigo + ' tiene movimientos: no se anula. Deja su stock en cero con un ajuste.');
+    }
+  },
+
+  MOV_INVENTARIO: {
+    before: function (ctx, row, prev) {
+      if (!(Number(row.cantidad) > 0)) fail_('VALOR_INVALIDO', 'La cantidad del movimiento debe ser mayor que cero.');
+      var item = mustGet_(ctx, 'INVENTARIO', row.item_id, 'Artículo');
+      if (item.unidad !== row.unidad) fail_('UNIDAD_INCOMPATIBLE', 'El artículo se lleva en ' + item.unidad + ', no en ' + row.unidad + '.');
+      // Material de un cliente: el movimiento es de ese mismo cliente.
+      if (item.propietario === 'Cliente') {
+        if (isEmpty_(row.cliente_id)) row.cliente_id = item.cliente_id;
+        else if (row.cliente_id !== item.cliente_id) fail_('CLIENTE_DISTINTO', 'El artículo ' + item.codigo + ' es material de otro cliente.');
+      }
+      if (prev && !isEmpty_(prev.recepcion_id) && !isSystem_(ctx)) fail_('RECEPCION', 'Este movimiento lo creó una recepción confirmada: no se edita. Registra un ajuste.');
+      if (!isEmpty_(row.recepcion_id)) {
+        if (!isSystem_(ctx) && ctx._recepcionEnCurso !== row.recepcion_id) fail_('RECEPCION', 'Las entradas por recepción las crea el sistema al confirmar la recepción. Para otro movimiento deja la recepción vacía.');
+        var err = movRecepcionError_(ctx, row);
+        if (err) fail_('RECEPCION', err);
+        var otra = activeRows_(ctx, 'MOV_INVENTARIO').some(function (m) { return m.id !== row.id && m.recepcion_id === row.recepcion_id; });
+        if (otra) fail_('DUPLICADO', 'Esa recepción ya tiene su entrada de inventario.');
+      }
+    },
+    anular: function (ctx, row) {
+      if (!isEmpty_(row.recepcion_id)) fail_('RECEPCION', 'Este movimiento viene de una recepción confirmada: registra un ajuste en vez de anularlo.');
+    }
+  },
+
+  TARIFAS: {
+    before: function (ctx, row) {
+      if (!isEmpty_(row.hasta) && row.hasta < row.desde) fail_('FECHAS', 'La tarifa termina antes de empezar.');
+      var choca = activeRows_(ctx, 'TARIFAS').some(function (t) {
+        if (t.id === row.id || t.usuario_id !== row.usuario_id || String(t.tipo_trabajo || '') !== String(row.tipo_trabajo || '')) return false;
+        var aFin = isEmpty_(row.hasta) ? '9999-12-31' : row.hasta, bFin = isEmpty_(t.hasta) ? '9999-12-31' : t.hasta;
+        return row.desde <= bFin && t.desde <= aFin;
+      });
+      if (choca) fail_('TARIFA_SUPERPUESTA', 'Ya hay una tarifa para esa persona y tipo de trabajo en esas fechas. Cierra la anterior con fecha "hasta".');
+    }
+  },
+
+  VALORES_TRABAJADOR: {
+    before: function (ctx, row) { if (!isEmpty_(row.hasta) && row.hasta < row.desde) fail_('FECHAS', 'El valor termina antes de empezar.'); }
+  },
+
+  USUARIOS: {
+    before: function (ctx, row) {
+      row.correo = String(row.correo || '').toLowerCase();
+      if (activeRows_(ctx, 'USUARIOS').some(function (u) { return u.id !== row.id && u.correo === row.correo; })) fail_('DUPLICADO', 'Ya existe un usuario con ese correo.');
+    }
+  },
+
+  LISTAS: {
+    before: function (ctx, row) {
+      if (activeRows_(ctx, 'LISTAS').some(function (l) { return l.id !== row.id && l.lista === row.lista && l.valor === row.valor; })) fail_('DUPLICADO', 'Ese valor ya existe en la lista ' + row.lista + '.');
+    }
+  }
+};
+
+/** ¿El artículo tiene movimientos vigentes o recepciones confirmadas (vía pedidos)? */
+function articuloConHistoria_(ctx, itemId) {
+  if (activeRows_(ctx, 'MOV_INVENTARIO').some(function (m) { return m.item_id === itemId; })) return true;
+  var pedidos = {};
+  activeRows_(ctx, 'PEDIDOS').forEach(function (p) { if (p.item_id === itemId) pedidos[p.id] = true; });
+  return activeRows_(ctx, 'RECEPCIONES').some(function (r) { return pedidos[r.pedido_id] && r.estado === 'Confirmada'; });
+}
+
+/** Un movimiento ligado a una recepción tiene que calzar con ella. Devuelve el problema o null. */
+function movRecepcionError_(ctx, mov) {
+  var rc = getRow_(ctx, 'RECEPCIONES', mov.recepcion_id);
+  if (!rc) return 'la recepción ligada no existe';
+  if (rc.anulado === true) return 'la recepción ' + rc.codigo + ' está anulada';
+  if (rc.estado !== 'Confirmada') return 'la recepción ' + rc.codigo + ' no está confirmada';
+  if (mov.tipo !== 'Entrada') return 'un movimiento de recepción debe ser Entrada';
+  if (Number(mov.cantidad) !== Number(rc.cantidad)) return 'la cantidad (' + mov.cantidad + ') no calza con la recepción ' + rc.codigo + ' (' + rc.cantidad + ')';
+  if (mov.unidad !== rc.unidad) return 'la unidad (' + mov.unidad + ') no calza con la recepción ' + rc.codigo + ' (' + rc.unidad + ')';
+  var ped = getRow_(ctx, 'PEDIDOS', rc.pedido_id);
+  if (ped && !isEmpty_(ped.item_id) && ped.item_id !== mov.item_id) return 'el artículo no es el del pedido de la recepción ' + rc.codigo;
+  return null;
+}
+
+/* ───────────────────────── sesiones de tiempo ───────────────────────── */
+
+function openSessionOf_(ctx, usuarioId) {
+  return activeRows_(ctx, 'SESIONES').filter(function (s) { return s.usuario_id === usuarioId && s.estado === 'Abierta'; })[0] || null;
+}
+
+function sesionIniciar_(ctx, p) {
+  var dup = findByOp_(ctx, 'SESIONES', p.op_id);
+  if (dup) { checkSameOp_(ctx, dup, p.op_id); return { data: project_(ctx, 'SESIONES', dup), warnings: [], duplicate: true }; }
+  var uid = ctx.user.id;
+  if (!isEmpty_(p.usuario_id) && p.usuario_id !== ctx.user.id) {
+    requireAdmin_(ctx);
+    uid = p.usuario_id;
+  }
+  var trabajo = mustGet_(ctx, 'TRABAJOS', p.trabajo_id, 'Trabajo');
+  if (trabajo.anulado === true || trabajo.estado_comercial === 'Anulado') fail_('ANULADO', 'El trabajo está anulado.');
+  if (trabajo.estado_ejecucion === 'Ejecutado') fail_('TRABAJO_CERRADO', 'El trabajo ya está ejecutado. Para seguir, crea un trabajo nuevo o reábrelo.');
+  if (isTecnico_(ctx) && !assigned_(ctx).trabajos[trabajo.id]) fail_('NO_PERMITIDO', 'Este trabajo no está asignado a ti.');
+  var warnings = [];
+  var abierta = openSessionOf_(ctx, uid);
+  if (abierta) {
+    if (abierta.trabajo_id === trabajo.id && !p.cerrar_abierta) fail_('SESION_ABIERTA', 'Ya tienes una sesión abierta en este trabajo.', { sesion: project_(ctx, 'SESIONES', abierta) });
+    if (!p.cerrar_abierta) fail_('SESION_ABIERTA', 'Tienes una sesión abierta en otro trabajo. Páusala para cambiar.', { sesion: project_(ctx, 'SESIONES', abierta) });
+    var cerrada = cerrarSesionInterna_(ctx, abierta, p.motivo_cambio || 'Otro trabajo', null);
+    warnings = warnings.concat(cerrada.warnings);
+  }
+  var at = now_(ctx);
+  var res = insertRow_(ctx, 'SESIONES', {
+    cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, usuario_id: uid, registrado_por: ctx.user.id,
+    actividad: p.actividad || '', modalidad: 'En vivo', dispositivo: p.dispositivo || '', fecha: localDate_(at),
+    inicio: at, estado: 'Abierta', precision: 'Exacta'
+  }, { system: true, opId: p.op_id });
+  if (trabajo.estado_ejecucion === 'Pendiente') {
+    var ch = { estado_ejecucion: 'En curso' };
+    if (isEmpty_(trabajo.fecha_inicio)) ch.fecha_inicio = at;
+    sysUpdate_(ctx, 'TRABAJOS', trabajo.id, ch, 'Inicio de sesión');
+  }
+  return { data: project_(ctx, 'SESIONES', res.row), warnings: warnings.concat(res.warnings) };
+}
+
+function cerrarSesionInterna_(ctx, s, motivo, opId, extra) {
+  var ch = { estado: 'Cerrada', fin: now_(ctx) };
+  if (!isEmpty_(motivo)) ch.motivo_pausa = motivo;
+  Object.keys(extra || {}).forEach(function (k) { if (!isEmpty_(extra[k])) ch[k] = extra[k]; });
+  return updateRow_(ctx, 'SESIONES', s.id, null, ch, { system: true, skipVersion: true, opId: opId, allowCalc: true, noRect: true });
+}
+
+function sesionCerrar_(ctx, p, conMotivo) {
+  var s = mustGet_(ctx, 'SESIONES', p.sesion_id, 'Sesión');
+  if (s.usuario_id !== ctx.user.id) requireAdmin_(ctx);
+  if (p.op_id && s.ultima_op === p.op_id) { checkSameOp_(ctx, s, p.op_id); return { data: project_(ctx, 'SESIONES', s), warnings: [], duplicate: true }; }
+  if (s.estado !== 'Abierta') fail_('YA_CERRADA', 'La sesión ' + s.codigo + ' ya estaba cerrada.');
+  if (conMotivo && isEmpty_(p.motivo_pausa)) fail_('REQUERIDO', 'Indica el motivo de la pausa.');
+  if (!isEmpty_(p.motivo_pausa)) normalizeValue_(ctx, 'SESIONES', colMap_('SESIONES').motivo_pausa, p.motivo_pausa, undefined);
+  var res = cerrarSesionInterna_(ctx, s, p.motivo_pausa, p.op_id, { notas: p.notas, actividad: p.actividad });
+  return { data: project_(ctx, 'SESIONES', res.row), warnings: res.warnings };
+}
+
+/** Sesión cargada después (solo administración en esta versión). */
+function sesionPosterior_(ctx, p) {
+  requireAdmin_(ctx);
+  var trabajo = mustGet_(ctx, 'TRABAJOS', p.trabajo_id, 'Trabajo');
+  var d = {
+    cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, usuario_id: p.usuario_id || ctx.user.id,
+    registrado_por: ctx.user.id === 'sistema' ? (p.usuario_id || '') : ctx.user.id,
+    actividad: p.actividad || '', modalidad: 'Posterior', dispositivo: p.dispositivo || '',
+    inicio: p.inicio || '', fin: p.fin || '', duracion_min: isEmpty_(p.inicio) ? p.duracion_min : '',
+    fecha: p.fecha || '', precision: p.precision || 'Informada', estado: 'Cerrada', notas: p.notas || ''
+  };
+  var res = insertRow_(ctx, 'SESIONES', d, { system: true, opId: p.op_id });
+  return { data: res.row, warnings: res.warnings };
+}
+
+/** Crea el cobro de mano de obra a partir de sesiones cerradas, sin cobrar dos veces. */
+function conceptoDesdeSesiones_(ctx, p) {
+  requireAdmin_(ctx);
+  var trabajo = mustGet_(ctx, 'TRABAJOS', p.trabajo_id, 'Trabajo');
+  var ids = p.sesion_ids || [];
+  if (!ids.length) fail_('REQUERIDO', 'Elige las sesiones a cobrar.');
+  var vistas = {};
+  ids.forEach(function (id) { if (vistas[id]) fail_('DUPLICADO', 'Una sesión está repetida en la selección: cada sesión se cobra una sola vez.'); vistas[id] = true; });
+  var existente = findByOp_(ctx, 'CONCEPTOS', p.op_id);
+  if (existente) checkSameOp_(ctx, existente, p.op_id);
+  var sesiones = ids.map(function (id) { return mustGet_(ctx, 'SESIONES', id, 'Sesión'); });
+  var warnings = [];
+  sesiones.forEach(function (s) {
+    if (s.trabajo_id !== trabajo.id) fail_('VALOR_INVALIDO', s.codigo + ' es de otro trabajo.');
+    if (s.estado !== 'Cerrada' || s.anulado === true) fail_('VALOR_INVALIDO', s.codigo + ' no está cerrada.');
+    if (!isEmpty_(s.concepto_id) && !(existente && s.concepto_id === existente.id)) fail_('DOBLE_COBRO', s.codigo + ' ya respalda otro cobro.');
+    if (isEmpty_(s.min_facturables) && !p.usar_trabajados) fail_('REQUERIDO', s.codigo + ' no tiene minutos facturables. Defínelos o usa los trabajados.');
+    if (isEmpty_(s.tarifa_valor)) fail_('SIN_TARIFA', s.codigo + ' no tiene tarifa vigente.');
+  });
+  if (!existente) {
+    var manual = activeRows_(ctx, 'CONCEPTOS').filter(function (c) {
+      return c.trabajo_id === trabajo.id && c.tipo === 'Mano de obra' && !activeRows_(ctx, 'SESIONES').some(function (s) { return s.concepto_id === c.id; });
+    });
+    if (manual.length) warnings.push({ code: 'POSIBLE_DOBLE_COBRO', message: 'El trabajo ya tiene mano de obra registrada a mano (' + manual.map(function (c) { return c.codigo; }).join(', ') + '). Revisa que no se cobre dos veces.' });
+  }
+  var total = 0;
+  sesiones.forEach(function (s) {
+    var min = isEmpty_(s.min_facturables) ? Number(s.duracion_min) || 0 : Number(s.min_facturables);
+    total += min * Number(s.tarifa_valor) / 60;
+  });
+  var con = existente || insertRow_(ctx, 'CONCEPTOS', {
+    cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, equipo_id: trabajo.equipo_id, tipo: 'Mano de obra',
+    descripcion: p.descripcion || ('Mano de obra ' + trabajo.codigo), monto_cliente: Math.round(total),
+    aportante: 'Taller', etapa: 'Cotizado', fuente: 'Sesiones ' + sesiones.map(function (s) { return s.codigo; }).join(', ')
+  }, { system: true, opId: p.op_id }).row;
+  sesiones.forEach(function (s) {
+    if (s.concepto_id === con.id) return;
+    var ch = { concepto_id: con.id };
+    if (isEmpty_(s.min_facturables)) ch.min_facturables = s.duracion_min;
+    sysUpdate_(ctx, 'SESIONES', s.id, ch, 'Ligada a cobro ' + con.codigo);
+  });
+  return { data: con, warnings: warnings };
+}
+
+function aporteRevisar_(ctx, p) {
+  requireAdmin_(ctx);
+  if (['DETALLE', 'PENDIENTES'].indexOf(p.tabla) < 0) fail_('VALOR_INVALIDO', 'Solo se revisan aportes de DETALLE o PENDIENTES.');
+  if (['Aprobado', 'Rechazado'].indexOf(p.decision) < 0) fail_('VALOR_INVALIDO', 'Decisión: Aprobado o Rechazado.');
+  var r = mustGet_(ctx, p.tabla, p.id);
+  if (r.estado_aporte !== 'Borrador') fail_('VALOR_INVALIDO', 'El aporte ya fue revisado.');
+  var res = updateRow_(ctx, p.tabla, p.id, p.version, { estado_aporte: p.decision, revisado_por: ctx.user.id === 'sistema' ? '' : ctx.user.id }, { opId: p.op_id, motivo: p.motivo || '', noRect: true });
+  return { data: res.row, warnings: res.warnings };
+}
+
+/* ───────────────────────── vistas calculadas ───────────────────────── */
+
+function ultimaEjecucion_(trabajos) {
+  var ej = trabajos.filter(function (t) { return t.estado_ejecucion === 'Ejecutado' && t.estado_comercial !== 'Anulado'; });
+  ej.sort(function (a, b) {
+    var fa = a.fecha_fin || a.fecha_inicio || '', fb = b.fecha_fin || b.fecha_inicio || '';
+    return fa < fb ? 1 : fa > fb ? -1 : 0;
+  });
+  return ej[0] || null;
+}
+
+function pendienteVigente_(p) {
+  return ESTADOS_PENDIENTE_CERRADOS.indexOf(p.estado) < 0 && p.estado_aporte !== 'Rechazado';
+}
+
+/** RESUMEN: primero el equipo con la ejecución más reciente; datos tomados de ese mismo trabajo. */
+function vistaResumen_(ctx, p) {
+  var equipos = rows_(ctx, 'EQUIPOS').filter(function (e) { return e.anulado !== true && rowVisible_(ctx, 'EQUIPOS', e) && (!p.cliente_id || e.cliente_id === p.cliente_id); });
+  var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return rowVisible_(ctx, 'TRABAJOS', t); });
+  var pendientes = activeRows_(ctx, 'PENDIENTES').filter(function (x) { return rowVisible_(ctx, 'PENDIENTES', x); });
+  var clientes = {};
+  if (!isTecnico_(ctx)) rows_(ctx, 'CLIENTES').forEach(function (c) { clientes[c.id] = c.nombre; });
+  var out = equipos.map(function (e) {
+    var te = trabajos.filter(function (t) { return t.equipo_id === e.id; });
+    var u = ultimaEjecucion_(te);
+    var enCurso = te.filter(function (t) { return t.estado_ejecucion === 'En curso'; }).length;
+    var item = {
+      equipo_id: e.id, codigo: e.codigo, nombre_corto: e.nombre_corto, marca: e.marca, modelo: e.modelo, patente: e.patente, unidad_uso: e.unidad_uso,
+      ultimo_trabajo: u ? u.codigo : '', ultimo_trabajo_id: u ? u.id : '', ultima_fecha: u ? (u.fecha_fin || u.fecha_inicio) : '',
+      ultima_descripcion: u ? String(u.descripcion || '').slice(0, 280) : '',
+      km: u ? u.km : '', horas_equipo: u ? u.horas_equipo : '', proxima_km: u ? u.proxima_km : '', proxima_horas: u ? u.proxima_horas : '', proxima_fecha: u ? u.proxima_fecha : '',
+      trabajos: te.length, en_curso: enCurso, pendientes_vigentes: pendientes.filter(function (x) { return x.equipo_id === e.id && pendienteVigente_(x); }).length
+    };
+    if (!isTecnico_(ctx)) { item.cliente_id = e.cliente_id; item.cliente = clientes[e.cliente_id] || ''; }
+    return item;
+  });
+  out.sort(function (a, b) {
+    if (a.ultima_fecha && !b.ultima_fecha) return -1;
+    if (!a.ultima_fecha && b.ultima_fecha) return 1;
+    if (a.ultima_fecha !== b.ultima_fecha) return a.ultima_fecha < b.ultima_fecha ? 1 : -1;
+    return String(a.nombre_corto).localeCompare(String(b.nombre_corto));
+  });
+  return { data: out, warnings: [] };
+}
+
+function horasDe_(sesiones) {
+  var t = 0, f = 0;
+  sesiones.forEach(function (s) { if (s.estado !== 'Anulada') { t += Number(s.duracion_min) || 0; f += Number(s.min_facturables) || 0; } });
+  return { trabajados_min: t, facturables_min: f };
+}
+
+/** El técnico ve sus minutos trabajados, no los facturables (dato comercial). */
+function horasVisibles_(ctx, h) {
+  if (isTecnico_(ctx)) delete h.facturables_min;
+  return h;
+}
+
+/** Ficha del vehículo: datos, referencias, trabajos con detalle y horas, pendientes vigentes e históricos. */
+function vistaFicha_(ctx, p) {
+  var e = mustGet_(ctx, 'EQUIPOS', p.equipo_id, 'Equipo');
+  if (!rowVisible_(ctx, 'EQUIPOS', e)) fail_('NO_PERMITIDO', 'No tienes acceso a este equipo.');
+  var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return t.equipo_id === e.id && rowVisible_(ctx, 'TRABAJOS', t); });
+  trabajos.sort(function (a, b) {
+    var fa = a.fecha_fin || a.fecha_inicio || a.prog_desde || a.creado_en, fb = b.fecha_fin || b.fecha_inicio || b.prog_desde || b.creado_en;
+    return fa < fb ? 1 : -1;
+  });
+  var detalle = activeRows_(ctx, 'DETALLE');
+  var sesiones = activeRows_(ctx, 'SESIONES');
+  var pend = activeRows_(ctx, 'PENDIENTES').filter(function (x) { return x.equipo_id === e.id && rowVisible_(ctx, 'PENDIENTES', x); });
+  var data = {
+    equipo: project_(ctx, 'EQUIPOS', e),
+    referencias: activeRows_(ctx, 'REFERENCIAS').filter(function (r) { return r.equipo_id === e.id && rowVisible_(ctx, 'REFERENCIAS', r); }).map(function (r) { return project_(ctx, 'REFERENCIAS', r); }),
+    trabajos: trabajos.map(function (t) {
+      var ses = sesiones.filter(function (s) { return s.trabajo_id === t.id && (!isTecnico_(ctx) || s.usuario_id === ctx.user.id); });
+      return {
+        trabajo: project_(ctx, 'TRABAJOS', t),
+        detalle: detalle.filter(function (d) { return d.trabajo_id === t.id && rowVisible_(ctx, 'DETALLE', d); }).map(function (d) { return project_(ctx, 'DETALLE', d); }),
+        horas: horasVisibles_(ctx, horasDe_(ses))
+      };
+    }),
+    pendientes_vigentes: pend.filter(pendienteVigente_).map(function (x) { return project_(ctx, 'PENDIENTES', x); }),
+    pendientes_historicos: pend.filter(function (x) { return !pendienteVigente_(x); }).map(function (x) { return project_(ctx, 'PENDIENTES', x); })
+  };
+  return { data: data, warnings: [] };
+}
+
+/** Control económico por cliente: revisa cada pago, cada cobro y cada vínculo. */
+function vistaControlEconomico_(ctx, p) {
+  requireAdmin_(ctx);
+  if (isEmpty_(p.cliente_id)) fail_('REQUERIDO', 'Indica el cliente.');
+  var cid = p.cliente_id;
+  var conceptos = activeRows_(ctx, 'CONCEPTOS').filter(function (c) { return c.cliente_id === cid; });
+  var pagos = activeRows_(ctx, 'PAGOS').filter(function (x) { return x.cliente_id === cid; });
+  var imps = activeRows_(ctx, 'IMPUTACIONES').filter(function (x) { return x.cliente_id === cid; });
+  var docs = activeRows_(ctx, 'DOC_CONCEPTOS').filter(function (x) { return x.cliente_id === cid; });
+  var errores = [], alertas = [];
+  var cById = {}, pById = {};
+  conceptos.forEach(function (c) { cById[c.id] = c; });
+  pagos.forEach(function (x) { pById[x.id] = x; });
+
+  imps.forEach(function (i) {
+    var c = getRow_(ctx, 'CONCEPTOS', i.concepto_id), pg = getRow_(ctx, 'PAGOS', i.pago_id);
+    if (!c) errores.push(i.codigo + ': imputa a un cobro inexistente');
+    else if (c.anulado === true || c.etapa === 'Anulado') errores.push(i.codigo + ': imputa a un cobro anulado (' + c.codigo + ')');
+    else if (c.aportante !== 'Taller') errores.push(i.codigo + ': imputa a material del cliente (' + c.codigo + ')');
+    else if (c.cliente_id !== cid) errores.push(i.codigo + ': el cobro es de otro cliente');
+    if (!pg) errores.push(i.codigo + ': el pago no existe');
+    else if (pg.anulado === true) errores.push(i.codigo + ': el pago está anulado (' + pg.codigo + ')');
+    else if (pg.cliente_id !== cid) errores.push(i.codigo + ': el pago es de otro cliente');
+    else if (pg.confirmado !== true) errores.push(i.codigo + ': imputa un pago sin confirmar (' + pg.codigo + ')');
+  });
+
+  var detConceptos = conceptos.map(function (c) {
+    var imputado = sumBy_(imps.filter(function (i) { return i.concepto_id === c.id; }), 'monto');
+    var documentado = sumBy_(docs.filter(function (d) { return d.concepto_id === c.id; }), 'monto');
+    var esVenta = c.aportante === 'Taller' && c.etapa === 'Confirmado';
+    var monto = isEmpty_(c.monto_cliente) ? null : Number(c.monto_cliente);
+    if (imputado > (monto || 0) && c.aportante === 'Taller') errores.push(c.codigo + ': imputado $' + imputado + ' supera el monto $' + (monto || 0));
+    if (esVenta && monto === null) alertas.push(c.codigo + ': cobro confirmado sin monto');
+    if (documentado > (esVenta ? monto || 0 : 0)) alertas.push(c.codigo + ': documentado $' + documentado + ' sobre el importe confirmado $' + (esVenta ? monto || 0 : 0));
+    return { concepto_id: c.id, codigo: c.codigo, descripcion: c.descripcion, tipo: c.tipo, etapa: c.etapa, aportante: c.aportante, monto: monto, cuenta_como_venta: esVenta, imputado: imputado, por_cubrir: esVenta ? (monto || 0) - imputado : null, documentado: documentado };
+  });
+  var detPagos = pagos.map(function (x) {
+    var imputado = sumBy_(imps.filter(function (i) { return i.pago_id === x.id; }), 'monto');
+    if (imputado > Number(x.monto)) errores.push(x.codigo + ': imputado $' + imputado + ' supera el pago $' + x.monto);
+    if (x.confirmado !== true) alertas.push(x.codigo + ': pago sin confirmar');
+    return { pago_id: x.id, codigo: x.codigo, fecha: x.fecha, monto: Number(x.monto), confirmado: x.confirmado === true, imputado: imputado, sin_asignar: Number(x.monto) - imputado };
+  });
+  var cobrado = sumBy_(detConceptos.filter(function (c) { return c.cuenta_como_venta; }), 'monto');
+  var pagado = sumBy_(detPagos.filter(function (x) { return x.confirmado; }), 'monto');
+  var imputadoVentas = sumBy_(detConceptos.filter(function (c) { return c.cuenta_como_venta; }), 'imputado');
+  var imputadoTotal = sumBy_(imps, 'monto');
+  var totales = {
+    cobrado_confirmado: cobrado, pagado_confirmado: pagado, imputado: imputadoTotal,
+    saldo_por_cobrar: cobrado - imputadoVentas, abonos_anticipados: imputadoTotal - imputadoVentas, pago_sin_imputar: pagado - imputadoTotal
+  };
+  if (totales.pago_sin_imputar < 0) errores.push('Se imputó más de lo pagado confirmado');
+  // Un cobro confirmado sin monto deja el total desconocido: no se publica un saldo que parezca exacto.
+  var desconocidos = detConceptos.filter(function (c) { return c.cuenta_como_venta && c.monto === null; }).map(function (c) { return c.codigo; });
+  totales.montos_desconocidos = desconocidos;
+  if (desconocidos.length) { totales.cobrado_confirmado = null; totales.saldo_por_cobrar = null; }
+  var estado = errores.length ? 'REVISAR' : desconocidos.length ? 'INCOMPLETO' : 'OK';
+  return { data: { estado: estado, totales: totales, errores: errores, alertas: alertas, conceptos: detConceptos, pagos: detPagos }, warnings: [] };
+}
+
+/** Stock calculado: conteo inicial confirmado + entradas − salidas ± ajustes. Sin conteo confirmado = desconocido. */
+function vistaStock_(ctx, p) {
+  requireAdmin_(ctx);
+  var movs = activeRows_(ctx, 'MOV_INVENTARIO');
+  var items = activeRows_(ctx, 'INVENTARIO').filter(function (i) { return !p.cliente_id || i.cliente_id === p.cliente_id; });
+  var errores = [];
+  var out = items.map(function (it) {
+    var m = movs.filter(function (x) { return x.item_id === it.id; });
+    var neto = 0;
+    m.forEach(function (x) {
+      if (x.unidad !== it.unidad) { errores.push(x.codigo + ': unidad ' + x.unidad + ' distinta de ' + it.unidad + ' (no se cuenta)'); return; }
+      if (!isEmpty_(x.recepcion_id)) {
+        var er = movRecepcionError_(ctx, x);
+        if (er) { errores.push(x.codigo + ': ' + er + ' (no se cuenta)'); return; }
+      }
+      if (it.propietario === 'Cliente' && !isEmpty_(x.cliente_id) && x.cliente_id !== it.cliente_id) { errores.push(x.codigo + ': movimiento de otro cliente sobre material de ' + it.codigo + ' (no se cuenta)'); return; }
+      var q = Number(x.cantidad) || 0;
+      neto += (x.tipo === 'Entrada' || x.tipo === 'Ajuste positivo') ? q : -q;
+    });
+    var conocido = it.conteo_confirmado === true && !isEmpty_(it.conteo_inicial);
+    return {
+      item_id: it.id, codigo: it.codigo, articulo: it.articulo, unidad: it.unidad, propietario: it.propietario, cliente_id: it.cliente_id, ubicacion: it.ubicacion,
+      conocido: conocido, conteo_inicial: conocido ? Number(it.conteo_inicial) : null, movimientos_neto: neto, stock: conocido ? Number(it.conteo_inicial) + neto : null
+    };
+  });
+  return { data: { items: out, errores: errores }, warnings: [] };
+}
+
+/** Horas trabajadas y facturables por persona, actividad y trabajo. El técnico solo ve las suyas. */
+function vistaHoras_(ctx, p) {
+  var ses = activeRows_(ctx, 'SESIONES').filter(function (s) {
+    if (s.estado === 'Anulada') return false;
+    if (isTecnico_(ctx) && s.usuario_id !== ctx.user.id) return false;
+    if (!isEmpty_(p.usuario_id) && s.usuario_id !== p.usuario_id) return false;
+    if (!isEmpty_(p.desde) && s.fecha < p.desde) return false;
+    if (!isEmpty_(p.hasta) && s.fecha > p.hasta) return false;
+    return true;
+  });
+  var usuarios = {};
+  rows_(ctx, 'USUARIOS').forEach(function (u) { usuarios[u.id] = u.nombre; });
+  function agrupar(keyFn, labelFn) {
+    var g = {};
+    ses.forEach(function (s) {
+      var k = keyFn(s);
+      if (!g[k]) g[k] = { clave: k, nombre: labelFn(s), trabajados_min: 0, facturables_min: 0, sesiones: 0, abiertas: 0, sin_horario: 0 };
+      if (s.estado === 'Abierta') g[k].abiertas++;
+      g[k].trabajados_min += Number(s.duracion_min) || 0;
+      g[k].facturables_min += Number(s.min_facturables) || 0;
+      g[k].sesiones++;
+      if (s.sin_horario === true) g[k].sin_horario++;
+    });
+    return Object.keys(g).map(function (k) { return horasVisibles_(ctx, g[k]); });
+  }
+  var data = {
+    por_persona: agrupar(function (s) { return s.usuario_id; }, function (s) { return usuarios[s.usuario_id] || s.usuario_id; }),
+    por_actividad: agrupar(function (s) { return s.usuario_id + '|' + (s.actividad || ''); }, function (s) { return (usuarios[s.usuario_id] || '') + ' · ' + (s.actividad || 'Sin actividad'); }),
+    por_trabajo: agrupar(function (s) { return s.trabajo_id; }, function (s) { var t = getRow_(ctx, 'TRABAJOS', s.trabajo_id); return t ? t.codigo : s.trabajo_id; })
+  };
+  return { data: data, warnings: [] };
+}
+
+/** Trabajos para la pantalla principal: técnico = asignados abiertos; administración = abiertos de todos. */
+function vistaMisTrabajos_(ctx, p) {
+  var equipos = {};
+  rows_(ctx, 'EQUIPOS').forEach(function (e) { equipos[e.id] = e; });
+  var asign = {};
+  activeRows_(ctx, 'ASIGNACIONES').forEach(function (a) { (asign[a.trabajo_id] = asign[a.trabajo_id] || []).push(a.usuario_id); });
+  var usuarios = {};
+  rows_(ctx, 'USUARIOS').forEach(function (u) { usuarios[u.id] = u.nombre; });
+  var lista = activeRows_(ctx, 'TRABAJOS').filter(function (t) {
+    if (!rowVisible_(ctx, 'TRABAJOS', t)) return false;
+    if (p.incluir_cerrados) return true;
+    return t.estado_ejecucion !== 'Ejecutado' && t.estado_comercial !== 'Anulado';
+  });
+  return {
+    data: lista.map(function (t) {
+      var e = equipos[t.equipo_id] || {};
+      return {
+        trabajo: project_(ctx, 'TRABAJOS', t),
+        equipo: { id: e.id, codigo: e.codigo, nombre_corto: e.nombre_corto, marca: e.marca, modelo: e.modelo, patente: e.patente },
+        asignados: (asign[t.id] || []).map(function (u) { return usuarios[u] || u; })
+      };
+    }), warnings: []
+  };
+}
+
+function listasActivas_(ctx) {
+  var out = {};
+  activeRows_(ctx, 'LISTAS').filter(function (l) { return l.activo === true; })
+    .sort(function (a, b) { return (Number(a.orden) || 0) - (Number(b.orden) || 0); })
+    .forEach(function (l) { (out[l.lista] = out[l.lista] || []).push(l.valor); });
+  return out;
+}
+
+/** Pago a trabajadores: horas efectivas por persona y actividad × valor vigente en la fecha de ejecución. Solo quien ve PAGO. */
+function vistaPagoTrabajadores_(ctx, p) {
+  if (!canSeeTable_(ctx, 'VALORES_TRABAJADOR')) fail_('NO_PERMITIDO', 'Solo Víctor ve el pago a trabajadores.');
+  var valores = activeRows_(ctx, 'VALORES_TRABAJADOR');
+  var usuarios = {};
+  rows_(ctx, 'USUARIOS').forEach(function (u) { usuarios[u.id] = u.nombre; });
+  var out = {};
+  activeRows_(ctx, 'SESIONES').forEach(function (s) {
+    if (s.estado !== 'Cerrada') return;
+    if (!isEmpty_(p.usuario_id) && s.usuario_id !== p.usuario_id) return;
+    if (!isEmpty_(p.desde) && s.fecha < p.desde) return;
+    if (!isEmpty_(p.hasta) && s.fecha > p.hasta) return;
+    var c = valores.filter(function (v) { return v.usuario_id === s.usuario_id && v.desde <= s.fecha && (isEmpty_(v.hasta) || v.hasta >= s.fecha); });
+    var exact = c.filter(function (v) { return !isEmpty_(s.actividad) && v.actividad === s.actividad; });
+    var val = (exact.length ? exact : c.filter(function (v) { return isEmpty_(v.actividad); })).sort(function (a, b) { return a.desde < b.desde ? 1 : -1; })[0];
+    var k = s.usuario_id + '|' + (s.actividad || '');
+    if (!out[k]) out[k] = { usuario_id: s.usuario_id, nombre: usuarios[s.usuario_id] || s.usuario_id, actividad: s.actividad || 'Sin actividad', minutos: 0, monto: 0, sesiones_sin_valor: 0 };
+    var min = Number(s.duracion_min) || 0;
+    out[k].minutos += min;
+    if (val) out[k].monto += min * Number(val.valor_hora) / 60; else out[k].sesiones_sin_valor++;
+  });
+  var filas = Object.keys(out).map(function (k) { out[k].monto = Math.round(out[k].monto); return out[k]; });
+  return { data: filas, warnings: filas.some(function (f) { return f.sesiones_sin_valor; }) ? [{ code: 'SIN_VALOR', message: 'Hay sesiones sin valor vigente para su persona y actividad.' }] : [] };
+}
+
+/** Parte del contrato que necesita una operación (para la pantalla o una IA), filtrada por lo que el usuario puede ver. */
+function vistaContrato_(ctx, p) {
+  var tablas = p.tablas || (p.tabla ? [p.tabla] : Object.keys(CONTRACT.tables));
+  var out = { version: CONTRACT.version, tablas: {} };
+  tablas.forEach(function (t) {
+    if (!canSeeTable_(ctx, t)) return;
+    var cols = CONTRACT.tables[t].columns.filter(function (c) { return !isTecnico_(ctx) || c.tec; });
+    out.tablas[t] = { descripcion: CONTRACT.tables[t].d, prefijo: CONTRACT.tables[t].prefix, columnas: cols.map(function (c) {
+      var o = { k: c.k, t: c.t };
+      if (c.req) o.req = true; if (c.calc) o.calc = true; if (c.d) o.d = c.d;
+      if (c.t === 'enum') o.valores = CONTRACT.enums[c.e];
+      if (c.t === 'lista') o.lista = c.l;
+      if (c.t === 'ref') o.ref = c.ref;
+      if (isTecnico_(ctx)) o.escribe = c.tec === 'w';
+      return o;
+    }) };
+  });
+  return { data: out, warnings: [] };
+}
+
+/* ───────────────────────── revisión de integridad ───────────────────────── */
+/** Revisa todas las tablas: referencias que existen, listas fijas válidas, obligatorios y claves repetidas. */
+function revisarIntegridad_(ctx) {
+  var problemas = [];
+  Object.keys(CONTRACT.tables).forEach(function (table) {
+    if (!canSeeTable_(ctx, table)) return;
+    var ids = {}, codigos = {};
+    rows_(ctx, table).forEach(function (r) {
+      var etiqueta = table + ' ' + (r.codigo || r.id);
+      if (ids[r.id]) problemas.push(etiqueta + ': id repetido');
+      ids[r.id] = true;
+      if (r.codigo && codigos[r.codigo]) problemas.push(etiqueta + ': código repetido');
+      codigos[r.codigo] = true;
+      if (r.anulado === true) return;
+      CONTRACT.tables[table].columns.forEach(function (c) {
+        var val = r[c.k];
+        if (c.req && !c.calc && isEmpty_(val)) problemas.push(etiqueta + ': falta ' + c.k);
+        if (isEmpty_(val)) return;
+        if (c.t === 'enum' && CONTRACT.enums[c.e].indexOf(val) < 0) problemas.push(etiqueta + ': ' + c.k + ' "' + val + '" no es válido');
+        if (c.t === 'ref') {
+          var t = getRow_(ctx, c.ref, val);
+          if (!t) problemas.push(etiqueta + ': ' + c.k + ' apunta a un registro inexistente');
+          else if (t.anulado === true) problemas.push(etiqueta + ': ' + c.k + ' apunta a un registro anulado');
+        }
+        if (c.t === 'lista' && !activeRows_(ctx, 'LISTAS').some(function (l) { return l.lista === c.l && l.valor === val; })) problemas.push(etiqueta + ': ' + c.k + ' "' + val + '" no está en LISTAS');
+      });
+    });
+  });
+  return problemas;
+}
+
+/* ───────────────────────── punto de entrada ───────────────────────── */
+
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'recepcion_confirmar'];
+
+var TABLA_DE_ACCION = {
+  sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
+  concepto_desde_sesiones: 'CONCEPTOS', recepcion_confirmar: 'RECEPCIONES'
+};
+
+/**
+ * Transacción de una solicitud: las escrituras se acumulan en memoria y se aplican al almacenamiento
+ * solo si toda la operación terminó sin error. Si algo falla a mitad de camino, no queda nada a medias.
+ * Varias escrituras a la misma fila se aplican como una sola (la versión final).
+ */
+function TxStore(base) { this.base = base; this.t = {}; this.log = []; }
+TxStore.prototype.t_ = function (table) { return this.t[table] || (this.t[table] = this.base.list(table).slice()); };
+TxStore.prototype.list = function (table) { return this.t_(table); };
+TxStore.prototype.get = function (table, id) {
+  var rs = this.t_(table);
+  for (var i = 0; i < rs.length; i++) if (rs[i].id === id) return rs[i];
+  return null;
+};
+TxStore.prototype.insert = function (table, row) {
+  this.t_(table).push(clone_(row));
+  this.log.push({ op: 'insert', table: table, id: row.id });
+  return row;
+};
+TxStore.prototype.update = function (table, id, row) {
+  var rs = this.t_(table);
+  for (var i = 0; i < rs.length; i++) if (rs[i].id === id) { rs[i] = clone_(row); this.log.push({ op: 'update', table: table, id: id }); return row; }
+  fail_('NO_EXISTE', 'No se encontró el registro ' + id + ' en ' + table);
+};
+/**
+ * Aplica los cambios al almacenamiento real. Devuelve lo escrito: [{ tabla, id, version }].
+ * meta = { op_id, huella, usuario, accion }: si el almacenamiento tiene DIARIO, primero se anota la operación
+ * completa (una sola fila) y recién después se escribe en las hojas. Si el guardado se corta a mitad de camino,
+ * la próxima escritura la termina desde el diario (recuperarDiario_). Sin meta (importaciones) no se usa diario.
+ */
+TxStore.prototype.commit = function (meta) {
+  var orden = [], vistos = {}, nuevos = {};
+  this.log.forEach(function (e) {
+    var k = e.table + '|' + e.id;
+    if (e.op === 'insert') nuevos[k] = true;
+    if (!vistos[k]) { vistos[k] = true; orden.push(e); }
+  });
+  var self = this;
+  var cambios = orden.map(function (e) { return { tabla: e.table, id: e.id, nuevo: !!nuevos[e.table + '|' + e.id], fila: self.get(e.table, e.id) }; });
+  this.log = [];
+  if (!cambios.length) return [];
+  var asiento = (meta && this.base.journalBegin) ? this.base.journalBegin({ op_id: meta.op_id, huella: meta.huella, usuario: meta.usuario, accion: meta.accion, cambios: cambios }) : null;
+  try {
+    aplicarCambios_(this.base, cambios, false);
+    if (asiento) this.base.journalEnd(asiento);
+  } catch (err) {
+    if (!asiento) throw err;
+    fail_('GUARDADO_INTERRUMPIDO', 'El guardado se cortó a mitad de camino. Quedó anotado y se completa automáticamente en la próxima solicitud (la pantalla recarga sola). Revisa antes de repetir.', { causa: String(err && err.message || err) });
+  }
+  return cambios.map(function (c) { return { tabla: c.tabla, id: c.id, version: c.fila.version }; });
+};
+
+/**
+ * Escribe una lista de cambios. Filas nuevas primero (en bloque por hoja), luego las ediciones.
+ * reanudar = true (recuperación desde el diario): solo escribe lo que falta o quedó en una versión anterior.
+ */
+function aplicarCambios_(base, cambios, reanudar) {
+  var lotes = {}, tablasLote = [], ediciones = [];
+  cambios.forEach(function (c) {
+    var actual = reanudar ? base.get(c.tabla, c.id) : null;
+    if (reanudar && actual && Number(actual.version) >= Number(c.fila.version)) return; // ya estaba escrito
+    if (c.nuevo && !actual) {
+      if (base.insertMany) { if (!lotes[c.tabla]) { lotes[c.tabla] = []; tablasLote.push(c.tabla); } lotes[c.tabla].push(c.fila); }
+      else base.insert(c.tabla, c.fila);
+    } else if (actual || !reanudar) ediciones.push(c);
+  });
+  tablasLote.forEach(function (t) { base.insertMany(t, lotes[t]); });
+  ediciones.forEach(function (c) { base.update(c.tabla, c.id, c.fila); });
+}
+
+/** Termina las operaciones que quedaron a medias (guardado interrumpido). Se llama antes de cada escritura. */
+function recuperarDiario_(base) {
+  if (!base.journalPending) return 0;
+  var pendientes = base.journalPending();
+  pendientes.forEach(function (a) {
+    aplicarCambios_(base, a.cambios, true);
+    base.journalEnd(a);
+  });
+  return pendientes.length;
+}
+
+/**
+ * Usuario vigente según el almacenamiento (después de recuperar el diario): rol y estado actuales.
+ * Si ya no está activo, se rechaza. El usuario 'sistema' no se relee.
+ */
+function usuarioVigente_(ctx) {
+  if (isSystem_(ctx) || !ctx.user || !ctx.user.id) return ctx.user;
+  var u = ctx.store.get('USUARIOS', ctx.user.id);
+  if (!u || u.anulado === true || u.activo !== true || String(u.correo).toLowerCase() !== String(ctx.user.correo).toLowerCase()) {
+    fail_('NO_AUTORIZADO', 'La cuenta ' + ctx.user.correo + ' ya no está habilitada en el registro.');
+  }
+  return u;
+}
+
+function handle_(ctx, action, p) {
+  p = p || {};
+  if (ctx._tx) return handleInner_(ctx, action, p);
+  var escritura = ACCIONES_ESCRITURA.indexOf(action) >= 0;
+  if (escritura && isEmpty_(p.op_id)) fail_('REQUERIDO', 'Falta op_id: cada escritura necesita un identificador de operación.');
+  // 1. Si una operación anterior quedó a medias, se termina antes de leer o escribir.
+  //    En Apps Script lo hace la API bajo bloqueo (recuperacionEnApi); aquí, en escrituras (que van bajo bloqueo) y en memoria.
+  if (escritura || !ctx.recuperacionEnApi) recuperarDiario_(ctx.store);
+  // 2. Permisos con el usuario vigente: un cambio de rol o una desactivación recuperados rigen desde ya.
+  var vigente = usuarioVigente_(ctx);
+  if (vigente !== ctx.user) {
+    var c0 = {};
+    Object.keys(ctx).forEach(function (k) { if (k !== '_assigned') c0[k] = ctx[k]; });
+    c0.user = vigente;
+    ctx = c0;
+  }
+  if (!escritura) return handleInner_(ctx, action, p);
+  var contenido = {};
+  Object.keys(p).forEach(function (k) { if (k !== 'op_id') contenido[k] = p[k]; });
+  var huella = hashTxt_(stableJson_({ accion: action, usuario: ctx.user && ctx.user.correo, contenido: contenido }));
+  // 2. Un op_id ya usado solo puede repetirse con el mismo contenido (en cualquier tabla, aunque la fila se haya editado después).
+  var previo = ctx.store.journalFind ? ctx.store.journalFind(p.op_id) : null;
+  if (previo && previo.huella && previo.huella !== huella) {
+    fail_('REINTENTO_DISTINTO', 'La operación ' + p.op_id + ' ya se aplicó con otro contenido. Si es un registro nuevo, la pantalla debe usar otro identificador.');
+  }
+  var tx = new TxStore(ctx.store);
+  var c = {};
+  Object.keys(ctx).forEach(function (k) { if (k !== '_assigned') c[k] = ctx[k]; });
+  c.store = tx;
+  c._tx = tx;
+  c._opHash = huella;
+  var res = handleInner_(c, action, p);
+  // Se devuelve la fila tal como queda guardada (versión final), y solo si quien pregunta puede verla.
+  var tabla = TABLA_DE_ACCION[action] || p.tabla;
+  if (res && res.data && res.data.id && tabla && CONTRACT.tables[tabla]) {
+    var fin = tx.get(tabla, res.data.id);
+    if (fin) res.data = rowVisible_(c, tabla, fin) ? project_(c, tabla, fin) : { id: fin.id };
+  }
+  res.escritos = tx.commit({ op_id: p.op_id, huella: huella, usuario: ctx.user && ctx.user.correo, accion: action });
+  return res;
+}
+
+function handleInner_(ctx, action, p) {
+  switch (action) {
+    case 'yo':
+      return { data: { usuario: project_(ctx, 'USUARIOS', ctx.user), rol: rol_(ctx), ve_pago_trabajadores: canSeeTable_(ctx, 'VALORES_TRABAJADOR') }, warnings: [] };
+    case 'inicio':
+      var abierta = openSessionOf_(ctx, ctx.user.id);
+      return {
+        data: {
+          usuario: project_(ctx, 'USUARIOS', ctx.user), rol: rol_(ctx), version: CONTRACT.version,
+          listas: listasActivas_(ctx), enums: CONTRACT.enums,
+          sesion_abierta: abierta ? project_(ctx, 'SESIONES', abierta) : null,
+          trabajos: vistaMisTrabajos_(ctx, {}).data,
+          resumen: vistaResumen_(ctx, {}).data
+        }, warnings: []
+      };
+    case 'listas': return { data: listasActivas_(ctx), warnings: [] };
+    case 'listar':
+      if (!canSeeTable_(ctx, p.tabla)) fail_('NO_PERMITIDO', 'No tienes acceso a ' + p.tabla + '.');
+      var rs = visibleRows_(ctx, p.tabla, p.incluir_anulados === true && isAdmin_(ctx));
+      if (p.filtro) rs = rs.filter(function (r) { return Object.keys(p.filtro).every(function (k) { return String(r[k]) === String(p.filtro[k]); }); });
+      return { data: rs, warnings: [] };
+    case 'obtener':
+      var r = mustGet_(ctx, p.tabla, p.id);
+      if (!rowVisible_(ctx, p.tabla, r)) fail_('NO_EXISTE', p.tabla + ' no existe: ' + p.id);
+      return { data: project_(ctx, p.tabla, r), warnings: [] };
+    case 'crear':
+      var c = insertRow_(ctx, p.tabla, p.datos, { opId: p.op_id });
+      return { data: project_(ctx, p.tabla, c.row), warnings: c.warnings, duplicate: c.duplicate };
+    case 'editar':
+      var u = updateRow_(ctx, p.tabla, p.id, p.version, p.cambios, { opId: p.op_id, motivo: p.motivo, fuente: p.fuente });
+      return { data: project_(ctx, p.tabla, u.row), warnings: u.warnings, duplicate: u.duplicate };
+    case 'anular':
+      var a = anularRow_(ctx, p.tabla, p.id, p.version, p.motivo, p.op_id, p.fuente);
+      return { data: project_(ctx, p.tabla, a.row), warnings: a.warnings, duplicate: a.duplicate };
+    case 'sesion_iniciar': return sesionIniciar_(ctx, p);
+    case 'sesion_pausar': return sesionCerrar_(ctx, p, true);
+    case 'sesion_terminar': return sesionCerrar_(ctx, p, false);
+    case 'sesion_posterior': return sesionPosterior_(ctx, p);
+    case 'concepto_desde_sesiones': return conceptoDesdeSesiones_(ctx, p);
+    case 'aporte_revisar': return aporteRevisar_(ctx, p);
+    case 'recepcion_confirmar':
+      requireAdmin_(ctx);
+      var cambiosRc = { estado: 'Confirmada' };
+      if (!isEmpty_(p.evidencia)) cambiosRc.evidencia = p.evidencia;
+      var rc = updateRow_(ctx, 'RECEPCIONES', p.recepcion_id, p.version, cambiosRc, { opId: p.op_id, noRect: true });
+      return { data: getRow_(ctx, 'RECEPCIONES', p.recepcion_id), warnings: rc.warnings, duplicate: rc.duplicate };
+    case 'resumen': return vistaResumen_(ctx, p);
+    case 'ficha': return vistaFicha_(ctx, p);
+    case 'mis_trabajos': return vistaMisTrabajos_(ctx, p);
+    case 'control_economico': return vistaControlEconomico_(ctx, p);
+    case 'stock': return vistaStock_(ctx, p);
+    case 'horas': return vistaHoras_(ctx, p);
+    case 'integridad': requireAdmin_(ctx); return { data: revisarIntegridad_(ctx), warnings: [] };
+    case 'pago_trabajadores': return vistaPagoTrabajadores_(ctx, p);
+    case 'contrato': return vistaContrato_(ctx, p);
+  }
+  fail_('ACCION', 'Acción desconocida: ' + action);
+}
+
+/* ── apps-script/MemoryStore.gs ── */
+// Almacenamiento en memoria con la misma interfaz que SheetStore. Se usa en pruebas y en el modo demo.
+function MemoryStore(seed) {
+  this.tables = {};
+  if (seed) for (var k in seed) this.tables[k] = seed[k].map(function (r) { return JSON.parse(JSON.stringify(r)); });
+}
+MemoryStore.prototype.t_ = function (table) { return this.tables[table] || (this.tables[table] = []); };
+MemoryStore.prototype.list = function (table) { return this.t_(table); };
+MemoryStore.prototype.get = function (table, id) {
+  var rs = this.t_(table);
+  for (var i = 0; i < rs.length; i++) if (rs[i].id === id) return rs[i];
+  return null;
+};
+MemoryStore.prototype.insert = function (table, row) { this.t_(table).push(JSON.parse(JSON.stringify(row))); return row; };
+MemoryStore.prototype.update = function (table, id, row) {
+  var rs = this.t_(table);
+  for (var i = 0; i < rs.length; i++) if (rs[i].id === id) { rs[i] = JSON.parse(JSON.stringify(row)); return row; }
+  throw new Error('No existe ' + id + ' en ' + table);
+};
+MemoryStore.prototype.verify = function (table, id, version) { var r = this.get(table, id); return !!r && Number(r.version) === Number(version); };
+MemoryStore.prototype.dump = function () { return JSON.parse(JSON.stringify(this.tables)); };
+// Diario de operaciones (ver TxStore.commit): una entrada por escritura confirmada; Pendiente mientras se aplica.
+MemoryStore.prototype.diario_ = function () { return this.diario || (this.diario = []); };
+MemoryStore.prototype.journalBegin = function (a) {
+  var e = { op_id: a.op_id, huella: a.huella, usuario: a.usuario, accion: a.accion, fecha: new Date().toISOString(), estado: 'Pendiente', cambios: JSON.parse(JSON.stringify(a.cambios)) };
+  this.diario_().push(e);
+  return e;
+};
+MemoryStore.prototype.journalEnd = function (e) { e.estado = 'Completa'; e.cambios = null; };
+MemoryStore.prototype.journalPending = function () { return this.diario_().filter(function (e) { return e.estado === 'Pendiente'; }); };
+MemoryStore.prototype.journalFind = function (opId) {
+  var d = this.diario_();
+  for (var i = d.length - 1; i >= 0; i--) if (d[i].op_id === opId) return d[i];
+  return null;
+};
+
+</script>
+<script>
+(function(){
+'use strict';
+var $ = function(id){ return document.getElementById(id); };
+var DEMO = !APP_CONFIG.API_URL || /[?&]demo=1/.test(location.search);
+var S = { token:null, inicio:null, tab:'trabajos', tickTimer:null, demoUser:null };
+
+/* ───── utilidades de pantalla ───── */
+function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
+function opId(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2); }
+var toastTimer;
+function toast(msg, kind){
+  var t = $('toast'); t.textContent = msg; t.className = 'toast on' + (kind ? ' ' + kind : '');
+  clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.className = 'toast'; }, kind === 'err' ? 6000 : 3500);
+}
+function showWarnings(ws){ if (ws && ws.length) toast(ws.map(function(w){ return w.message; }).join(' · '), 'warn'); }
+function plate(p, big){
+  var txt = String(p || '').toUpperCase().replace(/\s+/g,'').replace(/-/g,'·');
+  if (!txt) return '<span class="plate' + (big ? ' big' : '') + '"><small>SIN PATENTE</small><b>—</b></span>';
+  return '<span class="plate' + (big ? ' big' : '') + '"><small>CHILE</small><b>' + esc(txt) + '</b></span>';
+}
+function fmtFecha(iso){
+  if (!iso) return '';
+  var d = /^\d{4}-\d{2}-\d{2}$/.test(iso) ? new Date(iso + 'T12:00:00') : new Date(iso);
+  return d.toLocaleDateString('es-CL', { day:'2-digit', month:'short', year:'numeric' });
+}
+function fmtMin(m){ m = Number(m) || 0; var h = Math.floor(m / 60), r = m % 60; return h ? h + ' h ' + (r < 10 ? '0' : '') + r + ' min' : r + ' min'; }
+function fmtHM(m){ m = Number(m) || 0; var h = Math.floor(m / 60), r = m % 60; return h + ':' + (r < 10 ? '0' : '') + r; }
+function fmtKm(n){ return (n === '' || n == null) ? '' : Number(n).toLocaleString('es-CL') + ' km'; }
+function dispositivo(){ var w = Math.min(screen.width, screen.height); return w < 600 ? 'Celular' : (w < 1000 ? 'Tablet' : 'PC'); }
+function isAdmin(){ return S.inicio && S.inicio.rol !== 'Tecnico'; }
+function options(list, sel, empty){
+  var h = empty ? '<option value="">' + esc(empty) + '</option>' : '';
+  (list || []).forEach(function(v){ h += '<option' + (v === sel ? ' selected' : '') + '>' + esc(v) + '</option>'; });
+  return h;
+}
+
+/* ───── API (producción) o lógica local (demo) ───── */
+function api(action, payload){
+  payload = payload || {};
+  if (DEMO) return Promise.resolve(DemoApi.call(action, payload));
+  var body = JSON.stringify({ action: action, payload: payload, id_token: S.token });
+  function intento(n){
+    return fetch(APP_CONFIG.API_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: body, redirect:'follow' })
+      .then(function(r){ return r.json(); })
+      .catch(function(e){
+        // Reintento con el mismo op_id: el servidor no lo aplica dos veces.
+        if (n < 2) return new Promise(function(res){ setTimeout(res, 1200); }).then(function(){ return intento(n + 1); });
+        return { ok:false, error:{ code:'RED', message:'Sin conexión con el servidor. Revisa la señal y reintenta.' } };
+      });
+  }
+  return intento(1);
+}
+function call(action, payload){
+  return api(action, payload).then(function(r){
+    if (!r.ok){
+      var e = r.error || {};
+      if (e.code === 'NO_AUTENTICADO') { S.token = null; renderLogin(); }
+      toast(e.message || 'Error', 'err');
+      // Guardado cortado o no verificado: se recarga para no repetir sobre datos viejos.
+      if (e.code === 'GUARDADO_INTERRUMPIDO' || e.code === 'NO_VERIFICADO') { cerrarHoja(); setTimeout(function(){ cargar(); }, 1500); }
+      var err = new Error(e.message); err.code = e.code; err.details = e.details; throw err;
+    }
+    showWarnings(r.warnings);
+    return r;
+  });
+}
+
+/* ───── inicio de sesión ───── */
+function renderLogin(){
+  $('tabs').hidden = true; $('run').className = 'run';
+  $('who').textContent = '';
+  if (DEMO){
+    $('demoNote').hidden = false;
+    $('main').innerHTML = '<div class="login"><h2>¿Quién entra?</h2><p>Elige un usuario de prueba para ver lo que ve cada rol.</p><div class="roles">' +
+      '<button class="btn big" data-act="demo-user" data-u="victor@demo.cl">Víctor · administrador</button>' +
+      '<button class="btn big ghost" data-act="demo-user" data-u="victoria@demo.cl">Victoria · administración</button>' +
+      '<button class="btn big ghost" data-act="demo-user" data-u="juan@demo.cl">Juan · técnico</button></div></div>';
+    return;
+  }
+  $('main').innerHTML = '<div class="login"><h2>Registro del taller</h2><p>Entra con tu cuenta Google habilitada.</p><div id="gbtn" style="display:inline-block;margin-top:16px"></div></div>';
+  function initGsi(){
+    if (!window.google || !google.accounts){ return setTimeout(initGsi, 300); }
+    google.accounts.id.initialize({ client_id: APP_CONFIG.CLIENT_ID, callback: function(resp){ S.token = resp.credential; cargar(); }, auto_select: true });
+    google.accounts.id.renderButton($('gbtn'), { theme:'filled_black', size:'large', text:'signin_with', locale:'es' });
+    google.accounts.id.prompt();
+  }
+  initGsi();
+}
+
+/* ───── carga principal ───── */
+function cargar(){
+  return call('inicio', {}).then(function(r){
+    S.inicio = r.data;
+    $('who').textContent = r.data.usuario.nombre;
+    $('who').title = r.data.rol === 'Tecnico' ? 'Técnico' : r.data.rol === 'Administracion' ? 'Administración' : 'Administrador';
+    renderTabs(); renderRun(); render();
+  });
+}
+
+function renderTabs(){
+  var tabs = [['trabajos','Trabajos'],['vehiculos','Vehículos'],['horas','Horas']];
+  if (isAdmin()) { tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
+  $('tabsIn').innerHTML = tabs.map(function(t){ return '<button type="button" data-act="tab" data-tab="' + t[0] + '"' + (S.tab === t[0] ? ' aria-current="page"' : '') + '>' + t[1] + '</button>'; }).join('');
+  $('tabs').hidden = false;
+}
+
+function render(){
+  if (S.tab === 'trabajos') return renderTrabajos();
+  if (S.tab === 'vehiculos') return renderVehiculos();
+  if (S.tab === 'horas') return renderHoras();
+  if (S.tab === 'revisar') return renderRevisar();
+  if (S.tab === 'datos') return renderDatos();
+}
+
+/* ───── sesión en curso (barra ámbar) ───── */
+function trabajoInfo(trabajoId){
+  var t = (S.inicio.trabajos || []).filter(function(x){ return x.trabajo.id === trabajoId; })[0];
+  return t ? (t.equipo.nombre_corto + ' · ' + String(t.trabajo.descripcion || '').slice(0, 60)) : 'Trabajo';
+}
+function renderRun(){
+  var s = S.inicio && S.inicio.sesion_abierta;
+  clearInterval(S.tickTimer);
+  if (!s){ $('run').className = 'run'; return; }
+  $('run').className = 'run on';
+  $('runWhat').textContent = trabajoInfo(s.trabajo_id);
+  $('runSub').textContent = (s.actividad || 'Sin actividad') + ' · desde ' + new Date(s.inicio).toLocaleTimeString('es-CL', { hour:'2-digit', minute:'2-digit' });
+  function tick(){
+    var m = Math.max(0, Math.floor((Date.now() - Date.parse(s.inicio)) / 1000));
+    var h = Math.floor(m / 3600), mi = Math.floor((m % 3600) / 60), se = m % 60;
+    $('runClock').textContent = h + ':' + (mi < 10 ? '0' : '') + mi + (h ? '' : ':' + (se < 10 ? '0' : '') + se);
+  }
+  tick(); S.tickTimer = setInterval(tick, 1000);
+}
+
+/* ───── pestaña Trabajos ───── */
+function renderTrabajos(){
+  var ts = S.inicio.trabajos || [];
+  var abierta = S.inicio.sesion_abierta;
+  var h = '<h2 class="section-title">' + (isAdmin() ? 'Trabajos abiertos' : 'Mis trabajos') + '</h2>';
+  if (!ts.length) h += '<div class="empty">' + (isAdmin() ? 'No hay trabajos abiertos. Crea uno desde la planilla o pídeselo a la próxima versión de esta pantalla.' : 'No tienes trabajos asignados. Pide a administración que te asigne uno.') + '</div>';
+  h += '<div class="list">' + ts.map(function(x){
+    var t = x.trabajo, live = abierta && abierta.trabajo_id === t.id;
+    return '<button class="item" type="button" data-act="trabajo" data-id="' + esc(t.id) + '">' + plate(x.equipo.patente) +
+      '<div class="body"><div class="t">' + esc(x.equipo.nombre_corto) + '</div><div class="s">' + esc(String(t.descripcion || '').slice(0, 90)) + '</div>' +
+      '<div class="chips"><span class="chip">' + esc(t.estado_ejecucion) + '</span>' + (t.tipo_trabajo ? '<span class="chip">' + esc(t.tipo_trabajo) + '</span>' : '') +
+      (x.asignados.length ? '<span class="chip">' + esc(x.asignados.join(', ')) + '</span>' : '') + (live ? '<span class="chip live">Tu sesión corre aquí</span>' : '') + '</div></div></button>';
+  }).join('') + '</div>';
+  $('main').innerHTML = h;
+}
+
+function abrirHoja(titulo, html){
+  $('sheetTitle').textContent = titulo; $('sheetBody').innerHTML = html;
+  $('sheet').className = 'sheet on'; $('sheetBack').className = 'sheet-back on';
+  var f = $('sheetBody').querySelector('button, input, select, textarea'); if (f) f.focus();
+}
+function cerrarHoja(){ $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
+
+function abrirTrabajo(id){
+  var x = (S.inicio.trabajos || []).filter(function(y){ return y.trabajo.id === id; })[0];
+  if (!x) return;
+  var t = x.trabajo, abierta = S.inicio.sesion_abierta, live = abierta && abierta.trabajo_id === id;
+  call('ficha', { equipo_id: x.equipo.id }).then(function(r){
+    var f = r.data, det = [];
+    f.trabajos.forEach(function(tt){ if (tt.trabajo.id === id) det = tt.detalle; });
+    var mine = f.trabajos.filter(function(tt){ return tt.trabajo.id === id; })[0];
+    var L = S.inicio.listas;
+    var h = '<div class="block inline" style="gap:14px">' + plate(x.equipo.patente, true) + '<div><div class="t" style="font-weight:600">' + esc(x.equipo.nombre_corto) + '</div><div class="s" style="color:var(--acero)">' + esc([x.equipo.marca, x.equipo.modelo].filter(Boolean).join(' ')) + '</div></div></div>';
+    h += '<div class="block"><h3>' + esc(t.codigo) + ' · ' + esc(t.tipo_trabajo || 'Trabajo') + '</h3><p style="margin:0 0 8px">' + esc(t.descripcion) + '</p>' +
+      '<dl class="kv"><dt>Ejecución</dt><dd>' + esc(t.estado_ejecucion) + '</dd>' + (t.prog_desde ? '<dt>Agendado</dt><dd>' + esc(fmtFecha(t.prog_desde)) + '</dd>' : '') +
+      (mine ? '<dt>Horas</dt><dd>' + fmtMin(mine.horas.trabajados_min) + '</dd>' : '') + '</dl></div>';
+    if (live){
+      h += '<div class="block"><p style="margin:0 0 10px">Tienes una sesión corriendo en este trabajo.</p><div class="inline"><button class="btn" data-act="pausar">Pausar</button><button class="btn ghost" data-act="terminar">Terminar sesión</button></div></div>';
+    } else {
+      h += '<div class="block"><label class="f"><span>Actividad</span><select class="i" id="fAct">' + options(L.actividades, '', 'Elegir…') + '</select></label>' +
+        '<button class="btn big go" data-act="iniciar" data-id="' + esc(id) + '">Iniciar sesión</button>' +
+        (abierta ? '<p class="s" style="color:var(--acero);margin:8px 0 0">Tu sesión en otro trabajo se pausará con el motivo "Otro trabajo".</p>' : '') + '</div>';
+    }
+    h += '<div class="block"><h3>Agregar al registro</h3>' +
+      '<div class="row2"><label class="f"><span>Tipo</span><select class="i" id="dTipo">' + options(S.inicio.enums.tipo_detalle, 'Observación') + '</select></label>' +
+      '<label class="f"><span>Componente</span><input class="i" id="dComp" placeholder="Ej. filtro de aceite"></label></div>' +
+      '<label class="f"><span>Descripción</span><textarea class="i" id="dDesc" placeholder="Qué se hizo, midió o encontró"></textarea></label>' +
+      '<div class="row2"><label class="f"><span>Cantidad</span><input class="i" id="dCant" inputmode="decimal"></label><label class="f"><span>Unidad</span><select class="i" id="dUni">' + options(L.unidades, '', '—') + '</select></label></div>' +
+      '<div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="dictar">Dictar</button>' +
+      '<label class="btn ghost" style="display:inline-flex;align-items:center">Foto<input type="file" accept="image/*" capture="environment" id="dFoto" hidden></label>' +
+      '<button class="btn" type="button" data-act="guardar-detalle" data-id="' + esc(id) + '">Guardar detalle</button></div>' +
+      '<img class="photo-prev" id="dPrev" alt="Vista previa de la foto">' +
+      (isAdmin() ? '<label class="f inline" style="gap:8px;margin-top:8px"><input type="checkbox" id="dVis"> Visible para el técnico asignado</label>' : '') +
+      (S.inicio.rol === 'Tecnico' ? '<p class="s" style="color:var(--acero);margin:8px 0 0">Tu aporte queda como borrador hasta que administración lo revise.</p>' : '') + '</div>';
+    h += '<div class="block"><h3>Nuevo pendiente del vehículo</h3><label class="f"><span>Qué queda por hacer</span><input class="i" id="pDesc" placeholder="Ej. cambiar correa en la próxima visita"></label>' +
+      '<label class="f"><span>Objetivo o condición</span><input class="i" id="pObj" placeholder="Ej. a los 110.000 km"></label>' +
+      (isAdmin() ? '<label class="f inline" style="gap:8px"><input type="checkbox" id="pVis"> Visible para el técnico asignado</label>' : '') + '<button class="btn" data-act="guardar-pendiente" data-id="' + esc(id) + '" data-eq="' + esc(x.equipo.id) + '">Guardar pendiente</button></div>';
+    if (det.length){
+      h += '<div class="block"><h3>Detalle registrado</h3><ul style="margin:0;padding-left:18px">' + det.map(function(d){
+        return '<li>' + esc(d.tipo) + (d.componente ? ' · ' + esc(d.componente) : '') + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') +
+          (d.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') +
+          (isAdmin() && d.visible_tecnico !== true && d.estado_aporte !== 'Borrador' ? ' <span class="chip">oculto al técnico</span>' : '') + '</li>';
+      }).join('') + '</ul></div>';
+    }
+    if (f.pendientes_vigentes.length){
+      h += '<div class="block"><h3>Pendientes del vehículo</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_vigentes.map(function(p){ return '<li>' + esc(p.descripcion) + (p.objetivo ? ' · ' + esc(p.objetivo) : '') + (p.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') + '</li>'; }).join('') + '</ul></div>';
+    }
+    if (f.referencias.length){
+      h += '<div class="block"><h3>Datos técnicos</h3><ul style="margin:0;padding-left:18px">' + f.referencias.map(function(rf){ return '<li>' + esc(rf.tipo) + (rf.componente ? ' · ' + esc(rf.componente) : '') + ': ' + esc(rf.especificacion || rf.descripcion || '') + (rf.cantidad !== '' && rf.cantidad != null ? ' · ' + esc(rf.cantidad) + ' ' + esc(rf.unidad || '') : '') + (rf.torque ? ' · torque ' + esc(rf.torque) : '') + '</li>'; }).join('') + '</ul></div>';
+    }
+    abrirHoja(x.equipo.nombre_corto, h);
+    var foto = $('dFoto'); if (foto) foto.addEventListener('change', comprimirFoto);
+  });
+}
+
+/* Foto comprimida a 900 px, JPEG 72 % (idea de Taller Pro v10). */
+var fotoActual = null;
+function comprimirFoto(e){
+  var file = e.target.files[0]; if (!file) return;
+  var rd = new FileReader();
+  rd.onload = function(ev){
+    var img = new Image();
+    img.onload = function(){
+      var MAX = 900, w = img.width, h = img.height;
+      if (w > MAX){ h = Math.round(h * MAX / w); w = MAX; } if (h > MAX){ w = Math.round(w * MAX / h); h = MAX; }
+      var c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+      fotoActual = c.toDataURL('image/jpeg', 0.72);
+      $('dPrev').src = fotoActual; $('dPrev').style.display = 'block';
+    };
+    img.src = ev.target.result;
+  };
+  rd.readAsDataURL(file);
+}
+
+function dictar(){
+  var R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return toast('El dictado no está disponible en este navegador.', 'err');
+  var rec = new R(); rec.lang = 'es-CL'; rec.interimResults = false;
+  rec.onresult = function(e){ var t = e.results[0][0].transcript.trim(); var d = $('dDesc'); d.value = d.value ? d.value + ' ' + t : t; };
+  rec.onerror = function(){ toast('No se pudo dictar. Reintenta.', 'err'); };
+  rec.start(); toast('Habla ahora…');
+}
+
+function guardarDetalle(trabajoId, btn){
+  var desc = $('dDesc').value.trim();
+  if (!desc) return toast('Escribe o dicta la descripción.', 'err');
+  btn.disabled = true;
+  var datos = { trabajo_id: trabajoId, tipo: $('dTipo').value, componente: $('dComp').value.trim(), descripcion: desc, cantidad: $('dCant').value.replace(',', '.'), unidad: $('dUni').value };
+  if ($('dVis') && $('dVis').checked) datos.visible_tecnico = true;
+  var paso = fotoActual ? call('subir_foto', { trabajo_id: trabajoId, base64: fotoActual }).then(function(r){ datos.foto_url = r.data.url; }) : Promise.resolve();
+  var op = opId();
+  paso.then(function(){ return call('crear', { tabla:'DETALLE', datos: datos, op_id: op }); })
+    .then(function(){ toast('Detalle guardado.'); fotoActual = null; return cargar().then(function(){ abrirTrabajo(trabajoId); }); })
+    .catch(function(){}).then(function(){ btn.disabled = false; });
+}
+
+function guardarPendiente(trabajoId, equipoId, btn){
+  var desc = $('pDesc').value.trim();
+  if (!desc) return toast('Describe el pendiente.', 'err');
+  btn.disabled = true;
+  var datosP = { equipo_id: equipoId, trabajo_origen_id: trabajoId, descripcion: desc, objetivo: $('pObj').value.trim() };
+  if ($('pVis') && $('pVis').checked) datosP.visible_tecnico = true;
+  call('crear', { tabla:'PENDIENTES', datos: datosP, op_id: opId() })
+    .then(function(){ toast('Pendiente guardado.'); return cargar().then(function(){ abrirTrabajo(trabajoId); }); })
+    .catch(function(){}).then(function(){ btn.disabled = false; });
+}
+
+function iniciar(trabajoId, btn){
+  btn.disabled = true;
+  var abierta = S.inicio.sesion_abierta;
+  call('sesion_iniciar', { trabajo_id: trabajoId, actividad: $('fAct') ? $('fAct').value : '', dispositivo: dispositivo(), cerrar_abierta: !!abierta, op_id: opId() })
+    .then(function(){ toast('Sesión iniciada.'); cerrarHoja(); return cargar(); })
+    .catch(function(){}).then(function(){ btn.disabled = false; });
+}
+
+function pedirPausa(){
+  var s = S.inicio.sesion_abierta; if (!s) return;
+  var h = '<p style="margin-top:0">Elige el motivo. Al reanudar se abre una sesión nueva.</p><div class="list">' +
+    S.inicio.listas.motivos_pausa.map(function(m){ return '<button class="item" type="button" data-act="pausa-motivo" data-m="' + esc(m) + '"><div class="body"><div class="t">' + esc(m) + '</div></div></button>'; }).join('') + '</div>';
+  abrirHoja('Pausar sesión', h);
+}
+function cerrarSesion(motivo){
+  var s = S.inicio.sesion_abierta; if (!s) return;
+  var accion = motivo ? 'sesion_pausar' : 'sesion_terminar';
+  call(accion, { sesion_id: s.id, motivo_pausa: motivo || '', op_id: opId() })
+    .then(function(r){ toast((motivo ? 'Sesión pausada: ' : 'Sesión terminada: ') + fmtMin(r.data.duracion_min) + '.'); cerrarHoja(); return cargar(); })
+    .catch(function(){});
+}
+
+/* ───── pestaña Vehículos (resumen) ───── */
+function renderVehiculos(){
+  var rs = S.inicio.resumen || [];
+  var h = '<h2 class="section-title">Vehículos</h2><p style="margin:-6px 0 12px;color:var(--acero)">Primero el que tuvo el trabajo terminado más reciente.</p>';
+  if (!rs.length) h += '<div class="empty">No hay vehículos para mostrar.</div>';
+  h += '<div class="list">' + rs.map(function(v){
+    var prox = [fmtKm(v.proxima_km), v.proxima_horas ? v.proxima_horas + ' h' : '', fmtFecha(v.proxima_fecha)].filter(Boolean).join(' / ');
+    return '<button class="item" type="button" data-act="ficha" data-id="' + esc(v.equipo_id) + '">' + plate(v.patente) + '<div class="body"><div class="t">' + esc(v.nombre_corto) + (v.cliente ? ' <span style="font-weight:400;color:var(--acero)">· ' + esc(v.cliente) + '</span>' : '') + '</div>' +
+      '<div class="s">' + (v.ultima_fecha ? 'Último: ' + esc(fmtFecha(v.ultima_fecha)) + ' · ' + esc(v.ultima_descripcion.slice(0, 70)) : 'Sin trabajos terminados') + '</div>' +
+      '<div class="chips">' + (v.km !== '' && v.km != null ? '<span class="chip">' + fmtKm(v.km) + '</span>' : '') + (prox ? '<span class="chip">Próxima: ' + esc(prox) + '</span>' : '') +
+      (v.en_curso ? '<span class="chip warn">En curso</span>' : '') + (v.pendientes_vigentes ? '<span class="chip warn">' + v.pendientes_vigentes + ' pendiente' + (v.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') + '</div></div></button>';
+  }).join('') + '</div>';
+  $('main').innerHTML = h;
+}
+
+function abrirFicha(equipoId){
+  call('ficha', { equipo_id: equipoId }).then(function(r){
+    var f = r.data, e = f.equipo;
+    var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + plate(e.patente, true) + '<dl class="kv">' +
+      '<dt>Vehículo</dt><dd>' + esc([e.marca, e.modelo, e.version_modelo].filter(Boolean).join(' ') || e.nombre_corto) + '</dd>' +
+      (e.anio ? '<dt>Año</dt><dd>' + esc(e.anio) + '</dd>' : '') + (e.motor_codigo ? '<dt>Motor</dt><dd>' + esc(e.motor_codigo) + '</dd>' : '') +
+      (e.vin ? '<dt>VIN</dt><dd>' + esc(e.vin) + '</dd>' : '') + '</dl></div>';
+    if (f.pendientes_vigentes.length) h += '<div class="block"><h3>Pendientes vigentes</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_vigentes.map(function(p){ return '<li>' + esc(p.descripcion) + (p.objetivo ? ' · ' + esc(p.objetivo) : '') + ' <span class="chip">' + esc(p.estado) + '</span>' + (p.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') + '</li>'; }).join('') + '</ul></div>';
+    if (f.referencias.length) h += '<div class="block"><h3>Datos técnicos</h3><ul style="margin:0;padding-left:18px">' + f.referencias.map(function(rf){ return '<li>' + esc(rf.tipo) + (rf.componente ? ' · ' + esc(rf.componente) : '') + ': ' + esc(rf.especificacion || rf.descripcion || '') + (rf.cantidad !== '' && rf.cantidad != null ? ' · ' + esc(rf.cantidad) + ' ' + esc(rf.unidad || '') : '') + (rf.torque ? ' · torque ' + esc(rf.torque) : '') + '</li>'; }).join('') + '</ul></div>';
+    h += '<div class="block"><h3>Historia</h3>' + (f.trabajos.length ? '<div class="history">' + f.trabajos.map(function(tt){
+      var t = tt.trabajo;
+      return '<div class="hist' + (t.estado_ejecucion === 'Ejecutado' ? ' ej' : '') + '"><div class="d">' + esc(fmtFecha(t.fecha_fin || t.fecha_inicio || t.prog_desde)) + ' · ' + esc(t.codigo) + ' · ' + esc(t.estado_ejecucion) + (t.km ? ' · ' + fmtKm(t.km) : '') + (tt.horas.trabajados_min ? ' · ' + fmtMin(tt.horas.trabajados_min) : '') + '</div>' +
+        '<div>' + esc(t.descripcion) + '</div>' + (tt.detalle.length ? '<ul>' + tt.detalle.map(function(d){ return '<li>' + esc(d.tipo) + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+    }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin trabajos registrados.</p>') + '</div>';
+    if (f.pendientes_historicos.length) h += '<div class="block"><h3>Pendientes cerrados</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_historicos.map(function(p){ return '<li>' + esc(p.descripcion) + ' <span class="chip ok">' + esc(p.estado) + '</span></li>'; }).join('') + '</ul></div>';
+    abrirHoja(e.nombre_corto, h);
+  });
+}
+
+/* ───── pestaña Horas ───── */
+function renderHoras(){
+  var hoy = new Date(), desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+  var d0 = desde.toISOString().slice(0, 10);
+  $('main').innerHTML = '<h2 class="section-title">Horas efectivas</h2><p style="margin:-6px 0 12px;color:var(--acero)">Desde el ' + esc(fmtFecha(d0)) + ', en horas y minutos.</p><div id="horasBody" class="empty">Cargando…</div>';
+  call('horas', { desde: d0 }).then(function(r){
+    var d = r.data;
+    function tabla(rows, titulo){
+      if (!rows.length) return '';
+      var conFact = rows.some(function(x){ return 'facturables_min' in x; });
+      return '<h3 class="section-title" style="font-size:19px;margin-top:18px">' + titulo + '</h3><div class="tw"><table class="h"><thead><tr><th>' + (titulo === 'Por persona' ? 'Persona' : 'Persona y actividad') + '</th><th class="n">Trabajadas</th>' + (conFact ? '<th class="n">Facturables</th>' : '') + '<th class="n ses">Sesiones</th></tr></thead><tbody>' +
+        rows.map(function(x){ return '<tr><td>' + esc(x.nombre) + (x.abiertas ? ' <span class="chip live">en curso</span>' : '') + (x.sin_horario ? ' <span class="chip">' + x.sin_horario + ' sin horario</span>' : '') + '</td><td class="n">' + fmtHM(x.trabajados_min) + '</td>' + (conFact ? '<td class="n">' + fmtHM(x.facturables_min) + '</td>' : '') + '<td class="n ses">' + x.sesiones + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    }
+    var h = tabla(d.por_persona, 'Por persona') + tabla(d.por_actividad, 'Por actividad');
+    $('horasBody').outerHTML = (h || '<div class="empty">Sin sesiones este mes.</div>') + '<div id="pagoBody"></div>';
+    if (isAdmin()) api('pago_trabajadores', { desde: d0 }).then(function(rp){
+      if (!rp.ok || !rp.data.length) return;
+      $('pagoBody').innerHTML = '<h3 class="section-title" style="font-size:19px;margin-top:18px">Pago a trabajadores</h3><p style="margin:-6px 0 10px;color:var(--acero)">Solo lo ves tú. Horas efectivas por el valor vigente de cada actividad.</p><div class="tw"><table class="h"><thead><tr><th>Persona y actividad</th><th class="n">Horas</th><th class="n">Monto</th></tr></thead><tbody>' +
+        rp.data.map(function(x){ return '<tr><td>' + esc(x.nombre) + ' · ' + esc(x.actividad) + (x.sesiones_sin_valor ? ' <span class="chip warn">' + x.sesiones_sin_valor + ' sin valor</span>' : '') + '</td><td class="n">' + fmtHM(x.minutos) + '</td><td class="n">$' + Number(x.monto).toLocaleString('es-CL') + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    });
+  }).catch(function(){});
+}
+
+/* ───── pestaña Revisar (administración) ───── */
+function renderRevisar(){
+  $('main').innerHTML = '<h2 class="section-title">Aportes por revisar</h2><div id="revBody" class="empty">Cargando…</div>';
+  Promise.all([call('listar', { tabla:'DETALLE', filtro:{ estado_aporte:'Borrador' } }), call('listar', { tabla:'PENDIENTES', filtro:{ estado_aporte:'Borrador' } })]).then(function(rs){
+    var items = rs[0].data.map(function(d){ return { tabla:'DETALLE', r:d, txt: d.tipo + ': ' + d.descripcion }; })
+      .concat(rs[1].data.map(function(p){ return { tabla:'PENDIENTES', r:p, txt: 'Pendiente: ' + p.descripcion }; }));
+    if (!items.length){ $('revBody').outerHTML = '<div class="empty">No hay aportes pendientes de revisión.</div>'; return; }
+    $('revBody').outerHTML = '<div class="list">' + items.map(function(it){
+      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + esc(it.txt) + '</div><div class="s">' + esc(it.r.codigo) + ' · ' + esc(it.r.creado_por) + '</div>' +
+        '<div class="inline" style="margin-top:8px"><button class="btn go" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.r.id) + '" data-v="' + it.r.version + '" data-d="Aprobado">Aprobar</button>' +
+        '<button class="btn ghost" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.r.id) + '" data-v="' + it.r.version + '" data-d="Rechazado">Rechazar</button></div></div></div>';
+    }).join('') + '</div>';
+  }).catch(function(){});
+}
+
+
+/* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES'];
+var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones' };
+var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
+function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
+function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
+function refsDe(t){ return D.refs[t] ? Promise.resolve(D.refs[t]) : call('listar', { tabla: t }).then(function(r){ D.refs[t] = r.data; return r.data; }); }
+function renderDatos(){
+  var opts = TABLAS_DATOS.map(function(t){ return '<option value="' + t + '"' + (t === D.tabla ? ' selected' : '') + '>' + esc(NOMBRES[t]) + '</option>'; }).join('');
+  $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
+    '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+  $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
+  $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
+  D.refs = {};
+  refsDe('CLIENTES').then(function(cs){ $('dtCliente').innerHTML = '<option value="">Todos</option>' + cs.map(function(c){ return '<option value="' + esc(c.id) + '"' + (c.id === D.cliente ? ' selected' : '') + '>' + esc(c.nombre) + '</option>'; }).join(''); }).catch(function(){});
+  cargarDatos();
+}
+function cargarDatos(){
+  var p = { tabla: D.tabla };
+  call('listar', p).then(function(r){
+    D.filas = r.data.filter(function(x){ return !D.cliente || !('cliente_id' in x) || x.cliente_id === D.cliente || x.id === D.cliente; });
+    var h = D.filas.length ? '<div class="list">' + D.filas.slice().reverse().map(function(x){ return '<button class="item" type="button" data-act="dt-editar" data-id="' + esc(x.id) + '"><div class="body"><div class="t">' + esc(etiqueta(x)) + '</div><div class="s">v' + esc(x.version) + (x.editado_en ? ' · editado ' + esc(fmtFecha(x.editado_en)) : '') + '</div></div></button>'; }).join('') + '</div>' : '<div class="empty">No hay registros. Usa "Nuevo registro".</div>';
+    $('dtLista').outerHTML = '<div id="dtLista">' + h + '</div>';
+  }).catch(function(e){ $('dtLista').outerHTML = '<div id="dtLista" class="empty">' + esc(e.message) + '</div>'; });
+}
+function isoALocal(iso){ if (!iso) return ''; var d = new Date(iso); var z = function(n){ return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + 'T' + z(d.getHours()) + ':' + z(d.getMinutes()); }
+function humano(k){ var t = k.replace(/_id$/, '').replace(/_/g, ' '); t = { anio:'año', descripcion:'descripción', fecha_inicio:'inicio real', fecha_fin:'término real', prog_desde:'agendado desde', prog_hasta:'agendado hasta', horas_equipo:'horómetro', proxima_km:'próxima km', proxima_horas:'próximas horas', proxima_fecha:'próxima fecha', min_facturables:'minutos facturables', duracion_min:'duración (min)', valor_hora:'valor hora', monto_cliente:'monto al cliente', visible_tecnico:'visible para técnico' }[k] || t; return t.charAt(0).toUpperCase() + t.slice(1); }
+function campo(c, val, refRows){
+  var id = 'fx_' + c.k, lbl = '<span>' + esc(humano(c.k)) + (c.req ? ' *' : '') + '</span>';
+  var v = val === undefined || val === null ? '' : val;
+  if (c.t === 'bool') return '<label class="f inline" style="gap:8px"><input type="checkbox" id="' + id + '"' + (v === true ? ' checked' : '') + '> ' + esc(humano(c.k)) + '</label>';
+  if (c.t === 'enum') return '<label class="f">' + lbl + '<select class="i" id="' + id + '">' + options(c.valores, v, '—') + '</select></label>';
+  if (c.t === 'lista') return '<label class="f">' + lbl + '<select class="i" id="' + id + '">' + options((S.inicio.listas[c.lista] || []).concat(v && (S.inicio.listas[c.lista] || []).indexOf(v) < 0 ? [v] : []), v, '—') + '</select></label>';
+  if (c.t === 'ref') return '<label class="f">' + lbl + '<select class="i" id="' + id + '"><option value="">—</option>' + (refRows || []).map(function(r){ return '<option value="' + esc(r.id) + '"' + (r.id === v ? ' selected' : '') + '>' + esc(etiqueta(r)) + '</option>'; }).join('') + '</select></label>';
+  if (c.t === 'long') return '<label class="f">' + lbl + '<textarea class="i" id="' + id + '">' + esc(v) + '</textarea></label>';
+  var type = { int:'number', num:'number', money:'number', date:'date', datetime:'datetime-local', email:'email', url:'url' }[c.t] || 'text';
+  var value = c.t === 'datetime' ? isoALocal(v) : v;
+  return '<label class="f">' + lbl + '<input class="i" id="' + id + '" type="' + type + '"' + (c.t === 'num' ? ' step="any"' : '') + ' value="' + esc(value) + '"></label>';
+}
+function leerCampo(c){
+  var el = $('fx_' + c.k); if (!el) return undefined;
+  if (c.t === 'bool') return el.checked;
+  var v = el.value;
+  if (v === '') return '';
+  if (c.t === 'int' || c.t === 'money') return Math.round(Number(v));
+  if (c.t === 'num') return Number(v);
+  if (c.t === 'datetime') return new Date(v).toISOString();
+  return v;
+}
+function abrirFormulario(fila){
+  var t = D.tabla;
+  contratoDe(t).then(function(ct){
+    var cols = ct.columnas.filter(function(c){ return !c.calc; });
+    var refTabs = cols.filter(function(c){ return c.t === 'ref'; }).map(function(c){ return c.ref; });
+    return Promise.all(refTabs.map(refsDe)).then(function(){
+      var h = '<p style="margin-top:0;color:var(--acero)">' + esc(ct.descripcion) + '</p>';
+      h += cols.map(function(c){
+        var val = fila ? fila[c.k] : (c.k === 'cliente_id' ? D.cliente : undefined);
+        var rr = c.t === 'ref' ? D.refs[c.ref].filter(function(r){ return !D.cliente || c.ref === 'CLIENTES' || !('cliente_id' in r) || r.cliente_id === D.cliente; }) : null;
+        return campo(c, val, rr);
+      }).join('');
+      if (fila) h += '<div class="block" style="margin-top:6px"><p class="s" style="margin:0 0 8px;color:var(--acero)">Si cambias un dato que ya estaba registrado, indica por qué y de dónde sale el dato correcto. Queda en rectificaciones.</p>' +
+        '<label class="f"><span>Motivo de la corrección o anulación</span><input class="i" id="fxMotivo" placeholder="Ej. error de digitación"></label>' +
+        '<label class="f"><span>Fuente del dato correcto</span><input class="i" id="fxFuente" placeholder="Ej. factura, hoja de trabajo, cliente por teléfono"></label></div>';
+      h += '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="dt-guardar"' + (fila ? ' data-id="' + esc(fila.id) + '" data-v="' + fila.version + '"' : '') + '>' + (fila ? 'Guardar cambios' : 'Crear') + '</button>';
+      if (fila && t !== 'RECTIFICACIONES') h += '<button class="btn danger" data-act="dt-anular" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Anular</button>';
+      if (fila && t === 'RECEPCIONES' && fila.estado !== 'Confirmada') h += '<button class="btn go" data-act="dt-confirmar" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Confirmar recepción</button>';
+      if (fila && t === 'TRABAJOS') h += '<button class="btn ghost" data-act="dt-cobrar-mo" data-id="' + esc(fila.id) + '">Cobrar mano de obra desde sesiones</button>';
+      h += '</div>';
+      abrirHoja((fila ? 'Editar ' : 'Nuevo · ') + (fila ? etiqueta(fila) : NOMBRES[t]), h);
+      D.formCols = cols; D.formFila = fila;
+    });
+  }).catch(function(){});
+}
+function guardarFormulario(btn){
+  var t = D.tabla, cols = D.formCols, fila = D.formFila, datos = {};
+  cols.forEach(function(c){ var v = leerCampo(c); if (v === undefined) return; if (!fila) { if (v !== '' && v !== false) datos[c.k] = v; } else if (String(v) !== String(fila[c.k] === undefined ? '' : fila[c.k])) datos[c.k] = v; });
+  if (fila && !Object.keys(datos).length) return toast('No hay cambios.');
+  btn.disabled = true;
+  var req = fila ? call('editar', { tabla: t, id: fila.id, version: fila.version, cambios: datos, motivo: $('fxMotivo').value.trim(), fuente: $('fxFuente').value.trim(), op_id: opId() }) : call('crear', { tabla: t, datos: datos, op_id: opId() });
+  req.then(function(){ toast(fila ? 'Cambios guardados.' : 'Registro creado.'); cerrarHoja(); D.refs = {}; cargarDatos(); return cargar(); })
+    .catch(function(e){
+      if (e.code === 'CONFLICTO') { toast('Otra persona modificó el registro. Se recargó la versión actual.', 'err'); cerrarHoja(); cargarDatos(); }
+      else if (e.code === 'MOTIVO_REQUERIDO') { var m = $('fxMotivo').value.trim() ? $('fxFuente') : $('fxMotivo'); if (m) m.focus(); }
+    })
+    .then(function(){ btn.disabled = false; });
+}
+function mostrarControl(){
+  if (!D.cliente) return toast('Elige un cliente.', 'err');
+  call('control_economico', { cliente_id: D.cliente }).then(function(r){
+    var d = r.data, T = d.totales, f = function(n){ return n === null || n === undefined ? 'Desconocido' : '$' + Number(n).toLocaleString('es-CL'); };
+    var titulo = d.estado === 'OK' ? 'Cuadra' : d.estado === 'INCOMPLETO' ? 'Incompleto: hay cobros confirmados sin monto (' + esc((T.montos_desconocidos || []).join(', ')) + ')' : 'Hay que revisar';
+    var h = '<div class="block"><h3>' + titulo + '</h3><dl class="kv"><dt>Cobrado confirmado</dt><dd>' + f(T.cobrado_confirmado) + '</dd><dt>Pagado confirmado</dt><dd>' + f(T.pagado_confirmado) + '</dd><dt>Imputado</dt><dd>' + f(T.imputado) + '</dd><dt>Saldo por cobrar</dt><dd>' + f(T.saldo_por_cobrar) + '</dd><dt>Abonos anticipados</dt><dd>' + f(T.abonos_anticipados) + '</dd><dt>Pago sin imputar</dt><dd>' + f(T.pago_sin_imputar) + '</dd></dl></div>';
+    if (d.errores.length) h += '<div class="block"><h3>Errores</h3><ul style="margin:0;padding-left:18px">' + d.errores.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    if (d.alertas.length) h += '<div class="block"><h3>Alertas</h3><ul style="margin:0;padding-left:18px">' + d.alertas.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    abrirHoja('Control económico', h);
+  }).catch(function(){});
+}
+function mostrarStock(){
+  call('stock', {}).then(function(r){
+    var it = r.data.items;
+    var h = it.length ? '<div class="tw"><table class="h"><thead><tr><th>Artículo</th><th>Dueño</th><th class="n">Stock</th></tr></thead><tbody>' + it.map(function(x){ return '<tr><td>' + esc(x.codigo + ' · ' + x.articulo) + '</td><td>' + esc(x.propietario) + '</td><td class="n">' + (x.conocido ? esc(x.stock) + ' ' + esc(x.unidad) : 'Sin conteo') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="empty">No hay artículos en inventario.</div>';
+    if (r.data.errores.length) h += '<div class="block" style="margin-top:12px"><h3>Movimientos no contados</h3><ul style="margin:0;padding-left:18px">' + r.data.errores.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    abrirHoja('Stock', h);
+  }).catch(function(){});
+}
+function mostrarIntegridad(){
+  call('integridad', {}).then(function(r){
+    abrirHoja('Integridad', r.data.length ? '<ul style="padding-left:18px">' + r.data.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul>' : '<div class="empty">Sin problemas: referencias, listas y obligatorios en orden.</div>');
+  }).catch(function(){});
+}
+
+/* ───── eventos (delegados; sin JSON en atributos) ───── */
+document.addEventListener('click', function(ev){
+  var el = ev.target.closest('[data-act]'); if (!el) return;
+  var a = el.getAttribute('data-act'), id = el.getAttribute('data-id');
+  if (a === 'tab'){ S.tab = el.getAttribute('data-tab'); renderTabs(); render(); }
+  else if (a === 'trabajo') abrirTrabajo(id);
+  else if (a === 'ficha') abrirFicha(id);
+  else if (a === 'cerrar-hoja') cerrarHoja();
+  else if (a === 'iniciar') iniciar(id, el);
+  else if (a === 'pausar') pedirPausa();
+  else if (a === 'pausa-motivo') cerrarSesion(el.getAttribute('data-m'));
+  else if (a === 'terminar') cerrarSesion(null);
+  else if (a === 'dictar') dictar();
+  else if (a === 'guardar-detalle') guardarDetalle(id, el);
+  else if (a === 'guardar-pendiente') guardarPendiente(id, el.getAttribute('data-eq'), el);
+  else if (a === 'revisar'){
+    el.disabled = true;
+    call('aporte_revisar', { tabla: el.getAttribute('data-t'), id: id, version: Number(el.getAttribute('data-v')), decision: el.getAttribute('data-d'), op_id: opId() })
+      .then(function(){ toast(el.getAttribute('data-d') === 'Aprobado' ? 'Aporte aprobado.' : 'Aporte rechazado.'); renderRevisar(); }).catch(function(){ el.disabled = false; });
+  }
+  else if (a === 'dt-nuevo') abrirFormulario(null);
+  else if (a === 'dt-editar') abrirFormulario(D.filas.filter(function(x){ return x.id === id; })[0]);
+  else if (a === 'dt-guardar') guardarFormulario(el);
+  else if (a === 'dt-control') mostrarControl();
+  else if (a === 'dt-stock') mostrarStock();
+  else if (a === 'dt-integridad') mostrarIntegridad();
+  else if (a === 'dt-anular'){
+    var motivo = $('fxMotivo') ? $('fxMotivo').value.trim() : '';
+    if (!motivo) { toast('Escribe el motivo en el campo "Motivo" antes de anular.', 'err'); if ($('fxMotivo')) $('fxMotivo').focus(); return; }
+    call('anular', { tabla: D.tabla, id: id, version: Number(el.getAttribute('data-v')), motivo: motivo, fuente: $('fxFuente') ? $('fxFuente').value.trim() : '', op_id: opId() }).then(function(){ toast('Registro anulado.'); cerrarHoja(); D.refs = {}; cargarDatos(); return cargar(); }).catch(function(){});
+  }
+  else if (a === 'dt-confirmar'){
+    var evid = $('fx_evidencia') ? $('fx_evidencia').value.trim() : '';
+    if (!evid) { toast('Indica la evidencia (guía, factura o foto) antes de confirmar.', 'err'); if ($('fx_evidencia')) $('fx_evidencia').focus(); return; }
+    call('recepcion_confirmar', { recepcion_id: id, version: Number(el.getAttribute('data-v')), evidencia: evid, op_id: opId() }).then(function(){ toast('Recepción confirmada: entró al inventario.'); cerrarHoja(); cargarDatos(); }).catch(function(){});
+  }
+  else if (a === 'dt-cobrar-mo'){
+    call('listar', { tabla: 'SESIONES', filtro: { trabajo_id: id, estado: 'Cerrada' } }).then(function(r){
+      var libres = r.data.filter(function(x){ return !x.concepto_id; });
+      if (!libres.length) return toast('No hay sesiones cerradas sin cobrar en este trabajo.', 'err');
+      return call('concepto_desde_sesiones', { trabajo_id: id, sesion_ids: libres.map(function(x){ return x.id; }), usar_trabajados: true, op_id: opId() })
+        .then(function(c){ toast('Cobro ' + c.data.codigo + ' creado como Cotizado por $' + Number(c.data.monto_cliente).toLocaleString('es-CL') + '. Revísalo y confírmalo.'); cerrarHoja(); });
+    }).catch(function(){});
+  }
+  else if (a === 'demo-user'){ DemoApi.login(el.getAttribute('data-u')); S.tab = 'trabajos'; cargar(); }
+});
+$('sheetBack').addEventListener('click', cerrarHoja);
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') cerrarHoja(); });
+$('who').addEventListener('click', function(){ if (DEMO){ S.inicio = null; renderLogin(); } });
+
+/* ───── modo demostración: misma lógica de negocio que el servidor, datos ficticios en memoria ───── */
+var DemoApi = (function(){
+  if (!DEMO || typeof handle_ !== 'function') return { call: function(){ return { ok:false, error:{ code:'DEMO', message:'Modo demo no disponible.' } }; }, login: function(){} };
+  var store = new MemoryStore();
+  var sys = systemCtx_(store, {});
+  var user = null;
+  function H(u, action, p){ p.op_id = p.op_id || opId(); return handle_({ store: store, user: u, config: { administracion_ve_pago_trabajadores: 'No' } }, action, p).data; }
+  Object.keys(CONTRACT.listas).forEach(function(l){ CONTRACT.listas[l].forEach(function(v, i){ insertSystem_(sys, 'LISTAS', { lista: l, valor: v, activo: true, orden: i + 1 }); }); });
+  var vic = insertSystem_(sys, 'USUARIOS', { nombre: 'Víctor', correo: 'victor@demo.cl', rol: 'Administrador', activo: true });
+  insertSystem_(sys, 'USUARIOS', { nombre: 'Victoria', correo: 'victoria@demo.cl', rol: 'Administracion', activo: true });
+  var juan = insertSystem_(sys, 'USUARIOS', { nombre: 'Juan', correo: 'juan@demo.cl', rol: 'Tecnico', activo: true });
+  var c1 = H(vic, 'crear', { tabla:'CLIENTES', datos:{ nombre:'Transportes del Valle', tipo:'Empresa', estado:'Activo' } });
+  var c2 = H(vic, 'crear', { tabla:'CLIENTES', datos:{ nombre:'Agrícola Los Aromos', tipo:'Empresa', estado:'Activo' } });
+  var e1 = H(vic, 'crear', { tabla:'EQUIPOS', datos:{ cliente_id:c1.id, nombre_corto:'Tracto Volvo FH', marca:'Volvo', modelo:'FH 460', anio:2016, patente:'HPLW-61', vin:'YV2RT40A0GA000001', motor_codigo:'D13K', unidad_uso:'km', tipo_vehiculo:'Tracto camión', activo:true } });
+  var e2 = H(vic, 'crear', { tabla:'EQUIPOS', datos:{ cliente_id:c1.id, nombre_corto:'Camión Isuzu NPR', marca:'Isuzu', modelo:'NPR 816', anio:2019, patente:'KXRZ-28', unidad_uso:'km', tipo_vehiculo:'Camión', activo:true } });
+  var e3 = H(vic, 'crear', { tabla:'EQUIPOS', datos:{ cliente_id:c2.id, nombre_corto:'Camioneta Hilux', marca:'Toyota', modelo:'Hilux 2.4', anio:2021, patente:'RGTS-90', unidad_uso:'km', tipo_vehiculo:'Camioneta', activo:true } });
+  function ejec(eq, cli, tipo, desc, ini, fin, km, prox){
+    var t = H(vic, 'crear', { tabla:'TRABAJOS', datos:{ cliente_id:cli, equipo_id:eq, tipo_trabajo:tipo, descripcion:desc, estado_comercial:'Autorizado', estado_ejecucion:'Ejecutado', fecha_inicio:ini, fecha_fin:fin, km:km, proxima_km:prox, estado_pago:'Pagado' } });
+    return t;
+  }
+  var h1 = ejec(e1.id, c1.id, 'Mantención', 'Mantención 300.000 km: aceite motor, filtros de aceite, combustible y aire.', '2026-09-02T12:00:00Z', '2026-09-02T19:00:00Z', 300120, 330000);
+  H(vic, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:h1.id, tipo:'Fluido', componente:'Motor', descripcion:'Aceite 10W-40 cargado', cantidad:36, unidad:'L', tipo_cantidad:'Cargado' } });
+  ejec(e3.id, c2.id, 'Diagnóstico', 'Diagnóstico luz de motor: sensor de oxígeno aguas abajo reemplazado.', '2026-10-14T13:00:00Z', '2026-10-15T15:30:00Z', 61200, '');
+  ejec(e2.id, c1.id, 'Cambio de aceite', 'Cambio de aceite y filtro.', '2026-08-10T12:00:00Z', '2026-08-10T15:00:00Z', 150300, 160000);
+  var t1 = H(vic, 'crear', { tabla:'TRABAJOS', datos:{ cliente_id:c1.id, equipo_id:e1.id, tipo_trabajo:'Reparación', descripcion:'Revisar fuga de refrigerante en bomba de agua y cambiar correa auxiliar.', estado_comercial:'Autorizado' } });
+  var t2 = H(vic, 'crear', { tabla:'TRABAJOS', datos:{ cliente_id:c1.id, equipo_id:e2.id, tipo_trabajo:'Mantención', descripcion:'Mantención 160.000 km.', estado_comercial:'Autorizado', prog_desde:'2026-10-23T12:00:00Z' } });
+  H(vic, 'crear', { tabla:'ASIGNACIONES', datos:{ trabajo_id:t1.id, usuario_id:juan.id } });
+  H(vic, 'crear', { tabla:'ASIGNACIONES', datos:{ trabajo_id:t2.id, usuario_id:juan.id } });
+  H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Aceite motor', componente:'Cárter', especificacion:'10W-40 VDS-4', cantidad:36, unidad:'L', tipo_cantidad:'Capacidad', visible_tecnico:true } });
+  H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Torque', componente:'Tapón de cárter', torque:'60 Nm', visible_tecnico:true } });
+  H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Documento', descripcion:'Condiciones comerciales acordadas con el cliente', visible_tecnico:false } });
+  H(vic, 'crear', { tabla:'PENDIENTES', datos:{ equipo_id:e1.id, trabajo_origen_id:h1.id, descripcion:'Cambiar filtro secador de aire', objetivo:'Próxima mantención', estado:'Abierto', visible_tecnico:true } });
+  H(vic, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:t1.id, tipo:'Procedimiento', componente:'Bomba de agua', descripcion:'Torque pernos bomba de agua 25 Nm en cruz. Usar sello nuevo.', visible_tecnico:true } });
+  H(vic, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:t1.id, tipo:'Observación', descripcion:'Cliente pide factura a nombre de la casa matriz (dato interno).' } });
+  H(juan, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:t1.id, tipo:'Diagnóstico', componente:'Bomba de agua', descripcion:'Fuga por el sello de la bomba, goteo constante con motor caliente.' } });
+  H(vic, 'crear', { tabla:'TARIFAS', datos:{ usuario_id:vic.id, valor_hora:30000, desde:'2026-01-01' } });
+  H(vic, 'crear', { tabla:'TARIFAS', datos:{ usuario_id:juan.id, valor_hora:20000, desde:'2026-01-01' } });
+  H(vic, 'crear', { tabla:'VALORES_TRABAJADOR', datos:{ usuario_id:juan.id, valor_hora:7000, desde:'2026-01-01' } });
+  var hoy = new Date(); var y = hoy.getFullYear(), m = hoy.getMonth();
+  function iso(d, h){ return new Date(Date.UTC(y, m, d, h, 0)).toISOString(); }
+  try { H(vic, 'sesion_posterior', { trabajo_id:t1.id, usuario_id:juan.id, actividad:'Desarme', inicio: iso(1, 12), fin: iso(1, 15) }); } catch (e) {}
+  try { H(vic, 'sesion_posterior', { trabajo_id:t1.id, usuario_id:vic.id, actividad:'Diagnóstico', duracion_min:45, fecha: iso(1, 12).slice(0, 10), precision:'Estimada' }); } catch (e) {}
+  return {
+    login: function(correo){ user = store.list('USUARIOS').filter(function(u){ return u.correo === correo; })[0]; },
+    call: function(action, p){
+      try {
+        if (action === 'subir_foto') return { ok:true, data:{ url:'(foto de demostración, no se sube)' }, warnings:[] };
+        var r = handle_({ store: store, user: user, config: { administracion_ve_pago_trabajadores: 'No' } }, action, p);
+        return { ok:true, data: JSON.parse(JSON.stringify(r.data)), warnings: r.warnings || [], duplicate: !!r.duplicate };
+      } catch (e) { return { ok:false, error:{ code: e.code || 'INTERNO', message: e.message } }; }
+    }
+  };
+})();
+
+if (DEMO) renderLogin(); else renderLogin();
+})();
+</script>
+</body>
+</html>
