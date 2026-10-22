@@ -1870,6 +1870,8 @@ function vistaStock_(ctx, p) {
   var movs = activeRows_(ctx, 'MOV_INVENTARIO');
   var items = activeRows_(ctx, 'INVENTARIO').filter(function (i) { return !p.cliente_id || i.cliente_id === p.cliente_id; });
   var errores = [];
+  var clientes = {};
+  rows_(ctx, 'CLIENTES').forEach(function (c) { clientes[c.id] = c.nombre; });
   var out = items.map(function (it) {
     var m = movs.filter(function (x) { return x.item_id === it.id; });
     var neto = 0;
@@ -1885,7 +1887,7 @@ function vistaStock_(ctx, p) {
     });
     var conocido = it.conteo_confirmado === true && !isEmpty_(it.conteo_inicial);
     return {
-      item_id: it.id, codigo: it.codigo, articulo: it.articulo, unidad: it.unidad, propietario: it.propietario, cliente_id: it.cliente_id, ubicacion: it.ubicacion,
+      item_id: it.id, codigo: it.codigo, articulo: it.articulo, unidad: it.unidad, propietario: it.propietario, cliente_id: it.cliente_id, cliente_nombre: it.cliente_id ? (clientes[it.cliente_id] || '') : '', ubicacion: it.ubicacion,
       conocido: conocido, conteo_inicial: conocido ? Number(it.conteo_inicial) : null, movimientos_neto: neto, stock: conocido ? Number(it.conteo_inicial) + neto : null
     };
   });
@@ -2937,7 +2939,7 @@ function mostrarControl(){
 function mostrarStock(){
   call('stock', {}).then(function(r){
     var it = r.data.items;
-    var h = it.length ? '<div class="tw"><table class="h"><thead><tr><th>Artículo</th><th>Dueño</th><th class="n">Stock</th></tr></thead><tbody>' + it.map(function(x){ return '<tr><td>' + esc(x.codigo + ' · ' + x.articulo) + '</td><td>' + esc(x.propietario) + '</td><td class="n">' + (x.conocido ? esc(x.stock) + ' ' + esc(x.unidad) : 'Sin conteo') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="empty">No hay artículos en inventario.</div>';
+    var h = it.length ? '<div class="tw"><table class="h"><thead><tr><th>Artículo</th><th>Dueño</th><th class="n">Stock</th></tr></thead><tbody>' + it.map(function(x){ return '<tr><td>' + esc(x.codigo + ' · ' + x.articulo) + '</td><td>' + esc(x.propietario === 'Cliente' && x.cliente_nombre ? x.cliente_nombre : x.propietario) + '</td><td class="n">' + (x.conocido ? esc(x.stock) + ' ' + esc(x.unidad) : 'Sin conteo') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="empty">No hay artículos en inventario.</div>';
     if (r.data.errores.length) h += '<div class="block" style="margin-top:12px"><h3>Movimientos no contados</h3><ul style="margin:0;padding-left:18px">' + r.data.errores.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
     abrirHoja('Stock', h);
   }).catch(function(){});
