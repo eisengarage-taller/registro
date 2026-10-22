@@ -2487,7 +2487,14 @@ MemoryStore.prototype.journalFind = function (opId) {
 'use strict';
 var $ = function(id){ return document.getElementById(id); };
 var DEMO = !APP_CONFIG.API_URL || /[?&]demo=1/.test(location.search);
-var S = { token:null, inicio:null, tab:'trabajos', tickTimer:null, demoUser:null };
+var S = { token:null, acceso:null, inicio:null, tab:'trabajos', tickTimer:null, demoUser:null };
+/* Llave de acceso de este equipo (1.5.3): se entra con Google una vez y la llave dura 30 días sin uso. */
+var ACCESO_KEY = 'eg_registro_acceso';
+function leerAcceso(){ try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
+function guardarAcceso(v){ S.acceso = v; try { localStorage.setItem(ACCESO_KEY, v); } catch (e) {} }
+function borrarAcceso(){ S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); } catch (e) {} }
+function nombreEquipo(){ var u = navigator.userAgent || ''; return /iPhone|iPad/.test(u) ? 'iPhone/iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Mac/.test(u) ? 'Mac' : 'Navegador'; }
+if (!DEMO) S.acceso = leerAcceso();
 
 /* ───── utilidades de pantalla ───── */
 function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
@@ -2523,7 +2530,9 @@ function options(list, sel, empty){
 function api(action, payload){
   payload = payload || {};
   if (DEMO) return Promise.resolve(DemoApi.call(action, payload));
-  var body = JSON.stringify({ action: action, payload: payload, id_token: S.token });
+  // Con llave de acceso no se manda el token de Google (salvo para sacar la llave).
+  var usarLlave = S.acceso && action !== 'acceso_abrir';
+  var body = JSON.stringify({ action: action, payload: payload, id_token: usarLlave ? null : S.token, sesion: usarLlave ? S.acceso : null });
   function intento(n){
     return fetch(APP_CONFIG.API_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: body, redirect:'follow' })
       .then(function(r){ return r.json(); })
@@ -2539,7 +2548,7 @@ function call(action, payload){
   return api(action, payload).then(function(r){
     if (!r.ok){
       var e = r.error || {};
-      if (e.code === 'NO_AUTENTICADO') { S.token = null; renderLogin(); }
+      if (e.code === 'NO_AUTENTICADO') { S.token = null; borrarAcceso(); S.inicio = null; cerrarHoja(); renderLogin(); }
       toast(e.message || 'Error', 'err');
       // Guardado cortado o no verificado: se recarga para no repetir sobre datos viejos.
       if (e.code === 'GUARDADO_INTERRUMPIDO' || e.code === 'NO_VERIFICADO') { cerrarHoja(); setTimeout(function(){ cargar(); }, 1500); }
@@ -2565,11 +2574,47 @@ function renderLogin(){
   $('main').innerHTML = '<div class="login"><h2>Registro del taller</h2><p>Entra con tu cuenta Google habilitada.</p><div id="gbtn" style="display:inline-block;margin-top:16px"></div></div>';
   function initGsi(){
     if (!window.google || !google.accounts){ return setTimeout(initGsi, 300); }
-    google.accounts.id.initialize({ client_id: APP_CONFIG.CLIENT_ID, callback: function(resp){ S.token = resp.credential; cargar(); }, auto_select: true });
+    google.accounts.id.initialize({ client_id: APP_CONFIG.CLIENT_ID, callback: entrarConGoogle, auto_select: true });
     google.accounts.id.renderButton($('gbtn'), { theme:'filled_black', size:'large', text:'signin_with', locale:'es' });
     google.accounts.id.prompt();
   }
   initGsi();
+}
+
+/* Google entrega un token de 1 hora: se cambia por la llave de acceso de este equipo y se carga. */
+function entrarConGoogle(resp){
+  S.token = resp.credential;
+  $('main').innerHTML = '<div class="empty">Entrando…</div>';
+  api('acceso_abrir', { equipo: nombreEquipo() }).then(function(r){
+    if (r.ok && r.data && r.data.sesion) { guardarAcceso(r.data.sesion); S.token = null; }
+  }).then(function(){ return cargar(); }).catch(function(){});
+}
+function arrancar(){
+  if (DEMO || !S.acceso) return renderLogin();
+  $('main').innerHTML = '<div class="empty">Cargando…</div>';
+  cargar().catch(function(e){
+    if (e && e.code === 'NO_AUTENTICADO') return; // ya volvió a la pantalla de inicio de sesión
+    $('main').innerHTML = '<div class="login"><h2>No se pudo cargar</h2><p>' + esc(e && e.message || 'Error') + '</p><button class="btn big" type="button" data-act="reintentar">Reintentar</button></div>';
+  });
+}
+function abrirCuenta(){
+  if (!S.inicio) return;
+  var u = S.inicio.usuario || {};
+  var h = '<p>' + esc(u.nombre || '') + (u.correo ? ' · ' + esc(u.correo) : '') + '</p>' +
+    '<p class="s">Este equipo queda con la sesión abierta y se renueva sola cada vez que usas la app. Si pasan 30 días sin usarla, pide entrar de nuevo con Google.</p>' +
+    '<div class="roles" style="margin-top:14px"><button class="btn big" type="button" data-act="acceso-salir">Cerrar sesión en este equipo</button>' +
+    '<button class="btn big ghost" type="button" data-act="acceso-salir-todo">Cerrar sesión en todos mis equipos</button></div>' +
+    '<p class="s" style="margin-top:12px">Si se pierde un celular: usa "todos mis equipos" desde otro equipo, o desactiva al usuario en Usuarios.</p>';
+  abrirHoja('Mi sesión', h);
+}
+function salir(todas, el){
+  if (el) el.disabled = true;
+  var fin = function(){
+    borrarAcceso(); S.token = null; S.inicio = null; cerrarHoja();
+    try { google.accounts.id.disableAutoSelect(); } catch (e) {}
+    renderLogin(); toast(todas ? 'Sesión cerrada en todos tus equipos.' : 'Sesión cerrada en este equipo.');
+  };
+  api('acceso_cerrar', { todas: !!todas }).then(fin, fin);
 }
 
 /* ───── carga principal ───── */
@@ -3083,11 +3128,14 @@ document.addEventListener('click', function(ev){
   }
   else if (a === 'pq-validar') validarPaquete(el);
   else if (a === 'pq-aplicar') aplicarPaquete(el);
+  else if (a === 'acceso-salir') salir(false, el);
+  else if (a === 'acceso-salir-todo') salir(true, el);
+  else if (a === 'reintentar') arrancar();
   else if (a === 'demo-user'){ DemoApi.login(el.getAttribute('data-u')); S.tab = 'trabajos'; cargar(); }
 });
 $('sheetBack').addEventListener('click', cerrarHoja);
 document.addEventListener('keydown', function(e){ if (e.key === 'Escape') cerrarHoja(); });
-$('who').addEventListener('click', function(){ if (DEMO){ S.inicio = null; renderLogin(); } });
+$('who').addEventListener('click', function(){ if (DEMO){ S.inicio = null; renderLogin(); } else abrirCuenta(); });
 
 /* ───── modo demostración: misma lógica de negocio que el servidor, datos ficticios en memoria ───── */
 var DemoApi = (function(){
@@ -3143,7 +3191,7 @@ var DemoApi = (function(){
   };
 })();
 
-if (DEMO) renderLogin(); else renderLogin();
+arrancar();
 })();
 </script>
 </body>
