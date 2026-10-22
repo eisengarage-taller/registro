@@ -155,7 +155,7 @@ var APP_CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycby8W2UZmUiP
  * calc: la llena el sistema; nadie la escribe a mano.
  */
 var CONTRACT = {
-  version: 'EG-REG-1.4-BORRADOR',
+  version: 'EG-REG-1.5-BORRADOR',
   timezone: 'America/Santiago',
   roles: ['Administrador', 'Administracion', 'Tecnico'],
 
@@ -646,6 +646,20 @@ var CONTRACT = {
       ]
     },
 
+    PAQUETES: {
+      file: 'BASE', scope: 'central', prefix: 'PQ', tecnico: 'ninguno',
+      d: 'Paquetes de datos que arma una IA (Claude o GPT) desde un dictado o informe, revisados y aplicados en la app. Guardan la fuente y el texto original.',
+      columns: [
+        { k: 'fuente', t: 'text', req: true, d: 'De dónde viene (ej. chat Claude, informe del 22-10-2026).' },
+        { k: 'autor_ia', t: 'text', d: 'IA que armó el paquete.' },
+        { k: 'operaciones', t: 'int' },
+        { k: 'resumen', t: 'long', d: 'Qué se creó y qué ya existía.' },
+        { k: 'dudas', t: 'long', d: 'Dudas que señaló la IA.' },
+        { k: 'texto_original', t: 'long', d: 'Texto fuente tal como llegó (máximo 40.000 caracteres).' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+
     VALORES_TRABAJADOR: {
       file: 'PAGO', scope: 'central', prefix: 'VT', tecnico: 'ninguno', soloAdministrador: true,
       d: 'Archivo aparte, solo Víctor. Valor que se le paga a cada persona por actividad.',
@@ -662,7 +676,7 @@ var CONTRACT = {
 
   /** Hoja CONFIG (clave/valor). No lleva columnas técnicas. */
   config: [
-    { clave: 'version_contrato', valor: 'EG-REG-1.4-BORRADOR', nota: 'Debe coincidir con el contrato del código.' },
+    { clave: 'version_contrato', valor: 'EG-REG-1.5-BORRADOR', nota: 'Debe coincidir con el contrato del código.' },
     { clave: 'zona_horaria', valor: 'America/Santiago', nota: '' },
     { clave: 'oauth_client_id', valor: '', nota: 'ID de cliente OAuth de Google Cloud. Lo completa Víctor.' },
     { clave: 'pago_trabajadores_id', valor: '', nota: 'ID del archivo PAGO TRABAJADORES. Lo llena el script de creación.' },
@@ -2020,9 +2034,211 @@ function revisarIntegridad_(ctx) {
   return problemas;
 }
 
+/* ───────────────────────── paquete IA ───────────────────────── */
+/*
+ * Una IA (Claude o GPT) convierte un dictado o informe en un paquete de operaciones (formato EG-PAQUETE-1).
+ * La IA no escribe en la base: la persona pega el paquete en la app, ve la vista previa (paquete_validar)
+ * y lo confirma (paquete_aplicar). Todo pasa por las mismas reglas que la pantalla y se guarda junto o nada.
+ *
+ * { formato: 'EG-PAQUETE-1', fuente, autor_ia, texto_original, dudas: [..], operaciones: [
+ *     { ref: 'cliente', tabla: 'CLIENTES', buscar: { nombre: '…' }, datos: { … } },
+ *     { ref: 'equipo',  tabla: 'EQUIPOS',  buscar: { patente: 'KFDG29' }, datos: { cliente_id: '@cliente', … } },
+ *     { tabla: 'SESIONES', accion: 'sesion_posterior', datos: { trabajo_id: '@trabajo', usuario_id: '@yo', … } } ] }
+ *
+ * Valores especiales en datos y buscar: '@ref' (id de una operación anterior), '@yo' (quien aplica),
+ * '@usuario:correo o nombre' (un usuario activo).
+ * buscar: si hay exactamente un registro vigente que calza, se reutiliza (no se crea ni se modifica);
+ * si no hay, se crea; si hay varios, se detiene (AMBIGUO). Las ediciones de registros existentes se hacen en la app.
+ */
+
+var PAQUETE_FORMATO = 'EG-PAQUETE-1';
+var PAQUETE_MAX_OPS = 200;
+var PAQUETE_MAX_TEXTO = 40000;
+var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES'];
+var PAQUETE_ACCIONES = ['crear', 'sesion_posterior'];
+
+/** Revisa la forma del paquete antes de tocar datos. */
+function paqueteForma_(pq) {
+  if (!pq || typeof pq !== 'object' || Array.isArray(pq)) fail_('PAQUETE', 'El paquete no es un objeto JSON.');
+  if (pq.formato !== PAQUETE_FORMATO) fail_('PAQUETE', 'Formato desconocido: se espera "' + PAQUETE_FORMATO + '".');
+  if (isEmpty_(pq.fuente)) fail_('PAQUETE', 'Falta "fuente": de dónde viene la información.');
+  var ops = pq.operaciones;
+  if (!Array.isArray(ops) || !ops.length) fail_('PAQUETE', 'El paquete no trae operaciones.');
+  if (ops.length > PAQUETE_MAX_OPS) fail_('PAQUETE', 'Demasiadas operaciones (' + ops.length + '). Máximo ' + PAQUETE_MAX_OPS + ': divide el paquete.');
+  var refs = {};
+  ops.forEach(function (o, i) {
+    var n = 'Operación ' + (i + 1);
+    if (!o || typeof o !== 'object') fail_('PAQUETE', n + ': no es un objeto.');
+    Object.keys(o).forEach(function (k) { if (['ref', 'tabla', 'accion', 'buscar', 'datos', 'nota'].indexOf(k) < 0) fail_('PAQUETE', n + ': clave desconocida "' + k + '".'); });
+    if (!CONTRACT.tables[o.tabla]) fail_('PAQUETE', n + ': tabla desconocida "' + o.tabla + '".');
+    if (PAQUETE_TABLAS_PROHIBIDAS.indexOf(o.tabla) >= 0) fail_('PAQUETE', n + ': ' + o.tabla + ' no se carga desde un paquete. Se hace en la app.');
+    var acc = o.accion || 'crear';
+    if (PAQUETE_ACCIONES.indexOf(acc) < 0) fail_('PAQUETE', n + ': acción "' + acc + '" no permitida (crear o sesion_posterior).');
+    if (acc === 'sesion_posterior' && o.tabla !== 'SESIONES') fail_('PAQUETE', n + ': sesion_posterior es solo para SESIONES.');
+    if (acc === 'crear' && o.tabla === 'SESIONES') fail_('PAQUETE', n + ': las sesiones se cargan con accion "sesion_posterior".');
+    if (acc === 'sesion_posterior' && o.buscar) fail_('PAQUETE', n + ': una sesión no lleva "buscar".');
+    if (o.buscar !== undefined && (typeof o.buscar !== 'object' || Array.isArray(o.buscar) || !Object.keys(o.buscar).length)) fail_('PAQUETE', n + ': "buscar" debe ser un objeto con al menos un campo.');
+    if (o.datos !== undefined && (typeof o.datos !== 'object' || Array.isArray(o.datos))) fail_('PAQUETE', n + ': "datos" debe ser un objeto.');
+    if (!o.buscar && !o.datos) fail_('PAQUETE', n + ': falta "datos".');
+    if (!isEmpty_(o.ref)) {
+      if (!/^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(String(o.ref))) fail_('PAQUETE', n + ': ref "' + o.ref + '" no válida (letras, números y _).');
+      if (refs[o.ref]) fail_('PAQUETE', n + ': ref "' + o.ref + '" repetida.');
+      refs[o.ref] = true;
+    }
+  });
+}
+
+/** Reemplaza '@ref', '@yo' y '@usuario:…' por ids reales. */
+function paqueteValor_(ctx, v, ids, n) {
+  if (typeof v !== 'string' || v.charAt(0) !== '@') return v;
+  if (v === '@yo') return ctx.user.id;
+  if (v.indexOf('@usuario:') === 0) {
+    var q = normTxt_(v.slice(9));
+    var us = activeRows_(ctx, 'USUARIOS').filter(function (u) { return u.activo === true && (normTxt_(u.correo) === q || normTxt_(u.nombre) === q); });
+    if (us.length !== 1) fail_('PAQUETE', n + ': ' + (us.length ? 'hay varios usuarios' : 'no hay un usuario activo') + ' que calce con "' + v.slice(9) + '".');
+    return us[0].id;
+  }
+  var ref = v.slice(1);
+  if (!ids[ref]) fail_('PAQUETE', n + ': "' + v + '" no corresponde a una operación anterior del paquete.');
+  return ids[ref];
+}
+
+function paqueteResolver_(ctx, obj, ids, n) {
+  var out = {};
+  Object.keys(obj || {}).forEach(function (k) { out[k] = paqueteValor_(ctx, obj[k], ids, n); });
+  return out;
+}
+
+/** Registros vigentes que calzan con buscar. Patente y VIN se comparan normalizados; textos sin tildes ni mayúsculas. */
+function paqueteBuscar_(ctx, tabla, buscar, n) {
+  var cols = colMap_(tabla);
+  Object.keys(buscar).forEach(function (k) { if (!cols[k] && k !== 'codigo') fail_('PAQUETE', n + ': ' + tabla + ' no tiene la columna "' + k + '" para buscar.'); });
+  return activeRows_(ctx, tabla).filter(function (r) {
+    return Object.keys(buscar).every(function (k) {
+      var want = buscar[k], have = r[k];
+      if (isEmpty_(want)) return isEmpty_(have);
+      if (tabla === 'EQUIPOS' && (k === 'patente' || k === 'vin')) return normPlate_(have) === normPlate_(want) && normPlate_(want) !== '';
+      if (k === 'codigo') return String(have).replace(/^EG-/, '') === String(want).replace(/^EG-/, '');
+      var c = cols[k];
+      if (c && (c.t === 'ref' || c.t === 'enum' || c.t === 'bool' || c.t === 'int' || c.t === 'num' || c.t === 'money')) return String(have) === String(want);
+      return normTxt_(have) === normTxt_(want);
+    });
+  });
+}
+
+/** Etiqueta corta para la vista previa. */
+function paqueteEtiqueta_(tabla, r) {
+  var k = ['nombre_corto', 'nombre', 'descripcion', 'titulo', 'articulo', 'componente', 'valor'].filter(function (c) { return !isEmpty_(r[c]); })[0];
+  var t = k ? String(r[k]) : '';
+  if (tabla === 'SESIONES') t = (r.actividad || 'Sesión') + ' · ' + (r.duracion_min || '') + ' min · ' + r.fecha;
+  if (tabla === 'CONCEPTOS' || tabla === 'PAGOS' || tabla === 'IMPUTACIONES') t = (t ? t + ' · ' : '') + '$' + String(r.monto_cliente !== undefined && r.monto_cliente !== '' ? r.monto_cliente : r.monto).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return t.length > 90 ? t.slice(0, 87) + '…' : t;
+}
+
+/**
+ * Ejecuta las operaciones sobre ctx.store (una TxStore: nada se guarda hasta el commit).
+ * Devuelve { resultados: [{ n, tabla, accion, resultado: 'Nuevo'|'Existente', codigo, id, etiqueta, avisos }], avisos }.
+ */
+function paqueteEjecutar_(ctx, pq, baseOp, parcial) {
+  var ids = {}, resultados = parcial || [], avisosGlobales = [];
+  pq.operaciones.forEach(function (o, i) {
+    var n = 'Operación ' + (i + 1) + ' (' + o.tabla + (o.ref ? ' ' + o.ref : '') + ')';
+    var acc = o.accion || 'crear';
+    var opId = baseOp ? baseOp + '#' + (i + 1) : '';
+    var res;
+    try {
+      var datos = paqueteResolver_(ctx, o.datos, ids, n);
+      var previo = opId ? findByOp_(ctx, o.tabla, opId) : null;
+      if (previo) {
+        res = { tabla: o.tabla, accion: acc, resultado: 'Ya aplicado', row: previo, avisos: [] };
+      } else if (o.buscar) {
+        var buscar = paqueteResolver_(ctx, o.buscar, ids, n);
+        var hall = paqueteBuscar_(ctx, o.tabla, buscar, n);
+        if (hall.length > 1) fail_('AMBIGUO', n + ': hay ' + hall.length + ' registros que calzan (' + hall.map(function (r) { return r.codigo; }).join(', ') + '). Precisa la búsqueda o usa el código.');
+        if (hall.length === 1) {
+          var ex = hall[0], dif = [];
+          Object.keys(datos).forEach(function (k) {
+            if (isEmpty_(datos[k]) || isEmpty_(ex[k])) return;
+            var a = String(ex[k]), b = String(datos[k]);
+            if (a !== b && normTxt_(a) !== normTxt_(b) && !(o.tabla === 'EQUIPOS' && (k === 'patente' || k === 'vin') && normPlate_(a) === normPlate_(b))) dif.push(k + ': en la base "' + a + '", en el paquete "' + b + '"');
+          });
+          res = { tabla: o.tabla, accion: 'reutilizar', resultado: 'Existente', row: ex, avisos: dif.length ? [{ code: 'DIFERENCIA', message: 'Ya existía ' + ex.codigo + '. No se modificó. Diferencias: ' + dif.join('; ') + '. Si corresponde, corrígelo en la app.' }] : [] };
+        }
+        if (!res) Object.keys(buscar).forEach(function (k) { if (k !== 'codigo' && isEmpty_(datos[k])) datos[k] = buscar[k]; });
+      }
+      if (!res && acc === 'crear') {
+        var c = insertRow_(ctx, o.tabla, datos, { opId: opId });
+        res = { tabla: o.tabla, accion: acc, resultado: 'Nuevo', row: c.row, avisos: c.warnings };
+      }
+      if (!res && acc === 'sesion_posterior') {
+        var sp = sesionPosterior_(ctx, Object.assign({}, datos, { op_id: opId }));
+        res = { tabla: o.tabla, accion: acc, resultado: 'Nuevo', row: sp.data, avisos: sp.warnings };
+      }
+    } catch (e) {
+      if (e && e.name === 'AppError') {
+        var msg = e.message.indexOf('Operación ') === 0 ? e.message : n + ': ' + e.message;
+        fail_(e.code, msg, Object.assign({ operacion: i + 1, tabla: o.tabla, ref: o.ref || '' }, e.details || {}));
+      }
+      throw e;
+    }
+    if (!isEmpty_(o.ref)) ids[o.ref] = res.row.id;
+    resultados.push({ n: i + 1, ref: o.ref || '', tabla: o.tabla, accion: res.accion, resultado: res.resultado, id: res.row.id, codigo: res.row.codigo, etiqueta: paqueteEtiqueta_(o.tabla, res.row), avisos: res.avisos || [] });
+  });
+  return { resultados: resultados, avisos: avisosGlobales };
+}
+
+function paqueteTexto_(pq) {
+  var t = isEmpty_(pq.texto_original) ? '' : String(pq.texto_original);
+  return t.length > PAQUETE_MAX_TEXTO ? { texto: t.slice(0, PAQUETE_MAX_TEXTO), cortado: true } : { texto: t, cortado: false };
+}
+
+/** Vista previa: corre todo en una transacción que se descarta. No escribe nada. */
+function paqueteValidar_(ctx, p) {
+  requireAdmin_(ctx);
+  var pq = p.paquete;
+  paqueteForma_(pq);
+  var tx = new TxStore(ctx.store);
+  var c = {};
+  Object.keys(ctx).forEach(function (k) { if (k !== '_assigned') c[k] = ctx[k]; });
+  c.store = tx; c._tx = tx;
+  var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null };
+  try {
+    paqueteEjecutar_(c, pq, '', out.resultados);
+  } catch (e) {
+    if (!(e && e.name === 'AppError')) throw e;
+    out.valido = false;
+    out.error = { code: e.code, message: e.message, details: e.details };
+  }
+  var tt = paqueteTexto_(pq);
+  var avisos = [];
+  if (tt.cortado) avisos.push({ code: 'TEXTO_LARGO', message: 'El texto original supera ' + PAQUETE_MAX_TEXTO + ' caracteres: se guardará cortado.' });
+  if (isEmpty_(pq.texto_original)) avisos.push({ code: 'SIN_TEXTO', message: 'El paquete no trae el texto original: quedará solo la fuente.' });
+  return { data: out, warnings: avisos };
+}
+
+/** Aplica el paquete: todo junto o nada (la transacción la abre handle_). */
+function paqueteAplicar_(ctx, p) {
+  requireAdmin_(ctx);
+  var pq = p.paquete;
+  paqueteForma_(pq);
+  var r = paqueteEjecutar_(ctx, pq, p.op_id);
+  var nuevos = r.resultados.filter(function (x) { return x.resultado === 'Nuevo'; }).length;
+  var resumen = r.resultados.map(function (x) { return x.n + '. ' + x.tabla + ' ' + x.codigo + ' ' + x.resultado + (x.etiqueta ? ' · ' + x.etiqueta : ''); }).join('\n');
+  var tt = paqueteTexto_(pq);
+  var opPq = p.op_id + '#paquete';
+  var reg = findByOp_(ctx, 'PAQUETES', opPq) || insertSystem_(ctx, 'PAQUETES', {
+    fuente: String(pq.fuente).slice(0, 500), autor_ia: String(pq.autor_ia || '').slice(0, 100), operaciones: pq.operaciones.length,
+    resumen: resumen, dudas: [].concat(pq.dudas || []).join('\n'), texto_original: tt.texto,
+    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s).' + (tt.cortado ? ' Texto original cortado.' : '')
+  }, { opId: opPq });
+  var avisos = [];
+  r.resultados.forEach(function (x) { (x.avisos || []).forEach(function (w) { avisos.push({ code: w.code, message: 'Op. ' + x.n + ' ' + x.tabla + ': ' + w.message }); }); });
+  return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos }, warnings: avisos };
+}
+
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'recepcion_confirmar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'recepcion_confirmar', 'paquete_aplicar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -2219,6 +2435,8 @@ function handleInner_(ctx, action, p) {
     case 'integridad': requireAdmin_(ctx); return { data: revisarIntegridad_(ctx), warnings: [] };
     case 'pago_trabajadores': return vistaPagoTrabajadores_(ctx, p);
     case 'contrato': return vistaContrato_(ctx, p);
+    case 'paquete_validar': return paqueteValidar_(ctx, p);
+    case 'paquete_aplicar': return paqueteAplicar_(ctx, p);
   }
   fail_('ACCION', 'Acción desconocida: ' + action);
 }
@@ -2618,8 +2836,8 @@ function renderRevisar(){
 
 
 /* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
-var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES'];
-var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones' };
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
+var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
 var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
 function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
 function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
@@ -2628,7 +2846,7 @@ function renderDatos(){
   var opts = TABLAS_DATOS.map(function(t){ return '<option value="' + t + '"' + (t === D.tabla ? ' selected' : '') + '>' + esc(NOMBRES[t]) + '</option>'; }).join('');
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
-    '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -2730,6 +2948,54 @@ function mostrarIntegridad(){
   }).catch(function(){});
 }
 
+/* ───── cargar desde IA: pegar paquete, vista previa, aplicar ───── */
+var PQ = { texto:'', paquete:null, op:null };
+function abrirPaquete(){
+  var h = '<p style="margin-top:0;color:var(--acero)">Pega aquí el paquete que armó Claude o GPT en el chat. Primero se revisa sin guardar nada; después confirmas.</p>' +
+    '<label class="f"><span>Paquete</span><textarea class="i" id="pqTexto" style="min-height:220px;font-family:ui-monospace,Menlo,monospace;font-size:13px" placeholder="{ &quot;formato&quot;: &quot;EG-PAQUETE-1&quot;, … }">' + esc(PQ.texto) + '</textarea></label>' +
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="pq-validar">Revisar</button><button class="btn ghost" data-act="pq-limpiar">Limpiar</button></div>';
+  abrirHoja('Cargar desde IA', h);
+}
+/** Acepta el JSON solo o rodeado de texto o de ``` (lo que suele copiarse desde un chat). */
+function leerPaquete(txt){
+  var a = txt.indexOf('{'), b = txt.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('No encuentro un paquete: debe empezar con { y terminar con }.');
+  try { return JSON.parse(txt.slice(a, b + 1)); }
+  catch (e) { throw new Error('El paquete está incompleto o mal copiado. Cópialo de nuevo completo desde el chat.'); }
+}
+function validarPaquete(btn){
+  var txt = $('pqTexto').value;
+  var pq;
+  try { pq = leerPaquete(txt); } catch (e) { return toast(e.message, 'err'); }
+  // Mismo texto = misma operación: un doble toque en Aplicar no carga dos veces.
+  if (txt !== PQ.texto || !PQ.op) { PQ.op = opId(); }
+  PQ.texto = txt; PQ.paquete = pq;
+  btn.disabled = true;
+  call('paquete_validar', { paquete: pq }).then(function(r){
+    var d = r.data;
+    var h = '<div class="block"><h3>' + esc(d.fuente) + '</h3><p class="s" style="margin:0;color:var(--acero)">' + (d.autor_ia ? 'Armado por ' + esc(d.autor_ia) + ' · ' : '') + d.resultados.length + ' de ' + pq.operaciones.length + ' operaciones revisadas</p></div>';
+    if (!d.valido) h += '<div class="block" style="border-color:var(--freno)"><h3 style="color:var(--freno)">No se puede aplicar</h3><p style="margin:0">' + esc(d.error.message) + '</p><p class="s" style="margin:8px 0 0;color:var(--acero)">Pídele a la IA que corrija esa operación y vuelve a pegar el paquete.</p></div>';
+    if (d.dudas && d.dudas.length) h += '<div class="block" style="border-color:#E9C46A;background:#FFF6DD"><h3>Dudas que dejó la IA</h3><ul style="margin:0;padding-left:18px">' + d.dudas.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
+    var nuevos = d.resultados.filter(function(x){ return x.resultado === 'Nuevo'; }).length;
+    if (d.resultados.length) h += '<div class="list">' + d.resultados.map(function(x){
+      var chip = x.resultado === 'Nuevo' ? '<span class="chip ok">Nuevo</span>' : '<span class="chip">Ya existe · ' + esc(x.codigo) + '</span>';
+      var av = (x.avisos || []).map(function(w){ return '<div class="s" style="color:var(--senal-osc);margin-top:4px">' + esc(w.message) + '</div>'; }).join('');
+      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + x.n + '. ' + esc(NOMBRES[x.tabla] || x.tabla) + '</div><div class="s">' + esc(x.etiqueta) + '</div><div class="chips">' + chip + '</div>' + av + '</div></div>';
+    }).join('') + '</div>';
+    h += '<div class="inline" style="flex-wrap:wrap;margin-top:12px">' + (d.valido ? '<button class="btn go" data-act="pq-aplicar">Aplicar paquete (' + nuevos + ' nuevos)</button>' : '') + '<button class="btn ghost" data-act="pq-abrir">Volver al texto</button></div>';
+    abrirHoja('Vista previa', h);
+  }).catch(function(){ btn.disabled = false; });
+}
+function aplicarPaquete(btn){
+  if (!PQ.paquete) return;
+  btn.disabled = true;
+  call('paquete_aplicar', { paquete: PQ.paquete, op_id: PQ.op }).then(function(r){
+    toast('Paquete ' + r.data.codigo + ' aplicado: ' + r.data.nuevos + ' registro(s) nuevo(s).');
+    PQ = { texto:'', paquete:null, op:null };
+    cerrarHoja(); D.refs = {}; if (S.tab === 'datos') cargarDatos(); return cargar();
+  }).catch(function(){ btn.disabled = false; });
+}
+
 /* ───── eventos (delegados; sin JSON en atributos) ───── */
 document.addEventListener('click', function(ev){
   var el = ev.target.closest('[data-act]'); if (!el) return;
@@ -2774,6 +3040,10 @@ document.addEventListener('click', function(ev){
         .then(function(c){ toast('Cobro ' + c.data.codigo + ' creado como Cotizado por $' + Number(c.data.monto_cliente).toLocaleString('es-CL') + '. Revísalo y confírmalo.'); cerrarHoja(); });
     }).catch(function(){});
   }
+  else if (a === 'pq-abrir') abrirPaquete();
+  else if (a === 'pq-limpiar'){ PQ = { texto:'', paquete:null, op:null }; $('pqTexto').value = ''; $('pqTexto').focus(); }
+  else if (a === 'pq-validar') validarPaquete(el);
+  else if (a === 'pq-aplicar') aplicarPaquete(el);
   else if (a === 'demo-user'){ DemoApi.login(el.getAttribute('data-u')); S.tab = 'trabajos'; cargar(); }
 });
 $('sheetBack').addEventListener('click', cerrarHoja);
