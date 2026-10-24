@@ -60,8 +60,10 @@ main{padding:16px}
 .run .btn{border-color:var(--asfalto)}
 .btn:disabled{opacity:.5;cursor:default}
 nav.tabs{position:fixed;bottom:0;left:0;right:0;z-index:20;background:var(--chapa);border-top:1px solid var(--linea);display:flex;justify-content:center;padding-bottom:env(safe-area-inset-bottom)}
-nav.tabs .in{display:flex;max-width:760px;width:100%}
-nav.tabs button{flex:1;background:none;border:0;padding:12px 4px 14px;font:600 16px 'Barlow Condensed',sans-serif;color:var(--acero);cursor:pointer;border-top:3px solid transparent}
+nav.tabs .in{display:flex;max-width:760px;width:100%;overflow-x:auto;scrollbar-width:none}
+nav.tabs .in::-webkit-scrollbar{display:none}
+#ciOtro[hidden]{display:none}
+nav.tabs button{flex:1 0 auto;background:none;border:0;padding:12px 8px 14px;font:600 16px 'Barlow Condensed',sans-serif;color:var(--acero);cursor:pointer;border-top:3px solid transparent}
 nav.tabs button[aria-current="page"]{color:var(--asfalto);border-top-color:var(--senal)}
 .sheet-back{position:fixed;inset:0;background:rgba(31,42,48,.45);z-index:40;display:none}
 .sheet-back.on{display:block}
@@ -1923,6 +1925,87 @@ function vistaControlEconomico_(ctx, p) {
   return { data: { estado: estado, totales: totales, errores: errores, alertas: alertas, conceptos: detConceptos, pagos: detPagos }, warnings: [] };
 }
 
+/**
+ * Cierre (1.5.7): una sola lista de lo que falta resolver. Solo lectura, solo administración.
+ * p.dias = antigüedad para avisar pedidos (por defecto 7, entre 1 y 365).
+ */
+var CIERRE_DIAS_DEFECTO = 7;
+function diasEntre_(desde, hasta) {
+  var a = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(desde || '')), b = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(hasta || ''));
+  if (!a || !b) return null;
+  return Math.round((Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3])) / 86400000);
+}
+function vistaCierre_(ctx, p) {
+  requireAdmin_(ctx);
+  var dias = Math.floor(Number(isEmpty_(p.dias) ? CIERRE_DIAS_DEFECTO : p.dias));
+  if (!(dias >= 1 && dias <= 365)) fail_('VALOR_INVALIDO', 'Los días deben estar entre 1 y 365.');
+  var hoy = today_(ctx);
+  var clientes = {}, equipos = {};
+  rows_(ctx, 'CLIENTES').forEach(function (c) { clientes[c.id] = c; });
+  rows_(ctx, 'EQUIPOS').forEach(function (e) { equipos[e.id] = e; });
+  var nombreCli = function (id) { return clientes[id] ? clientes[id].nombre : ''; };
+  var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return t.estado_comercial !== 'Anulado'; });
+  var tById = {}; trabajos.forEach(function (t) { tById[t.id] = t; });
+
+  // 1. Trabajos ejecutados con el cobro sin definir (Por confirmar, Pendiente o Parcial).
+  var sinCobro = trabajos.filter(function (t) { return t.estado_ejecucion === 'Ejecutado' && ['Por confirmar', 'Pendiente', 'Parcial'].indexOf(t.estado_pago) >= 0; }).map(function (t) {
+    var e = equipos[t.equipo_id] || {}, fecha = localDate_(t.fecha_fin || t.fecha_inicio || '') || '';
+    return { trabajo_id: t.id, codigo: t.codigo, equipo_id: t.equipo_id, equipo: e.nombre_corto || '', patente: e.patente || '', cliente_id: t.cliente_id, cliente: nombreCli(t.cliente_id), fecha: fecha, dias: diasEntre_(fecha, hoy), estado_pago: t.estado_pago, descripcion: String(t.descripcion || '').slice(0, 120) };
+  }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+
+  // 2. Sesiones cerradas que todavía no respaldan ningún cobro (agrupadas por trabajo). Trabajos "No aplica" no cuentan.
+  var porTrabajo = {};
+  activeRows_(ctx, 'SESIONES').forEach(function (s) {
+    var t = tById[s.trabajo_id];
+    if (s.estado !== 'Cerrada' || !isEmpty_(s.concepto_id) || !t || t.estado_pago === 'No aplica') return;
+    var g = porTrabajo[t.id] || (porTrabajo[t.id] = { trabajo_id: t.id, codigo: t.codigo, equipo_id: t.equipo_id, equipo: (equipos[t.equipo_id] || {}).nombre_corto || '', cliente_id: t.cliente_id, cliente: nombreCli(t.cliente_id), sesiones: 0, minutos: 0, ultima: '' });
+    g.sesiones++; g.minutos += Number(s.duracion_min) || 0;
+    if (String(s.fecha) > g.ultima) g.ultima = String(s.fecha);
+  });
+  var sesiones = Object.keys(porTrabajo).map(function (k) { return porTrabajo[k]; }).sort(function (a, b) { return a.ultima < b.ultima ? 1 : -1; });
+
+  // 3. Pagos: sin confirmar, o confirmados con parte sin asignar a un cobro.
+  var imps = activeRows_(ctx, 'IMPUTACIONES');
+  var pagos = activeRows_(ctx, 'PAGOS').map(function (x) {
+    var imputado = sumBy_(imps.filter(function (i) { return i.pago_id === x.id; }), 'monto');
+    return { pago_id: x.id, codigo: x.codigo, cliente_id: x.cliente_id, cliente: nombreCli(x.cliente_id), fecha: String(x.fecha || ''), monto: Number(x.monto) || 0, confirmado: x.confirmado === true, sin_asignar: (Number(x.monto) || 0) - imputado };
+  }).filter(function (x) { return !x.confirmado || x.sin_asignar > 0; }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+
+  // 4. Pedidos sin recibir: "Pedido" con entrega esperada vencida o pedido hace más de N días; "Por pedir" con más de N días.
+  var recs = activeRows_(ctx, 'RECEPCIONES').filter(function (r) { return r.estado === 'Confirmada'; });
+  var pedidos = [];
+  activeRows_(ctx, 'PEDIDOS').forEach(function (x) {
+    if (x.estado === 'Cancelado') return;
+    var recibido = sumBy_(recs.filter(function (r) { return r.pedido_id === x.id; }), 'cantidad');
+    var hayRecepcion = recs.some(function (r) { return r.pedido_id === x.id; });
+    if (isEmpty_(x.cantidad) ? hayRecepcion : recibido >= Number(x.cantidad)) return;
+    var base = x.estado === 'Pedido' ? (x.fecha_pedido || localDate_(x.creado_en)) : localDate_(x.creado_en);
+    var antig = diasEntre_(base, hoy);
+    var vencido = x.estado === 'Pedido' && !isEmpty_(x.entrega_esperada) && diasEntre_(x.entrega_esperada, hoy) > 0;
+    if (!vencido && !(antig !== null && antig > dias)) return;
+    pedidos.push({ pedido_id: x.id, codigo: x.codigo, cliente_id: x.cliente_id, cliente: nombreCli(x.cliente_id), articulo: x.articulo, estado: x.estado, proveedor: x.proveedor || '', desde: base || '', dias: antig, entrega_esperada: x.entrega_esperada || '', vencido: vencido, recibido: recibido, cantidad: isEmpty_(x.cantidad) ? null : Number(x.cantidad) });
+  });
+  pedidos.sort(function (a, b) { return (b.dias || 0) - (a.dias || 0); });
+
+  // 5. Saldos por cliente con el mismo cálculo del control económico (sin duplicar reglas).
+  var saldos = [], total = 0, desconocido = false;
+  activeRows_(ctx, 'CLIENTES').forEach(function (c) {
+    var ce = vistaControlEconomico_(ctx, { cliente_id: c.id }).data, T = ce.totales;
+    if (T.saldo_por_cobrar === null) desconocido = true; else total += T.saldo_por_cobrar;
+    if (ce.estado !== 'OK' || (T.saldo_por_cobrar || 0) !== 0 || T.pago_sin_imputar > 0) {
+      saldos.push({ cliente_id: c.id, cliente: c.nombre, estado: ce.estado, saldo_por_cobrar: T.saldo_por_cobrar, pago_sin_imputar: T.pago_sin_imputar, errores: ce.errores.length });
+    }
+  });
+  saldos.sort(function (a, b) { return (b.saldo_por_cobrar || 0) - (a.saldo_por_cobrar || 0); });
+
+  return { data: {
+    hoy: hoy, dias: dias,
+    trabajos_sin_cobro: sinCobro, sesiones_sin_cobro: sesiones, pagos_pendientes: pagos, pedidos_atrasados: pedidos, saldos: saldos,
+    total_por_cobrar: desconocido ? null : total,
+    total_acciones: sinCobro.length + sesiones.length + pagos.length + pedidos.length
+  }, warnings: [] };
+}
+
 /** Stock calculado: conteo inicial confirmado + entradas − salidas ± ajustes. Sin conteo confirmado = desconocido. */
 function vistaStock_(ctx, p) {
   requireAdmin_(ctx);
@@ -2507,6 +2590,7 @@ function handleInner_(ctx, action, p) {
     case 'ficha': return vistaFicha_(ctx, p);
     case 'mis_trabajos': return vistaMisTrabajos_(ctx, p);
     case 'control_economico': return vistaControlEconomico_(ctx, p);
+    case 'cierre': return vistaCierre_(ctx, p);
     case 'clientes': return vistaClientes_(ctx, p);
     case 'stock': return vistaStock_(ctx, p);
     case 'horas': return vistaHoras_(ctx, p);
@@ -2703,9 +2787,10 @@ function cargar(){
 
 function renderTabs(){
   var tabs = [['trabajos','Trabajos'],['vehiculos','Vehículos'],['horas','Horas']];
-  if (isAdmin()) { tabs.splice(2, 0, ['clientes','Clientes']); tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
+  if (isAdmin()) { tabs.splice(2, 0, ['clientes','Clientes']); tabs.push(['cierre','Cierre']); tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
   $('tabsIn').innerHTML = tabs.map(function(t){ return '<button type="button" data-act="tab" data-tab="' + t[0] + '"' + (S.tab === t[0] ? ' aria-current="page"' : '') + '>' + t[1] + '</button>'; }).join('');
   $('tabs').hidden = false;
+  var act = document.querySelector('#tabsIn [aria-current="page"]'); if (act && act.scrollIntoView) try { act.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
 }
 
 function render(){
@@ -2713,6 +2798,7 @@ function render(){
   if (S.tab === 'vehiculos') return renderVehiculos();
   if (S.tab === 'clientes') return renderClientes();
   if (S.tab === 'horas') return renderHoras();
+  if (S.tab === 'cierre') return renderCierre();
   if (S.tab === 'revisar') return renderRevisar();
   if (S.tab === 'datos') return renderDatos();
 }
@@ -3146,6 +3232,53 @@ function renderHoras(){
   }).catch(function(){});
 }
 
+/* ───── pestaña Cierre (administración, 1.5.7): todo lo que falta resolver en una lista ───── */
+var CIERRE_KEY = 'eg_cierre_dias';
+function cierreDias(){ try { var v = Number(localStorage.getItem(CIERRE_KEY)); return v >= 1 && v <= 365 ? Math.floor(v) : 7; } catch (e) { return 7; } }
+function guardarCierreDias(v){ try { localStorage.setItem(CIERRE_KEY, String(v)); } catch (e) {} }
+function pesos(n){ return n === null || n === undefined ? 'Desconocido' : '$' + Number(n).toLocaleString('es-CL'); }
+function renderCierre(){
+  var dias = cierreDias();
+  var opc = [7, 14, 30].indexOf(dias) < 0 ? [7, 14, 30, dias] : [7, 14, 30];
+  $('main').innerHTML = '<h2 class="section-title">Cierre</h2><div class="block inline" style="flex-wrap:wrap;gap:10px"><label class="f" style="margin:0"><span>Avisar pedidos sin recibir después de</span><select class="i" id="ciDias">' +
+    opc.map(function(d){ return '<option value="' + d + '"' + (d === dias ? ' selected' : '') + '>' + d + ' días</option>'; }).join('') + '<option value="otro">Otro…</option></select></label>' +
+    '<span id="ciOtro" class="inline" hidden style="gap:8px;align-items:flex-end"><label class="f" style="margin:0"><span>Días (1 a 365)</span><input class="i" id="ciNum" inputmode="numeric" style="width:90px" value="' + dias + '"></label><button class="btn" type="button" id="ciAplicar">Aplicar</button></span></div><div id="ciBody" class="empty">Cargando…</div>';
+  function aplicar(v){
+    v = Math.floor(Number(v));
+    if (!(v >= 1 && v <= 365)) { toast('Escribe un número entre 1 y 365.', 'err'); return; }
+    guardarCierreDias(v); renderCierre();
+  }
+  $('ciDias').addEventListener('change', function(){
+    if (this.value === 'otro') { $('ciOtro').hidden = false; $('ciNum').focus(); return; }
+    aplicar(this.value);
+  });
+  $('ciAplicar').addEventListener('click', function(){ aplicar($('ciNum').value); });
+  call('cierre', { dias: dias }).then(function(r){
+    var d = r.data, h = '';
+    h += '<div class="block"><dl class="kv"><dt>Por cobrar (total)</dt><dd>' + pesos(d.total_por_cobrar) + '</dd><dt>Acciones pendientes</dt><dd>' + d.total_acciones + '</dd></dl></div>';
+    function seccion(titulo, filas, fn, vacio){
+      return '<h3 class="section-title" style="font-size:19px;margin-top:18px">' + titulo + (filas.length ? ' <span class="chip warn">' + filas.length + '</span>' : '') + '</h3>' +
+        (filas.length ? '<div class="list">' + filas.map(fn).join('') + '</div>' : '<p style="margin:0 0 6px;color:var(--acero)">' + vacio + '</p>');
+    }
+    h += seccion('Trabajos terminados sin cobro definido', d.trabajos_sin_cobro, function(x){
+      return '<button class="item" type="button" data-act="ficha" data-id="' + esc(x.equipo_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.equipo) + (x.patente ? ' ' + esc(String(x.patente).toUpperCase()) : '') + '</div><div class="s">' + esc(x.cliente) + ' · ' + esc(fmtFecha(x.fecha)) + (x.dias !== null ? ' · hace ' + x.dias + ' días' : '') + '</div><div class="s">' + esc(x.descripcion) + '</div><div class="chips"><span class="chip warn">Pago: ' + esc(x.estado_pago) + '</span></div></div></button>';
+    }, 'Todos los trabajos terminados tienen el cobro definido.');
+    h += seccion('Horas trabajadas sin cobrar', d.sesiones_sin_cobro, function(x){
+      return '<button class="item" type="button" data-act="ficha" data-id="' + esc(x.equipo_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.equipo) + '</div><div class="s">' + esc(x.cliente) + ' · ' + x.sesiones + (x.sesiones === 1 ? ' sesión' : ' sesiones') + ' · ' + fmtHM(x.minutos) + ' h · última ' + esc(fmtFecha(x.ultima)) + '</div></div></button>';
+    }, 'No hay horas cerradas sin cobro.');
+    h += seccion('Pagos sin confirmar o sin asignar', d.pagos_pendientes, function(x){
+      return '<button class="item" type="button" data-act="cli-control" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.codigo) + ' · ' + pesos(x.monto) + '</div><div class="s">' + esc(x.cliente) + ' · ' + esc(fmtFecha(x.fecha)) + '</div><div class="chips">' + (x.confirmado ? '' : '<span class="chip warn">Sin confirmar</span> ') + (x.sin_asignar > 0 ? '<span class="chip warn">' + pesos(x.sin_asignar) + ' sin asignar</span>' : '') + '</div></div></button>';
+    }, 'Todos los pagos están confirmados y asignados.');
+    h += seccion('Pedidos sin recibir (más de ' + d.dias + ' días o con entrega vencida)', d.pedidos_atrasados, function(x){
+      return '<button class="item" type="button" data-act="ci-datos" data-t="PEDIDOS" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.articulo) + '</div><div class="s">' + esc(x.cliente) + (x.proveedor ? ' · ' + esc(x.proveedor) : '') + ' · ' + esc(x.estado) + (x.dias !== null ? ' hace ' + x.dias + ' días' : '') + '</div><div class="chips">' + (x.vencido ? '<span class="chip warn">Entrega esperada ' + esc(fmtFecha(x.entrega_esperada)) + '</span>' : '') + (x.recibido ? ' <span class="chip">Recibido ' + esc(x.recibido) + (x.cantidad !== null ? ' de ' + esc(x.cantidad) : '') + '</span>' : '') + '</div></div></button>';
+    }, 'No hay pedidos atrasados.');
+    if (d.saldos.length) h += seccion('Saldos por cliente', d.saldos, function(x){
+      return '<button class="item" type="button" data-act="cli-control" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.cliente) + '</div><div class="s">Por cobrar ' + pesos(x.saldo_por_cobrar) + (x.pago_sin_imputar > 0 ? ' · pago sin asignar ' + pesos(x.pago_sin_imputar) : '') + '</div>' + (x.estado !== 'OK' ? '<div class="chips"><span class="chip warn">' + (x.estado === 'REVISAR' ? 'Revisar' : 'Incompleto') + '</span></div>' : '') + '</div></button>';
+    }, '');
+    $('ciBody').outerHTML = '<div id="ciBody">' + h + '</div>';
+  }).catch(function(e){ $('ciBody').outerHTML = '<div id="ciBody" class="empty">' + esc(e.message || 'No se pudo cargar.') + '</div>'; });
+}
+
 /* ───── pestaña Revisar (administración) ───── */
 function renderRevisar(){
   $('main').innerHTML = '<h2 class="section-title">Aportes por revisar</h2><div id="revBody" class="empty">Cargando…</div>';
@@ -3370,6 +3503,7 @@ document.addEventListener('click', function(ev){
   else if (a === 'msg-copiar') copiarMensaje();
   else if (a === 'msg-guardar') guardarResumen(el);
   else if (a === 'cli-control'){ D.cliente = id; mostrarControl(); }
+  else if (a === 'ci-datos'){ D.tabla = el.getAttribute('data-t'); D.cliente = id || ''; S.tab = 'datos'; renderTabs(); render(); }
   else if (a === 'cerrar-hoja') cerrarHoja();
   else if (a === 'iniciar') iniciar(id, el);
   else if (a === 'pausar') pedirPausa();
