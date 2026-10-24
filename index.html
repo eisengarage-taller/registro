@@ -1851,6 +1851,14 @@ function vistaFicha_(ctx, p) {
     pendientes_vigentes: pend.filter(pendienteVigente_).map(function (x) { return project_(ctx, 'PENDIENTES', x); }),
     pendientes_historicos: pend.filter(function (x) { return !pendienteVigente_(x); }).map(function (x) { return project_(ctx, 'PENDIENTES', x); })
   };
+  // Administración: cliente y contactos, para crear trabajos y armar el mensaje al cliente desde la ficha.
+  if (isAdmin_(ctx)) {
+    var cli = getRow_(ctx, 'CLIENTES', e.cliente_id);
+    data.cliente = cli ? { id: cli.id, codigo: cli.codigo, nombre: cli.nombre } : null;
+    data.contactos = activeRows_(ctx, 'CONTACTOS').filter(function (k) { return k.cliente_id === e.cliente_id; }).map(function (k) {
+      return { id: k.id, nombre: k.nombre, telefono: k.telefono, correo: k.correo, rol_solicitante: k.rol_solicitante === true, rol_propietario: k.rol_propietario === true, rol_pagador: k.rol_pagador === true };
+    });
+  }
   return { data: data, warnings: [] };
 }
 
@@ -2716,7 +2724,8 @@ function renderTrabajos(){
   var ts = S.inicio.trabajos || [];
   var abierta = S.inicio.sesion_abierta;
   var h = '<h2 class="section-title">' + (isAdmin() ? 'Trabajos abiertos' : 'Mis trabajos') + '</h2>';
-  if (!ts.length) h += '<div class="empty">' + (isAdmin() ? 'No hay trabajos abiertos. Crea uno desde la planilla o pídeselo a la próxima versión de esta pantalla.' : 'No tienes trabajos asignados. Pide a administración que te asigne uno.') + '</div>';
+  if (isAdmin()) h += '<button class="btn big" type="button" data-act="nt-elegir" style="margin-bottom:14px">+ Nuevo trabajo</button>';
+  if (!ts.length) h += '<div class="empty">' + (isAdmin() ? 'No hay trabajos abiertos. Crea uno con "Nuevo trabajo".' : 'No tienes trabajos asignados. Pide a administración que te asigne uno.') + '</div>';
   h += '<div class="list">' + ts.map(function(x){
     var t = x.trabajo, live = abierta && abierta.trabajo_id === t.id;
     return '<button class="item" type="button" data-act="trabajo" data-id="' + esc(t.id) + '">' + plate(x.equipo.patente) +
@@ -2928,19 +2937,168 @@ function abrirCliente(id){
   abrirHoja(c.nombre, h);
 }
 
+/* ───── Nuevo trabajo rápido (administración) ───── */
+function elegirVehiculoNT(){
+  var rs = (S.inicio.resumen || []).filter(function(v){ return v.cliente_id; });
+  var h = '<input class="i" id="ntBuscar" type="search" placeholder="Patente, vehículo o cliente" autocomplete="off" style="margin-bottom:10px"><div id="ntLista" class="list"></div>' +
+    '<p class="s" style="color:var(--acero);margin-top:10px">¿Vehículo nuevo? Créalo primero en Datos → Vehículos y equipos.</p>';
+  abrirHoja('Nuevo trabajo · elegir vehículo', h);
+  function pintar(){
+    var q = $('ntBuscar').value.trim().toLowerCase(), qp = q.replace(/[\s·.-]/g, '');
+    var xs = rs.filter(function(v){ return !q || String(v.nombre_corto).toLowerCase().indexOf(q) >= 0 || String(v.cliente || '').toLowerCase().indexOf(q) >= 0 || (qp && String(v.patente || '').toLowerCase().replace(/[\s·.-]/g, '').indexOf(qp) >= 0); }).slice(0, 30);
+    $('ntLista').innerHTML = xs.length ? xs.map(function(v){
+      return '<button class="item" type="button" data-act="nt-vehiculo" data-id="' + esc(v.equipo_id) + '">' + plate(v.patente) + '<div class="body"><div class="t">' + esc(v.nombre_corto) + '</div><div class="s">' + esc(v.cliente || '') + '</div></div></button>';
+    }).join('') : '<div class="empty">Ningún vehículo coincide.</div>';
+  }
+  $('ntBuscar').addEventListener('input', pintar); pintar();
+}
+function abrirNuevoTrabajo(eq){
+  // eq: { id, nombre_corto, patente, cliente_id, cliente }
+  S.nt = { eq: eq, op: opId(), opAsig: opId() };
+  var L = S.inicio.listas || {};
+  var h = '<div class="block inline" style="gap:14px">' + plate(eq.patente, true) + '<div><div class="t" style="font-weight:600">' + esc(eq.nombre_corto) + '</div><div class="s" style="color:var(--acero)">' + esc(eq.cliente || '') + '</div></div></div>' +
+    '<div class="block"><label class="f"><span>Tipo de trabajo</span><select class="i" id="ntTipo">' + options(L.tipos_trabajo, '', 'Elegir…') + '</select></label>' +
+    '<label class="f"><span>Qué hay que hacer *</span><textarea class="i" id="ntDesc" placeholder="Ej. Mantención 60.000 km: aceite, filtros y revisión de frenos"></textarea></label>' +
+    '<div class="row2"><label class="f"><span>Etapa comercial</span><select class="i" id="ntCom">' + options(['Por confirmar', 'Propuesto', 'Cotizado', 'Autorizado'], 'Por confirmar') + '</select></label>' +
+    '<label class="f"><span>Km de entrada</span><input class="i" id="ntKm" inputmode="numeric" placeholder="Opcional"></label></div>' +
+    '<label class="f"><span>Agendado para (opcional)</span><input class="i" id="ntProg" type="datetime-local"></label>' +
+    '<label class="f"><span>Asignar a</span><select class="i" id="ntAsig"><option value="">Nadie por ahora</option></select></label>' +
+    '<button class="btn big go" type="button" data-act="nt-crear">Crear trabajo</button></div>';
+  abrirHoja('Nuevo trabajo', h);
+  call('listar', { tabla: 'USUARIOS' }).then(function(r){
+    var sel = $('ntAsig'); if (!sel) return;
+    r.data.filter(function(u){ return u.activo === true; }).forEach(function(u){ var o = document.createElement('option'); o.value = u.id; o.textContent = u.nombre + (u.rol === 'Tecnico' ? ' · técnico' : ''); sel.appendChild(o); });
+  }).catch(function(){});
+}
+/** Km escrito a mano: '' si viene vacío, número si es 12345 o 12.345 (puntos de miles), null si no es válido. */
+function leerKm(txt){
+  var v = String(txt || '').trim().replace(/\s/g, '');
+  if (!v) return '';
+  if (/^\d+$/.test(v) || /^\d{1,3}(\.\d{3})+$/.test(v)) return Number(v.replace(/\./g, ''));
+  return null;
+}
+function crearNuevoTrabajo(btn){
+  var n = S.nt; if (!n) return;
+  var desc = $('ntDesc').value.trim();
+  if (!desc) { toast('Escribe qué hay que hacer.', 'err'); $('ntDesc').focus(); return; }
+  var km = leerKm($('ntKm').value), prog = $('ntProg').value, asig = $('ntAsig').value;
+  if (km === null) { toast('Km sin decimales: 12345 o 12.345.', 'err'); $('ntKm').focus(); return; }
+  var datos = { cliente_id: n.eq.cliente_id, equipo_id: n.eq.id, descripcion: desc, estado_comercial: $('ntCom').value };
+  if ($('ntTipo').value) datos.tipo_trabajo = $('ntTipo').value;
+  if (km !== '') datos.km = km;
+  if (prog) datos.prog_desde = new Date(prog).toISOString();
+  btn.disabled = true;
+  call('crear', { tabla: 'TRABAJOS', datos: datos, op_id: n.op }).then(function(r){
+    var tr = r.data;
+    var asignar = asig ? call('crear', { tabla: 'ASIGNACIONES', datos: { trabajo_id: tr.id, usuario_id: asig }, op_id: n.opAsig }).catch(function(){ toast('El trabajo se creó, pero no se pudo asignar. Asígnalo en Datos → Asignaciones.', 'err'); }) : Promise.resolve();
+    return asignar.then(function(){
+      toast('Trabajo ' + tr.codigo + ' creado.');
+      S.nt = null; cerrarHoja(); S.tab = 'trabajos';
+      return cargar().then(function(){ abrirTrabajo(tr.id); });
+    });
+  }).catch(function(){ btn.disabled = false; });
+}
+
+/* ───── Mensaje al cliente (resumen de un trabajo ejecutado) ───── */
+var FIRMA_EG = 'Saludos,\nEisen Garage SpA\nGulutren 022, Peumo';
+function primerNombre(n){ return String(n || '').trim().split(/\s+/)[0] || ''; }
+function waNumero(tel){
+  var d = String(tel || '').replace(/\D/g, '');
+  if (d.length === 9 && d[0] === '9') return '56' + d;
+  if (d.length === 11 && d.indexOf('56') === 0) return d;
+  if (d.length === 8) return '569' + d;
+  return '';
+}
+function cuerpoResumen(f, tt){
+  var t = tt.trabajo, e = f.equipo, L = [];
+  L.push('Resumen del trabajo: ' + (e.nombre_corto || '') + (e.patente ? ' (' + String(e.patente).toUpperCase() + ')' : ''));
+  var fecha = t.fecha_fin || t.fecha_inicio; if (fecha) L.push('Fecha: ' + fmtFecha(fecha));
+  if (t.km) L.push('Kilometraje: ' + fmtKm(t.km));
+  L.push('Trabajo: ' + t.descripcion);
+  var hechos = tt.detalle.filter(function(d){ return d.estado_aporte === 'Aprobado' && ['Observación', 'Herramienta'].indexOf(d.tipo) < 0; });
+  if (hechos.length){
+    L.push(''); L.push('Lo que se hizo:');
+    hechos.forEach(function(d){ L.push('• ' + (d.componente ? d.componente + ': ' : '') + d.descripcion + (d.cantidad !== '' && d.cantidad != null ? ' (' + d.cantidad + ' ' + (d.unidad || '') + ')' : '')); });
+  }
+  var prox = [t.proxima_km ? fmtKm(t.proxima_km) : '', t.proxima_horas ? t.proxima_horas + ' h' : '', t.proxima_fecha ? fmtFecha(t.proxima_fecha) : ''].filter(Boolean).join(' o ');
+  if (prox) { L.push(''); L.push('Próxima mantención: ' + prox + (t.proxima_km && t.proxima_fecha ? ', lo que ocurra primero' : '') + '.'); }
+  var pend = f.pendientes_vigentes.filter(function(p){ return p.estado_aporte === 'Aprobado'; });
+  if (pend.length){
+    L.push(''); L.push('Recomendaciones pendientes:');
+    pend.forEach(function(p){ L.push('• ' + p.descripcion + (p.objetivo ? ' (' + p.objetivo + ')' : '')); });
+  }
+  return L.join('\n');
+}
+function abrirMensajeCliente(trabajoId){
+  var f = S.ficha; if (!f) return;
+  var tt = f.trabajos.filter(function(x){ return x.trabajo.id === trabajoId; })[0]; if (!tt) return;
+  var cs = (f.contactos || []).slice().sort(function(a, b){ return (b.rol_solicitante - a.rol_solicitante) || (b.rol_propietario - a.rol_propietario); });
+  S.msg = { trabajo: tt.trabajo, contactos: cs, op: opId() };
+  var c0 = cs[0];
+  var h = (cs.length > 1 ? '<label class="f"><span>Para</span><select class="i" id="mPara">' + cs.map(function(c, i){ return '<option value="' + i + '">' + esc(c.nombre) + (c.telefono ? ' · ' + esc(c.telefono) : '') + '</option>'; }).join('') + '</select></label>' :
+      '<p style="margin:0 0 8px">Para: <b>' + esc(c0 ? c0.nombre : (f.cliente ? f.cliente.nombre : '')) + '</b>' + (c0 && c0.telefono ? ' · ' + esc(c0.telefono) : '') + (c0 ? '' : ' <span class="chip warn">sin contacto registrado</span>') + '</p>') +
+    '<label class="f"><span>Saludo</span><input class="i" id="mSaludo" value="' + esc('Hola ' + (primerNombre(c0 && c0.nombre) || '') + ', le escribimos de Eisen Garage.').replace('Hola , ', 'Hola, ') + '"></label>' +
+    '<label class="f"><span>Resumen (se guarda en el trabajo)</span><textarea class="i" id="mCuerpo" rows="14" style="min-height:260px">' + esc(tt.trabajo.resumen_cliente || cuerpoResumen(f, tt)) + '</textarea></label>' +
+    '<p class="s" style="color:var(--acero);margin:0 0 12px;white-space:pre-line">' + esc(FIRMA_EG) + '</p>' +
+    '<div style="display:grid;gap:8px"><a class="btn big go" id="mWa" target="_blank" rel="noopener" style="text-align:center;text-decoration:none">Enviar por WhatsApp</a>' +
+    '<button class="btn big ghost" type="button" data-act="msg-copiar">Copiar mensaje</button>' +
+    '<a class="btn big ghost" id="mMail" style="text-align:center;text-decoration:none" hidden>Enviar por correo</a>' +
+    '<button class="btn big ghost" type="button" data-act="msg-guardar">' + (tt.trabajo.resumen_cliente ? 'Actualizar resumen guardado' : 'Guardar resumen en el trabajo') + '</button></div>' +
+    '<p class="s" style="color:var(--acero);margin-top:10px">Revisa el texto antes de enviar: solo incluye detalle técnico (sin observaciones internas ni montos).</p>';
+  abrirHoja('Mensaje al cliente', h);
+  ['mSaludo', 'mCuerpo', 'mPara'].forEach(function(id){ var el = $(id); if (el) el.addEventListener(id === 'mPara' ? 'change' : 'input', function(){
+    if (id === 'mPara'){ var c = S.msg.contactos[+this.value]; $('mSaludo').value = ('Hola ' + primerNombre(c && c.nombre) + ', le escribimos de Eisen Garage.').replace('Hola , ', 'Hola, '); }
+    enlacesMensaje();
+  }); });
+  enlacesMensaje();
+}
+function contactoMensaje(){ var m = S.msg; if (!m || !m.contactos.length) return null; var sel = $('mPara'); return m.contactos[sel ? +sel.value : 0]; }
+function textoMensaje(){ return [$('mSaludo').value.trim(), '', $('mCuerpo').value.trim(), '', FIRMA_EG].join('\n'); }
+function enlacesMensaje(){
+  var c = contactoMensaje(), txt = encodeURIComponent(textoMensaje()), num = waNumero(c && c.telefono);
+  $('mWa').href = 'https://wa.me/' + num + '?text=' + txt;
+  var mail = $('mMail');
+  if (c && c.correo){ mail.hidden = false; mail.href = 'mailto:' + encodeURIComponent(c.correo) + '?subject=' + encodeURIComponent('Resumen del trabajo · Eisen Garage') + '&body=' + txt; }
+  else mail.hidden = true;
+}
+function copiarMensaje(){
+  var txt = textoMensaje();
+  var listo = function(){ toast('Mensaje copiado.'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(listo, function(){ $('mCuerpo').select(); toast('Selecciona y copia el texto.', 'err'); });
+  else { $('mCuerpo').select(); document.execCommand('copy'); listo(); }
+}
+function guardarResumen(btn){
+  var m = S.msg; if (!m) return;
+  var nuevo = $('mCuerpo').value.trim(), t = m.trabajo;
+  if (!nuevo) return toast('El resumen está vacío.', 'err');
+  if (nuevo === String(t.resumen_cliente || '').trim()) return toast('No hay cambios.');
+  var req = { tabla: 'TRABAJOS', id: t.id, version: t.version, cambios: { resumen_cliente: nuevo }, op_id: m.op };
+  if (t.resumen_cliente) { req.motivo = 'Resumen para el cliente reescrito al preparar el mensaje'; req.fuente = 'App · Mensaje al cliente'; }
+  btn.disabled = true;
+  call('editar', req).then(function(r){
+    m.trabajo = r.data; m.op = opId();
+    (S.ficha.trabajos.filter(function(x){ return x.trabajo.id === t.id; })[0] || {}).trabajo = r.data;
+    btn.textContent = 'Actualizar resumen guardado'; toast('Resumen guardado en ' + r.data.codigo + '.');
+  }).catch(function(e){ if (e.code === 'CONFLICTO') toast('El trabajo cambió mientras tanto. Cierra y vuelve a abrir la ficha.', 'err'); }).then(function(){ btn.disabled = false; });
+}
+
 function abrirFicha(equipoId){
   call('ficha', { equipo_id: equipoId }).then(function(r){
     var f = r.data, e = f.equipo;
+    S.ficha = f;
     var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + plate(e.patente, true) + '<dl class="kv">' +
+      (f.cliente ? '<dt>Cliente</dt><dd>' + esc(f.cliente.nombre) + '</dd>' : '') +
       '<dt>Vehículo</dt><dd>' + esc([e.marca, e.modelo, e.version_modelo].filter(Boolean).join(' ') || e.nombre_corto) + '</dd>' +
       (e.anio ? '<dt>Año</dt><dd>' + esc(e.anio) + '</dd>' : '') + (e.motor_codigo ? '<dt>Motor</dt><dd>' + esc(e.motor_codigo) + '</dd>' : '') +
       (e.vin ? '<dt>VIN</dt><dd>' + esc(e.vin) + '</dd>' : '') + '</dl></div>';
+    if (isAdmin() && f.cliente) h += '<button class="btn big" type="button" data-act="nt-ficha" style="margin-bottom:12px">+ Nuevo trabajo para este vehículo</button>';
     if (f.pendientes_vigentes.length) h += '<div class="block"><h3>Pendientes vigentes</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_vigentes.map(function(p){ return '<li>' + esc(p.descripcion) + (p.objetivo ? ' · ' + esc(p.objetivo) : '') + ' <span class="chip">' + esc(p.estado) + '</span>' + (p.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') + '</li>'; }).join('') + '</ul></div>';
     if (f.referencias.length) h += '<div class="block"><h3>Datos técnicos</h3><ul style="margin:0;padding-left:18px">' + f.referencias.map(function(rf){ return '<li>' + esc(rf.tipo) + (rf.componente ? ' · ' + esc(rf.componente) : '') + ': ' + esc(rf.especificacion || rf.descripcion || '') + (rf.cantidad !== '' && rf.cantidad != null ? ' · ' + esc(rf.cantidad) + ' ' + esc(rf.unidad || '') : '') + (rf.torque ? ' · torque ' + esc(rf.torque) : '') + '</li>'; }).join('') + '</ul></div>';
     h += '<div class="block"><h3>Historia</h3>' + (f.trabajos.length ? '<div class="history">' + f.trabajos.map(function(tt){
       var t = tt.trabajo;
       return '<div class="hist' + (t.estado_ejecucion === 'Ejecutado' ? ' ej' : '') + '"><div class="d">' + esc(fmtFecha(t.fecha_fin || t.fecha_inicio || t.prog_desde)) + ' · ' + esc(t.codigo) + ' · ' + esc(t.estado_ejecucion) + (t.km ? ' · ' + fmtKm(t.km) : '') + (tt.horas.trabajados_min ? ' · ' + fmtMin(tt.horas.trabajados_min) : '') + '</div>' +
-        '<div>' + esc(t.descripcion) + '</div>' + (tt.detalle.length ? '<ul>' + tt.detalle.map(function(d){ return '<li>' + esc(d.tipo) + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') + '</li>'; }).join('') + '</ul>' : '') + '</div>';
+        '<div>' + esc(t.descripcion) + '</div>' + (tt.detalle.length ? '<ul>' + tt.detalle.map(function(d){ return '<li>' + esc(d.tipo) + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') + '</li>'; }).join('') + '</ul>' : '') +
+        (isAdmin() && f.cliente && t.estado_ejecucion === 'Ejecutado' ? '<button class="btn ghost" type="button" data-act="msg-cliente" data-id="' + esc(t.id) + '" style="margin-top:8px">Mensaje al cliente' + (t.resumen_cliente ? ' ✓' : '') + '</button>' : '') + '</div>';
     }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin trabajos registrados.</p>') + '</div>';
     if (f.pendientes_historicos.length) h += '<div class="block"><h3>Pendientes cerrados</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_historicos.map(function(p){ return '<li>' + esc(p.descripcion) + ' <span class="chip ok">' + esc(p.estado) + '</span></li>'; }).join('') + '</ul></div>';
     abrirHoja(e.nombre_corto, h);
@@ -3183,6 +3341,13 @@ document.addEventListener('click', function(ev){
   else if (a === 'trabajo') abrirTrabajo(id);
   else if (a === 'ficha') abrirFicha(id);
   else if (a === 'cliente') abrirCliente(id);
+  else if (a === 'nt-elegir') elegirVehiculoNT();
+  else if (a === 'nt-vehiculo'){ var v = (S.inicio.resumen || []).filter(function(x){ return x.equipo_id === id; })[0]; if (v) abrirNuevoTrabajo({ id: v.equipo_id, nombre_corto: v.nombre_corto, patente: v.patente, cliente_id: v.cliente_id, cliente: v.cliente }); }
+  else if (a === 'nt-ficha'){ var fe = S.ficha; if (fe && fe.cliente) abrirNuevoTrabajo({ id: fe.equipo.id, nombre_corto: fe.equipo.nombre_corto, patente: fe.equipo.patente, cliente_id: fe.cliente.id, cliente: fe.cliente.nombre }); }
+  else if (a === 'nt-crear') crearNuevoTrabajo(el);
+  else if (a === 'msg-cliente') abrirMensajeCliente(id);
+  else if (a === 'msg-copiar') copiarMensaje();
+  else if (a === 'msg-guardar') guardarResumen(el);
   else if (a === 'cli-control'){ D.cliente = id; mostrarControl(); }
   else if (a === 'cerrar-hoja') cerrarHoja();
   else if (a === 'iniciar') iniciar(id, el);
