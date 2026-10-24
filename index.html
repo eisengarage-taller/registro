@@ -656,7 +656,9 @@ var CONTRACT = {
         { k: 'resumen', t: 'long', d: 'Qué se creó y qué ya existía.' },
         { k: 'dudas', t: 'long', d: 'Dudas que señaló la IA.' },
         { k: 'texto_original', t: 'long', d: 'Texto fuente tal como llegó (máximo 40.000 caracteres).' },
-        { k: 'notas', t: 'long' }
+        { k: 'notas', t: 'long' },
+        { k: 'archivo_id', t: 'text', d: 'Archivo de la Bandeja EG del que vino (vacío si se pegó). Un archivo se aplica una sola vez.' },
+        { k: 'huella', t: 'text', d: 'Huella SHA-256 del paquete revisado en la vista previa: lo aplicado es exactamente lo revisado.' }
       ]
     },
 
@@ -2251,6 +2253,12 @@ function paqueteTexto_(pq) {
   return t.length > PAQUETE_MAX_TEXTO ? { texto: t.slice(0, PAQUETE_MAX_TEXTO), cortado: true } : { texto: t, cortado: false };
 }
 
+/** Huella del contenido del paquete (SHA-256 en Apps Script; en el modo demo del navegador, huella no criptográfica). */
+function paqueteHuella_(pq) {
+  var t = stableJson_(pq);
+  try { return 'sha256:' + sha256hex_(t); } catch (e) { return 'h:' + hashTxt_(t); }
+}
+
 /** Vista previa: corre todo en una transacción que se descarta. No escribe nada. */
 function paqueteValidar_(ctx, p) {
   requireAdmin_(ctx);
@@ -2260,7 +2268,7 @@ function paqueteValidar_(ctx, p) {
   var c = {};
   Object.keys(ctx).forEach(function (k) { if (k !== '_assigned') c[k] = ctx[k]; });
   c.store = tx; c._tx = tx;
-  var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null };
+  var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null, huella: paqueteHuella_(pq) };
   try {
     paqueteEjecutar_(c, pq, '', out.resultados);
   } catch (e) {
@@ -2280,12 +2288,22 @@ function paqueteAplicar_(ctx, p) {
   requireAdmin_(ctx);
   var pq = p.paquete;
   paqueteForma_(pq);
+  // Lo que se aplica es exactamente lo que se revisó: la vista previa entrega la huella y aquí se exige igual.
+  var huella = paqueteHuella_(pq);
+  if (!isEmpty_(p.archivo_id) && isEmpty_(p.huella)) fail_('REQUERIDO', 'Falta la huella de la vista previa: revisa el paquete antes de aplicarlo.');
+  if (!isEmpty_(p.huella) && String(p.huella) !== huella) fail_('PAQUETE_CAMBIO', 'El paquete cambió después de la vista previa. Revísalo de nuevo antes de aplicar.');
+  var opPq = p.op_id + '#paquete';
+  // Un archivo (o un mismo contenido) se aplica una sola vez, aunque no se haya podido marcar en Drive. Un reintento con el mismo op_id sí pasa.
+  var previo = activeRows_(ctx, 'PAQUETES').filter(function (x) {
+    return x.op_id !== opPq && ((!isEmpty_(p.archivo_id) && x.archivo_id === String(p.archivo_id)) || x.huella === huella);
+  })[0];
+  if (previo) fail_('YA_PROCESADO', (previo.archivo_id && previo.archivo_id === String(p.archivo_id) ? 'Este archivo' : 'Este mismo paquete') + ' ya se aplicó como ' + previo.codigo + '.', { codigo: previo.codigo, archivo_id: previo.archivo_id || '' });
   var r = paqueteEjecutar_(ctx, pq, p.op_id);
   var nuevos = r.resultados.filter(function (x) { return x.resultado === 'Nuevo'; }).length;
   var resumen = r.resultados.map(function (x) { return x.n + '. ' + x.tabla + ' ' + x.codigo + ' ' + x.resultado + (x.etiqueta ? ' · ' + x.etiqueta : ''); }).join('\n');
   var tt = paqueteTexto_(pq);
-  var opPq = p.op_id + '#paquete';
   var reg = findByOp_(ctx, 'PAQUETES', opPq) || insertSystem_(ctx, 'PAQUETES', {
+    archivo_id: isEmpty_(p.archivo_id) ? '' : String(p.archivo_id), huella: huella,
     fuente: String(pq.fuente).slice(0, 500), autor_ia: String(pq.autor_ia || '').slice(0, 100), operaciones: pq.operaciones.length,
     resumen: resumen, dudas: [].concat(pq.dudas || []).join('\n'), texto_original: tt.texto,
     notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s).' + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
@@ -3293,7 +3311,7 @@ function leerPaquete(txt){
 function validarPaquete(btn, archivo){
   var payload;
   if (archivo) {
-    if (!PQ.archivo || PQ.archivo.id !== archivo.id || !PQ.op) PQ.op = opId();
+    if (!PQ.archivo || PQ.archivo.id !== archivo.id || !PQ.op) { PQ.op = opId(); PQ.huella = null; }
     PQ.archivo = archivo; PQ.paquete = null;
     payload = { archivo_id: archivo.id };
   } else {
@@ -3301,13 +3319,16 @@ function validarPaquete(btn, archivo){
     var pq;
     try { pq = leerPaquete(txt); } catch (e) { return toast(e.message, 'err'); }
     // Mismo texto = misma operación: un doble toque en Aplicar no carga dos veces.
-    if (txt !== PQ.texto || !PQ.op || PQ.archivo) { PQ.op = opId(); }
+    if (txt !== PQ.texto || !PQ.op || PQ.archivo) { PQ.op = opId(); PQ.huella = null; }
     PQ.texto = txt; PQ.paquete = pq; PQ.archivo = null;
     payload = { paquete: pq };
   }
   btn.disabled = true;
   call('paquete_validar', payload).then(function(r){
     var d = r.data;
+    // Si el contenido cambió desde la revisión anterior, es otra operación (y se aplica lo que se ve ahora).
+    if (PQ.huella && PQ.huella !== d.huella) PQ.op = opId();
+    PQ.huella = d.huella;
     var total = PQ.paquete ? PQ.paquete.operaciones.length : null;
     var h = '<div class="block"><h3>' + esc(d.fuente) + '</h3><p class="s" style="margin:0;color:var(--acero)">' + (PQ.archivo ? 'Bandeja: ' + esc(PQ.archivo.nombre) + ' · ' : '') + (d.autor_ia ? 'Armado por ' + esc(d.autor_ia) + ' · ' : '') + d.resultados.length + (total ? ' de ' + total : '') + ' operaciones revisadas</p></div>';
     if (!d.valido) h += '<div class="block" style="border-color:var(--freno)"><h3 style="color:var(--freno)">No se puede aplicar</h3><p style="margin:0">' + esc(d.error.message) + '</p><p class="s" style="margin:8px 0 0;color:var(--acero)">Pídele a la IA que corrija esa operación y vuelve a pegar el paquete.</p></div>';
@@ -3326,7 +3347,7 @@ function validarPaquete(btn, archivo){
 function aplicarPaquete(btn){
   if (!PQ.paquete && !PQ.archivo) return;
   btn.disabled = true;
-  call('paquete_aplicar', PQ.archivo ? { archivo_id: PQ.archivo.id, op_id: PQ.op } : { paquete: PQ.paquete, op_id: PQ.op }).then(function(r){
+  call('paquete_aplicar', PQ.archivo ? { archivo_id: PQ.archivo.id, op_id: PQ.op, huella: PQ.huella } : { paquete: PQ.paquete, op_id: PQ.op, huella: PQ.huella }).then(function(r){
     toast('Paquete ' + r.data.codigo + ' aplicado: ' + r.data.nuevos + ' registro(s) nuevo(s).');
     PQ = { texto:'', paquete:null, op:null, archivo:null };
     cerrarHoja(); D.refs = {}; if (S.tab === 'datos') { cargarDatos(); contarBandeja(); } return cargar();
