@@ -202,6 +202,10 @@ var CONTRACT = {
     estado_documento: ['Por emitir', 'Emitido', 'Anulado'],
     estado_pedido: ['Por pedir', 'Pedido', 'Cancelado'],
     estado_recepcion: ['Por comprobar', 'Confirmada', 'Rechazada'],
+    resultado_pedido: ['Por confirmar', 'Instalado', 'Sobrante', 'No corresponde', 'Defectuoso'],
+    estado_devolucion: ['No aplica', 'Por devolver', 'Devuelto', 'Cambiado', 'Reembolsado'],
+    base_precio: ['Neto', 'Con IVA', 'Por confirmar'],
+    tipo_precio: ['Compra', 'Cotización'],
     rol: ['Administrador', 'Administracion', 'Tecnico'],
     propietario_item: ['Taller', 'Cliente'],
     tipo_movimiento: ['Entrada', 'Salida', 'Ajuste positivo', 'Ajuste negativo'],
@@ -316,7 +320,8 @@ var CONTRACT = {
         { k: 'confirmado', t: 'bool', tec: 'r' },
         { k: 'visible_tecnico', t: 'bool' },
         { k: 'fuente', t: 'text' },
-        { k: 'notas', t: 'long' }
+        { k: 'notas', t: 'long' },
+        { k: 'catalogo_id', t: 'ref', ref: 'CATALOGO', d: 'Repuesto del catálogo que calza en este equipo (para volver a comprarlo).' }
       ]
     },
     TRABAJOS: {
@@ -523,7 +528,16 @@ var CONTRACT = {
         { k: 'estado', t: 'enum', e: 'estado_pedido', req: true },
         { k: 'fecha_pedido', t: 'date' },
         { k: 'entrega_esperada', t: 'date' },
-        { k: 'notas', t: 'long' }
+        { k: 'notas', t: 'long' },
+        { k: 'proveedor_detalle', t: 'text', d: 'Dónde se compró: sucursal, web o teléfono del proveedor (uso interno, para la próxima vez).' },
+        { k: 'codigo_proveedor', t: 'text', d: 'Código del artículo en el catálogo del proveedor.' },
+        { k: 'resultado', t: 'enum', e: 'resultado_pedido', d: 'Si sirvió: Instalado, Sobrante, No corresponde (no calzó) o Defectuoso. Vacío = Por confirmar.' },
+        { k: 'devolucion', t: 'enum', e: 'estado_devolucion', d: 'Devolución al proveedor. Vacío = No aplica.' },
+        { k: 'devolucion_fecha', t: 'date', d: 'Fecha en que se devolvió, cambió o reembolsó.' },
+        { k: 'devolucion_comprobante', t: 'text', d: 'Nota de crédito, boleta o foto del cambio.' },
+        { k: 'devolucion_monto', t: 'money', d: 'Lo que devolvió el proveedor (si hubo reembolso).' },
+        { k: 'catalogo_id', t: 'ref', ref: 'CATALOGO', d: 'Artículo del catálogo del proveedor (código, calidad, precios).' },
+        { k: 'link_compra', t: 'url', d: 'Enlace de compra del repuesto o kit (uso interno).' }
       ]
     },
     RECEPCIONES: {
@@ -653,6 +667,63 @@ var CONTRACT = {
       ]
     },
 
+    PROVEEDORES: {
+      file: 'BASE', scope: 'central', prefix: 'PV', tecnico: 'ninguno',
+      d: 'Casas comerciales donde se compran repuestos, con sus condiciones (descuento, cómo vienen los precios, medios de pago). Se anotan una vez y sirven para calcular el costo real y revisar facturas.',
+      columns: [
+        { k: 'nombre', t: 'text', req: true },
+        { k: 'rut', t: 'text', d: 'RUT de la empresa proveedora.' },
+        { k: 'sucursal', t: 'text' },
+        { k: 'direccion', t: 'text' },
+        { k: 'telefono', t: 'text' },
+        { k: 'correo', t: 'email' },
+        { k: 'web', t: 'url' },
+        { k: 'vendedor', t: 'text', d: 'Persona de contacto en el proveedor.' },
+        { k: 'precios_base', t: 'enum', e: 'base_precio', d: 'Cómo vienen sus precios de lista y facturas: Neto (sin IVA) o Con IVA.' },
+        { k: 'descuento_pct', t: 'num', d: 'Descuento habitual sobre el precio de lista, en % (ej. 38).' },
+        { k: 'descuento_condicion', t: 'text', d: 'Cuándo aplica el descuento (ej. todos los medios de pago menos cheque).' },
+        { k: 'medios_pago', t: 'text' },
+        { k: 'despacho', t: 'text', d: 'Plazos o condiciones de despacho y retiro.' },
+        { k: 'inactivo', t: 'bool', d: 'Sí = ya no se le compra.' },
+        { k: 'notas', t: 'long', d: 'Cómo leer sus facturas y cualquier otra condición.' }
+      ]
+    },
+    CATALOGO: {
+      file: 'BASE', scope: 'central', prefix: 'CA', tecnico: 'ninguno',
+      d: 'Artículos tal como los vende cada proveedor: su código interno, calidad y enlace. Un mismo repuesto puede estar en varios proveedores (mismo código original).',
+      columns: [
+        { k: 'proveedor_id', t: 'ref', ref: 'PROVEEDORES', req: true },
+        { k: 'codigo_proveedor', t: 'text', req: true, d: 'Código interno del artículo en ese proveedor.' },
+        { k: 'descripcion', t: 'text', req: true },
+        { k: 'marca', t: 'text' },
+        { k: 'codigo_original', t: 'text', d: 'Código de fábrica u OEM, o el código del fabricante del repuesto (ej. W712). Sirve para comparar proveedores.' },
+        { k: 'calidad', t: 'lista', l: 'calidades' },
+        { k: 'unidad', t: 'lista', l: 'unidades' },
+        { k: 'link', t: 'url', d: 'Enlace de compra o ficha del artículo.' },
+        { k: 'aplica_a', t: 'text', d: 'Vehículos o motores a los que aplica (ej. Suzuki Jimny 1.5 K15B).' },
+        { k: 'descontinuado', t: 'bool', d: 'Sí = el proveedor ya no lo vende.' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+    PRECIOS: {
+      file: 'BASE', scope: 'central', prefix: 'PR', tecnico: 'ninguno',
+      d: 'Historial de precios por artículo del catálogo (compras y cotizaciones). El costo neto y con IVA lo calcula el sistema con el descuento y la base del precio.',
+      columns: [
+        { k: 'catalogo_id', t: 'ref', ref: 'CATALOGO', req: true },
+        { k: 'fecha', t: 'date', req: true },
+        { k: 'tipo', t: 'enum', e: 'tipo_precio', req: true },
+        { k: 'precio_lista', t: 'money', req: true, d: 'Precio unitario tal como aparece (lista o factura), antes del descuento.' },
+        { k: 'base', t: 'enum', e: 'base_precio', d: 'Si el precio de lista es Neto o Con IVA. Vacío = el habitual del proveedor.' },
+        { k: 'descuento_pct', t: 'num', d: 'Descuento aplicado en %. Vacío = el habitual del proveedor.' },
+        { k: 'costo_neto', t: 'money', calc: true, d: 'Costo unitario neto real (después del descuento, sin IVA).' },
+        { k: 'costo_con_iva', t: 'money', calc: true, d: 'Costo unitario real a pagar (con IVA).' },
+        { k: 'cantidad', t: 'num' },
+        { k: 'documento', t: 'text', d: 'Factura, boleta o cotización de donde sale el precio.' },
+        { k: 'pedido_id', t: 'ref', ref: 'PEDIDOS' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+
     PAQUETES: {
       file: 'BASE', scope: 'central', prefix: 'PQ', tecnico: 'ninguno',
       d: 'Paquetes de datos que arma una IA (Claude o GPT) desde un dictado o informe, revisados y aplicados en la app. Guardan la fuente y el texto original.',
@@ -695,6 +766,10 @@ var CONTRACT = {
     { clave: 'bandeja_carpeta_id', valor: '', nota: 'Carpeta "Bandeja EG" donde la IA deja paquetes por revisar. La crea crearBandeja().' },
     { clave: 'bandeja_editores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden DEJAR paquetes en la Bandeja (separadas por coma). Solo dejan archivos: revisar y aplicar sigue siendo en la app, con usuario habilitado.' },
     { clave: 'publico_planilla_id', valor: '', nota: 'Planilla PUBLICO (de eisengaragetaller@gmail.com, compartida como editora con esta cuenta). Solo recibe lo que se publica para clientes.' },
+    { clave: 'contextos_carpeta_id', valor: '', nota: 'Carpeta "Contextos IA EG": un archivo por cliente que la app mantiene al día y la IA solo lee. La crea crearContextos().' },
+    { clave: 'contextos_lectores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden LEER los contextos (separadas por coma), por ejemplo la del conector de Drive de la IA.' },
+    { clave: 'iva_pct', valor: '19', nota: 'IVA en % para calcular costos y precios.' },
+    { clave: 'precio_vigencia_dias', valor: '60', nota: 'Días después de los cuales un precio del catálogo se marca "por confirmar" al cotizar.' },
     { clave: 'publico_url_base', valor: 'https://eisengarage-clientes.github.io/historial/', nota: 'Dirección de la página del historial para clientes. El enlace se arma como <url>#k=<código>.' }
   ]
 };
@@ -818,6 +893,7 @@ if (typeof module !== 'undefined') {
  */
 
 var ROLES_ADMIN = ['Administrador', 'Administracion'];
+var PEDIDO_DEVUELTO = ['Devuelto', 'Cambiado', 'Reembolsado'];
 var ESTADOS_PENDIENTE_CERRADOS = ['Resuelto', 'Descartado'];
 
 /* ───────────────────────── contexto y permisos ───────────────────────── */
@@ -956,7 +1032,10 @@ function normalizeValue_(ctx, table, col, v, prevValue) {
       return v;
     case 'lista':
       v = String(v);
-      if (v !== prevValue && !listaActiva_(ctx, col.l, v)) fail_('VALOR_INVALIDO', where + ': "' + v + '" no está activo en LISTAS (' + col.l + '). Agrégalo primero.');
+      if (v !== prevValue && !listaActiva_(ctx, col.l, v)) {
+        var opciones = activeRows_(ctx, 'LISTAS').filter(function (r) { return r.lista === col.l && r.activo === true; }).map(function (r) { return r.valor; });
+        fail_('VALOR_INVALIDO', where + ': "' + v + '" no está activo en LISTAS (' + col.l + '). Opciones: ' + (opciones.join(', ') || '(ninguna)') + '. Usa la más parecida, "Otro" con el detalle en notas, o agrega la opción nueva primero (en un paquete: una operación LISTAS antes).', { lista: col.l, opciones: opciones });
+      }
       return v;
     case 'ref':
       v = String(v);
@@ -1132,9 +1211,9 @@ function updateRow_(ctx, table, id, version, changes, meta) {
       rects.push({ cliente_id: row.cliente_id || '', tabla: table, registro_id: row.codigo || row.id, campo: k, valor_anterior: String(a), valor_nuevo: String(b), motivo: meta.motivo || '', fuente: meta.fuente || '', autor: ctx.user.correo, fecha: at });
     });
   }
-  if (!meta.system && rects.some(function (r) { return !campoDeFlujo_(r.campo); })) {
+  if (!meta.system && rects.some(function (r) { return !campoDeFlujo_(r.campo, table); })) {
     if (isEmpty_(meta.motivo) || isEmpty_(meta.fuente)) {
-      fail_('MOTIVO_REQUERIDO', 'Estás corrigiendo un dato ya registrado (' + rects.filter(function (r) { return !campoDeFlujo_(r.campo); }).map(function (r) { return r.campo; }).join(', ') + '). Indica el motivo y la fuente de la corrección.');
+      fail_('MOTIVO_REQUERIDO', 'Estás corrigiendo un dato ya registrado (' + rects.filter(function (r) { return !campoDeFlujo_(r.campo, table); }).map(function (r) { return r.campo; }).join(', ') + '). Indica el motivo y la fuente de la corrección.');
     }
   }
   row.version = Number(prev.version) + 1;
@@ -1153,7 +1232,7 @@ function updateRow_(ctx, table, id, version, changes, meta) {
 }
 
 /** Campos de flujo (estados y etapa): su cambio se registra, pero no exige motivo ni fuente. */
-function campoDeFlujo_(k) { return k === 'etapa' || k.indexOf('estado') === 0; }
+function campoDeFlujo_(k, tabla) { return k === 'etapa' || k.indexOf('estado') === 0 || (tabla === 'PEDIDOS' && (k === 'resultado' || k === 'devolucion')); }
 
 /** Cambio interno del sistema (estados derivados). Sin control de versión ni permisos. */
 function sysUpdate_(ctx, table, id, changes, motivo) {
@@ -1506,11 +1585,26 @@ var RULES_ = {
   },
 
   PEDIDOS: {
-    before: function (ctx, row, prev) {
-      if (prev && !isEmpty_(prev.item_id) && row.item_id !== prev.item_id) {
-        var conf = activeRows_(ctx, 'RECEPCIONES').some(function (r) { return r.pedido_id === row.id && r.estado === 'Confirmada'; });
-        if (conf) fail_('CONFIRMADA', 'El pedido ya tiene recepciones en inventario: no se puede cambiar su artículo.');
+    before: function (ctx, row, prev, w) {
+      var conf = function () { return activeRows_(ctx, 'RECEPCIONES').some(function (r) { return r.pedido_id === row.id && r.estado === 'Confirmada'; }); };
+      if (prev && !isEmpty_(prev.item_id) && row.item_id !== prev.item_id && conf()) fail_('CONFIRMADA', 'El pedido ya tiene recepciones en inventario: no se puede cambiar su artículo.');
+      // 1.9: ligado al catálogo, completa lo que falte con los datos del artículo y su proveedor.
+      if (!isEmpty_(row.catalogo_id) && (!prev || prev.catalogo_id !== row.catalogo_id)) {
+        var cat = mustGet_(ctx, 'CATALOGO', row.catalogo_id, 'Artículo del catálogo'), pv = getRow_(ctx, 'PROVEEDORES', cat.proveedor_id) || {};
+        if (isEmpty_(row.codigo_proveedor)) row.codigo_proveedor = cat.codigo_proveedor;
+        if (isEmpty_(row.proveedor)) row.proveedor = pv.nombre || '';
+        if (isEmpty_(row.codigo_articulo) && !isEmpty_(cat.codigo_original)) row.codigo_articulo = cat.codigo_original;
+        if (isEmpty_(row.calidad) && !isEmpty_(cat.calidad)) row.calidad = cat.calidad;
       }
+      // 1.8: si sirvió y si se devuelve. Los pedidos antiguos (vacíos) se leen como "Por confirmar" y "No aplica".
+      if (!prev) { if (isEmpty_(row.resultado)) row.resultado = 'Por confirmar'; if (isEmpty_(row.devolucion)) row.devolucion = 'No aplica'; }
+      var dev = isEmpty_(row.devolucion) ? 'No aplica' : row.devolucion;
+      if (dev !== 'No aplica' && row.estado === 'Por pedir') fail_('VALOR_INVALIDO', 'Un repuesto que aún no se pide no se devuelve.');
+      if (row.resultado === 'Instalado' && dev !== 'No aplica') fail_('VALOR_INVALIDO', 'Un repuesto instalado no se devuelve: corrige el resultado o la devolución.');
+      if (PEDIDO_DEVUELTO.indexOf(dev) >= 0 && isEmpty_(row.devolucion_fecha)) fail_('REQUERIDO', 'Indica la fecha de la devolución (' + dev + ').');
+      if (dev === 'Reembolsado' && isEmpty_(row.devolucion_monto)) w.push({ code: 'SIN_MONTO', message: 'Reembolso sin monto: indica cuánto devolvió el proveedor.' });
+      if ((row.resultado === 'No corresponde' || row.resultado === 'Defectuoso') && dev === 'No aplica') w.push({ code: 'DEVOLUCION', message: 'El repuesto no sirvió: si se devuelve al proveedor márcalo "Por devolver"; si no, anota por qué en notas.' });
+      if (PEDIDO_DEVUELTO.indexOf(dev) >= 0 && (!prev || prev.devolucion !== dev) && !isEmpty_(row.item_id) && conf()) w.push({ code: 'INVENTARIO', message: 'El repuesto había entrado al inventario: registra su salida (devolución al proveedor) para que el stock cuadre.' });
     }
   },
 
@@ -1573,6 +1667,49 @@ var RULES_ = {
     before: function (ctx, row) {
       row.correo = String(row.correo || '').toLowerCase();
       if (activeRows_(ctx, 'USUARIOS').some(function (u) { return u.id !== row.id && u.correo === row.correo; })) fail_('DUPLICADO', 'Ya existe un usuario con ese correo.');
+    }
+  },
+
+  PROVEEDORES: {
+    before: function (ctx, row) {
+      if (!isEmpty_(row.descuento_pct) && !(Number(row.descuento_pct) >= 0 && Number(row.descuento_pct) < 100)) fail_('VALOR_INVALIDO', 'El descuento debe estar entre 0 y 99,99 %.');
+      var dup = activeRows_(ctx, 'PROVEEDORES').filter(function (x) { return x.id !== row.id && normTxt_(x.nombre) === normTxt_(row.nombre) && normTxt_(x.sucursal) === normTxt_(row.sucursal); })[0];
+      if (dup) fail_('DUPLICADO', 'Ya existe el proveedor ' + dup.codigo + ' ' + dup.nombre + (dup.sucursal ? ' (' + dup.sucursal + ')' : '') + '.');
+    }
+  },
+
+  CATALOGO: {
+    before: function (ctx, row) {
+      var dup = activeRows_(ctx, 'CATALOGO').filter(function (x) { return x.id !== row.id && x.proveedor_id === row.proveedor_id && normPlate_(x.codigo_proveedor) === normPlate_(row.codigo_proveedor); })[0];
+      if (dup) fail_('DUPLICADO', 'Ese código del proveedor ya está en el catálogo como ' + dup.codigo + ' (' + dup.descripcion + '). Usa ese artículo (en un paquete: "buscar").');
+    }
+  },
+
+  PRECIOS: {
+    before: function (ctx, row, prev, w) {
+      var cat = mustGet_(ctx, 'CATALOGO', row.catalogo_id, 'Artículo del catálogo');
+      var prov = getRow_(ctx, 'PROVEEDORES', cat.proveedor_id) || {};
+      if (!(Number(row.precio_lista) > 0)) fail_('VALOR_INVALIDO', 'El precio debe ser mayor que cero.');
+      if (isEmpty_(row.base)) {
+        if (prov.precios_base === 'Neto' || prov.precios_base === 'Con IVA') { row.base = prov.precios_base; w.push({ code: 'BASE_HABITUAL', message: 'Precio tomado como ' + row.base + ', como suele facturar ' + prov.nombre + '.' }); }
+        else fail_('REQUERIDO', 'Indica si el precio viene Neto o Con IVA (o anótalo en el proveedor ' + (prov.nombre || '') + ').');
+      }
+      if (row.base === 'Por confirmar') fail_('VALOR_INVALIDO', 'Para calcular el costo, el precio tiene que ser Neto o Con IVA.');
+      var hab = isEmpty_(prov.descuento_pct) ? null : Number(prov.descuento_pct);
+      if (isEmpty_(row.descuento_pct) && hab !== null) {
+        row.descuento_pct = hab;
+        w.push({ code: 'DESCUENTO_HABITUAL', message: 'Se aplicó el descuento habitual de ' + prov.nombre + ': ' + hab + ' %' + (prov.descuento_condicion ? ' (' + prov.descuento_condicion + ')' : '') + '.' });
+      } else if (!isEmpty_(row.descuento_pct) && hab !== null && Number(row.descuento_pct) !== hab) {
+        w.push({ code: 'DESCUENTO_DISTINTO', message: prov.nombre + ' suele aplicar ' + hab + ' %' + (prov.descuento_condicion ? ' (' + prov.descuento_condicion + ')' : '') + ' y este precio trae ' + row.descuento_pct + ' %. Revisa la factura.' });
+      }
+      var d = isEmpty_(row.descuento_pct) ? 0 : Number(row.descuento_pct);
+      if (!(d >= 0 && d < 100)) fail_('VALOR_INVALIDO', 'El descuento debe estar entre 0 y 99,99 %.');
+      var c = precioCosto_(row.precio_lista, row.base, d, ivaPct_(ctx));
+      row.costo_neto = c.neto; row.costo_con_iva = c.con_iva;
+      if (!isEmpty_(row.pedido_id)) {
+        var ped = mustGet_(ctx, 'PEDIDOS', row.pedido_id, 'Pedido');
+        if (!isEmpty_(ped.catalogo_id) && ped.catalogo_id !== row.catalogo_id) w.push({ code: 'OTRO_ARTICULO', message: 'El pedido ' + ped.codigo + ' es de otro artículo del catálogo.' });
+      }
     }
   },
 
@@ -1942,6 +2079,127 @@ function diasEntre_(desde, hasta) {
   if (!a || !b) return null;
   return Math.round((Date.UTC(+b[1], +b[2] - 1, +b[3]) - Date.UTC(+a[1], +a[2] - 1, +a[3])) / 86400000);
 }
+/* ───────── 1.9: costos y precios ───────── */
+function ivaPct_(ctx) { var v = (ctx.config || {}).iva_pct; return isEmpty_(v) || !(Number(v) >= 0 && Number(v) < 100) ? 19 : Number(v); }
+/** Costo real por unidad: lista − descuento; si la lista viene con IVA, se le saca. */
+function precioCosto_(lista, base, descPct, ivaPct) {
+  var bruto = Number(lista) * (1 - (Number(descPct) || 0) / 100);
+  var neto = base === 'Con IVA' ? bruto / (1 + ivaPct / 100) : bruto;
+  return { neto: Math.round(neto), con_iva: Math.round(neto * (1 + ivaPct / 100)) };
+}
+/** Precio al cliente con el margen de Víctor: costo ÷ (1 − margen). Ej. 100 al 10 % → 111. */
+function precioCliente_(costoNeto, margenPct, ivaPct) {
+  var m = Number(margenPct);
+  if (!(m >= 0 && m < 100)) fail_('VALOR_INVALIDO', 'El margen debe estar entre 0 y 99 %.');
+  var neto = Number(costoNeto) / (1 - m / 100);
+  return { neto: Math.round(neto), con_iva: Math.round(neto * (1 + ivaPct / 100)) };
+}
+function precioOrden_(a, b) { return a.fecha !== b.fecha ? (a.fecha < b.fecha ? 1 : -1) : (String(a.creado_en) < String(b.creado_en) ? 1 : -1); }
+function vigenciaDias_(ctx) { var v = Number((ctx.config || {}).precio_vigencia_dias); return v >= 1 ? Math.floor(v) : 60; }
+
+/** Catálogo con su último precio, historial y dónde calzó. Solo administración. */
+function vistaCatalogo_(ctx, p) {
+  requireAdmin_(ctx);
+  var hoy = today_(ctx), vig = vigenciaDias_(ctx), iva = ivaPct_(ctx);
+  var provs = {}; activeRows_(ctx, 'PROVEEDORES').forEach(function (x) { provs[x.id] = x; });
+  var precios = activeRows_(ctx, 'PRECIOS'), eqs = {};
+  rows_(ctx, 'EQUIPOS').forEach(function (e) { eqs[e.id] = e; });
+  var calzo = {};
+  var marca = function (catId, eqId) { if (!catId || !eqId || !eqs[eqId]) return; var l = calzo[catId] || (calzo[catId] = {}); l[eqId] = eqs[eqId].codigo + ' ' + (eqs[eqId].nombre_corto || '') + (eqs[eqId].patente ? ' ' + eqs[eqId].patente : ''); };
+  activeRows_(ctx, 'REFERENCIAS').forEach(function (r) { marca(r.catalogo_id, r.equipo_id); });
+  activeRows_(ctx, 'PEDIDOS').forEach(function (x) { if (x.resultado === 'Instalado') marca(x.catalogo_id, pedidoEquipo_(ctx, x)); });
+  var items = activeRows_(ctx, 'CATALOGO').map(function (c) {
+    var pv = provs[c.proveedor_id] || {};
+    var hist = precios.filter(function (x) { return x.catalogo_id === c.id; }).sort(precioOrden_).map(function (x) {
+      return { codigo: x.codigo, fecha: x.fecha, tipo: x.tipo, precio_lista: x.precio_lista, base: x.base, descuento_pct: isEmpty_(x.descuento_pct) ? 0 : Number(x.descuento_pct), costo_neto: x.costo_neto, costo_con_iva: x.costo_con_iva, documento: x.documento || '' };
+    });
+    var u = hist[0] || null, dias = u ? diasEntre_(u.fecha, hoy) : null;
+    return {
+      id: c.id, codigo: c.codigo, proveedor_id: c.proveedor_id, proveedor: pv.nombre || '', proveedor_sucursal: pv.sucursal || '', codigo_proveedor: c.codigo_proveedor, descripcion: c.descripcion, marca: c.marca || '', codigo_original: c.codigo_original || '',
+      calidad: c.calidad || '', unidad: c.unidad || '', link: c.link || '', aplica_a: c.aplica_a || '', descontinuado: c.descontinuado === true,
+      ultimo: u, dias: dias, vigente: u ? dias <= vig : false, historial: hist,
+      calzo_en: Object.keys(calzo[c.id] || {}).map(function (k) { return calzo[c.id][k]; })
+    };
+  }).sort(function (a, b) { return String(a.descripcion).localeCompare(String(b.descripcion)); });
+  var proveedores = activeRows_(ctx, 'PROVEEDORES').map(function (x) {
+    return { id: x.id, codigo: x.codigo, nombre: x.nombre, sucursal: x.sucursal || '', telefono: x.telefono || '', correo: x.correo || '', web: x.web || '', vendedor: x.vendedor || '', precios_base: x.precios_base || '', descuento_pct: isEmpty_(x.descuento_pct) ? null : Number(x.descuento_pct), descuento_condicion: x.descuento_condicion || '', medios_pago: x.medios_pago || '', despacho: x.despacho || '', inactivo: x.inactivo === true, notas: x.notas || '' };
+  });
+  return { data: { iva_pct: iva, vigencia_dias: vig, hoy: hoy, proveedores: proveedores, items: items }, warnings: [] };
+}
+
+/** Texto para Drive (proveedores-y-precios.md): lo que la IA necesita para cotizar y revisar facturas. Uso interno: lleva costos. */
+var CATALOGO_FORMATO = 'EG-CATALOGO-1';
+var CONTEXTO_CATALOGO = '__catalogo';
+var CATALOGO_ARCHIVO = 'proveedores-y-precios.md';
+function catalogoTexto_(ctx) {
+  var v = vistaCatalogo_(ctx, {}).data;
+  var celda = function (x, n) { var t = String(x === null || x === undefined ? '' : x).replace(/\|/g, '/').replace(/\s+/g, ' ').trim(); return n && t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  var pesos = function (n) { return isEmpty_(n) ? '' : '$' + String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+  var iva = v.iva_pct, f = String(1 + iva / 100).replace('.', ',');
+  var L = [];
+  L.push('# Proveedores, catálogo y precios — Eisen Garage SpA');
+  L.push('');
+  L.push('Formato ' + CATALOGO_FORMATO + ' · actualizado ' + v.hoy + ' por la app EG Registro. Archivo de SOLO LECTURA y de USO INTERNO (contiene costos): nunca lo muestres al cliente. Los cambios entran por paquete.');
+  L.push('');
+  L.push('## Cómo calcular (muestra siempre el cálculo completo)');
+  L.push('- Costo neto = precio de lista × (1 − descuento %). Si el precio viene con IVA, además ÷ ' + f + '.');
+  L.push('- Costo con IVA (lo que se paga) = costo neto × ' + f + '.');
+  L.push('- Precio al cliente neto = costo neto ÷ (1 − margen %). Ej.: costo $100 con margen 10 % → 100 ÷ 0,9 = $111. El margen lo indica Víctor en cada cotización: pregúntalo si no lo dio.');
+  L.push('- Precio al cliente con IVA = precio neto × ' + f + '.');
+  L.push('- Precios con más de ' + v.vigencia_dias + ' días: dilo y sugiere confirmarlos con el proveedor antes de enviar la cotización.');
+  L.push('- Si una factura no cuadra con las condiciones del proveedor (descuento, neto o con IVA), avísalo antes de registrarla.');
+  L.push('');
+  L.push('## Proveedores');
+  if (!v.proveedores.length) L.push('(ninguno registrado)');
+  v.proveedores.forEach(function (x) {
+    L.push('');
+    L.push('### ' + x.codigo + ' · ' + celda(x.nombre) + (x.sucursal ? ' (' + celda(x.sucursal) + ')' : '') + (x.inactivo ? ' · INACTIVO' : ''));
+    var a = [['Precios', x.precios_base || 'sin dato'], ['Descuento habitual', x.descuento_pct === null ? 'sin dato' : x.descuento_pct + ' %' + (x.descuento_condicion ? ' (' + x.descuento_condicion + ')' : '')], ['Medios de pago', x.medios_pago], ['Despacho', x.despacho], ['Teléfono', x.telefono], ['Correo', x.correo], ['Web', x.web], ['Vendedor', x.vendedor]]
+      .filter(function (z) { return !isEmpty_(z[1]); }).map(function (z) { return z[0] + ': ' + celda(z[1]); });
+    L.push('- ' + a.join(' · '));
+    if (x.notas) L.push('- Notas: ' + celda(x.notas, 400));
+  });
+  L.push('');
+  L.push('## Catálogo (último precio)');
+  if (!v.items.length) L.push('(sin artículos)');
+  else {
+    L.push('| Código | Proveedor | Cód. proveedor | Descripción | Marca | Cód. original | Calidad | Aplica a | Calzó en | Último costo neto | Con IVA | Fecha | Precio | Link |');
+    L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+    v.items.forEach(function (c) {
+      var u = c.ultimo;
+      L.push('| ' + c.codigo + ' | ' + celda(c.proveedor) + ' | ' + celda(c.codigo_proveedor) + ' | ' + celda(c.descripcion, 80) + (c.descontinuado ? ' (descontinuado)' : '') + ' | ' + celda(c.marca) + ' | ' + celda(c.codigo_original) + ' | ' + celda(c.calidad) + ' | ' + celda(c.aplica_a, 60) + ' | ' + celda(c.calzo_en.join(', '), 80) + ' | ' + (u ? pesos(u.costo_neto) : '') + ' | ' + (u ? pesos(u.costo_con_iva) : '') + ' | ' + (u ? u.fecha : '') + ' | ' + (u ? (c.vigente ? 'vigente' : 'CONFIRMAR (' + c.dias + ' días)') : 'sin precio') + ' | ' + celda(c.link) + ' |');
+    });
+  }
+  L.push('');
+  L.push('## Historial de precios (últimos 5 por artículo)');
+  var hay = false;
+  v.items.forEach(function (c) {
+    c.historial.slice(0, 5).forEach(function (h) {
+      hay = true;
+      L.push('- ' + c.codigo + ' · ' + h.fecha + ' ' + h.tipo + ' · lista ' + pesos(h.precio_lista) + ' ' + h.base + (h.descuento_pct ? ' − ' + h.descuento_pct + ' %' : '') + ' → neto ' + pesos(h.costo_neto) + ' / con IVA ' + pesos(h.costo_con_iva) + (h.documento ? ' · ' + celda(h.documento, 60) : '') + ' (' + h.codigo + ')');
+    });
+  });
+  if (!hay) L.push('(sin precios)');
+  return L.join('\n') + '\n';
+}
+function catalogoDeEscritos_(store, escritos) {
+  return (escritos || []).some(function (w) {
+    if (['PROVEEDORES', 'CATALOGO', 'PRECIOS'].indexOf(w.tabla) >= 0) return true;
+    if (w.tabla !== 'PEDIDOS' && w.tabla !== 'REFERENCIAS') return false;
+    var r = store.get(w.tabla, w.id);
+    return !!(r && !isEmpty_(r.catalogo_id));
+  });
+}
+
+/** Vehículo de un pedido: el suyo, o el de su cobro (o el trabajo del cobro). */
+function pedidoEquipo_(ctx, x) {
+  if (!isEmpty_(x.equipo_id)) return x.equipo_id;
+  var c = getRow_(ctx, 'CONCEPTOS', x.concepto_id);
+  if (!c) return '';
+  if (!isEmpty_(c.equipo_id)) return c.equipo_id;
+  var t = getRow_(ctx, 'TRABAJOS', c.trabajo_id);
+  return t ? t.equipo_id : '';
+}
 function vistaCierre_(ctx, p) {
   requireAdmin_(ctx);
   var dias = Math.floor(Number(isEmpty_(p.dias) ? CIERRE_DIAS_DEFECTO : p.dias));
@@ -1994,6 +2252,24 @@ function vistaCierre_(ctx, p) {
   });
   pedidos.sort(function (a, b) { return (b.dias || 0) - (a.dias || 0); });
 
+  // 4b (1.8). Repuestos por devolver al proveedor, y repuestos ya usados sin confirmar si sirvieron.
+  var porDevolver = [], sinConfirmar = [];
+  activeRows_(ctx, 'PEDIDOS').forEach(function (x) {
+    var eqId = pedidoEquipo_(ctx, x), e = equipos[eqId] || {};
+    var item = { pedido_id: x.id, codigo: x.codigo, cliente_id: x.cliente_id, cliente: nombreCli(x.cliente_id), equipo_id: eqId, equipo: e.nombre_corto || '', patente: e.patente || '', articulo: x.articulo, proveedor: x.proveedor || '', resultado: x.resultado || 'Por confirmar' };
+    if (x.devolucion === 'Por devolver') {
+      var desde = localDate_(x.editado_en || x.creado_en);
+      porDevolver.push(Object.assign(item, { desde: desde, dias: diasEntre_(desde, hoy) }));
+      return;
+    }
+    if (x.estado !== 'Pedido' || !(isEmpty_(x.resultado) || x.resultado === 'Por confirmar')) return;
+    var pedidoEl = x.fecha_pedido || localDate_(x.creado_en);
+    var recibido = recs.some(function (r) { return r.pedido_id === x.id; });
+    var usado = trabajos.some(function (t) { return t.equipo_id === eqId && eqId && t.estado_ejecucion === 'Ejecutado' && localDate_(t.fecha_fin || t.fecha_inicio || '') >= pedidoEl; });
+    if (recibido || usado) sinConfirmar.push(Object.assign(item, { desde: pedidoEl, motivo: usado ? 'Trabajo del vehículo ejecutado' : 'Recibido' }));
+  });
+  porDevolver.sort(function (a, b) { return (b.dias || 0) - (a.dias || 0); });
+
   // 5. Saldos por cliente con el mismo cálculo del control económico (sin duplicar reglas).
   var saldos = [], total = 0, desconocido = false;
   activeRows_(ctx, 'CLIENTES').forEach(function (c) {
@@ -2008,8 +2284,9 @@ function vistaCierre_(ctx, p) {
   return { data: {
     hoy: hoy, dias: dias,
     trabajos_sin_cobro: sinCobro, sesiones_sin_cobro: sesiones, pagos_pendientes: pagos, pedidos_atrasados: pedidos, saldos: saldos,
+    repuestos_por_devolver: porDevolver, repuestos_sin_confirmar: sinConfirmar,
     total_por_cobrar: desconocido ? null : total,
-    total_acciones: sinCobro.length + sesiones.length + pagos.length + pedidos.length
+    total_acciones: sinCobro.length + sesiones.length + pagos.length + pedidos.length + porDevolver.length + sinConfirmar.length
   }, warnings: [] };
 }
 
@@ -2107,6 +2384,135 @@ function historialRevocar_(ctx, p) {
   pub.publicacionesRetirar(e.id, HISTORIAL_TIPO);
   updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_publicable: false }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
   return { data: { revocados: n }, warnings: [] };
+}
+
+/**
+ * Contexto para IA (1.7; versión 2 en 1.8): un archivo por cliente con los CÓDIGOS que la IA usa en "buscar" y, por cada
+ * vehículo, su historial (trabajos, detalle técnico, referencias, repuestos comprados y si sirvieron, pendientes).
+ * La app lo regenera en Drive después de cada cambio; la IA solo lo lee. Así no necesita leer la base completa.
+ * Minimiza datos: sin RUT, teléfonos, correos, montos, costos ni notas internas.
+ */
+var CONTEXTO_FORMATO = 'EG-CONTEXTO-2';
+var CONTEXTO_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'REFERENCIAS', 'TRABAJOS', 'DETALLE', 'PENDIENTES', 'PEDIDOS', 'RECEPCIONES'];
+var CONTEXTO_DETALLE_TIPOS = ['Procedimiento', 'Fluido', 'Medición', 'Repuesto', 'Diagnóstico', 'Hallazgo'];
+function contextoArchivo_(c) { return 'contexto-cliente-' + c.codigo + '.md'; }
+
+function contextoTexto_(ctx, c) {
+  var celda = function (v, n) { var t = String(v === null || v === undefined ? '' : v).replace(/\|/g, '/').replace(/\s+/g, ' ').trim(); return n && t.length > n ? t.slice(0, n - 1) + '…' : t; };
+  var fecha = function (t) { return localDate_(t.fecha_fin || t.fecha_inicio || t.prog_desde || t.creado_en || ''); };
+  var miles = function (n) { return isEmpty_(n) ? '' : String(n).replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+  var eqs = activeRows_(ctx, 'EQUIPOS').filter(function (e) { return e.cliente_id === c.id; });
+  var trs = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return t.cliente_id === c.id && t.estado_comercial !== 'Anulado'; });
+  var det = activeRows_(ctx, 'DETALLE').filter(function (d) { return d.cliente_id === c.id && d.estado_aporte === 'Aprobado' && CONTEXTO_DETALLE_TIPOS.indexOf(d.tipo) >= 0; });
+  var refs = activeRows_(ctx, 'REFERENCIAS').filter(function (r) { return r.cliente_id === c.id && r.tipo !== 'Documento'; });
+  var pends = activeRows_(ctx, 'PENDIENTES').filter(function (x) { return x.cliente_id === c.id && x.estado_aporte === 'Aprobado'; });
+  var peds = activeRows_(ctx, 'PEDIDOS').filter(function (x) { return x.cliente_id === c.id; });
+  var recs = activeRows_(ctx, 'RECEPCIONES').filter(function (r) { return r.cliente_id === c.id && r.estado === 'Confirmada'; });
+  var cts = activeRows_(ctx, 'CONTACTOS').filter(function (k) { return k.cliente_id === c.id; });
+  var catCod = {}, catLink = {}; activeRows_(ctx, 'CATALOGO').forEach(function (x) { catCod[x.id] = x.codigo; catLink[x.id] = x.link || ''; });
+  var roles = function (k) { return [k.rol_solicitante === true ? 'solicitante' : '', k.rol_propietario === true ? 'propietario' : '', k.rol_pagador === true ? 'pagador' : '', k.rol_destinatario_fiscal === true ? 'factura a su nombre' : ''].filter(Boolean).join(', '); };
+  var factura = function (k) { return !isEmpty_(k.rut) && !isEmpty_(k.razon_social); };
+  var ordenFecha = function (a, b) { return fecha(a) < fecha(b) ? 1 : fecha(a) > fecha(b) ? -1 : 0; };
+  var L = [];
+  L.push('# Contexto del cliente — ' + c.nombre + ' (' + c.codigo + ')');
+  L.push('');
+  L.push('Formato ' + CONTEXTO_FORMATO + ' · actualizado ' + localDate_(now_(ctx)) + ' por la app EG Registro. Archivo de SOLO LECTURA para la IA: no lo edites; los cambios entran por paquete y la app lo vuelve a generar.');
+  L.push('Usa estos códigos en "buscar" ({"codigo": "…"}) para no duplicar. Para corregir algo existente usa la acción "editar" con su código y "esperado". Costos y precios de repuestos: archivo "' + CATALOGO_ARCHIVO + '" (códigos CA-…).');
+  L.push('');
+  L.push('## Cliente');
+  L.push('- Código: ' + c.codigo);
+  L.push('- Nombre en la app: ' + c.nombre);
+  L.push('- Tipo: ' + (c.tipo || ''));
+  var conFactura = cts.filter(factura);
+  L.push('- Datos para factura: ' + (conFactura.length ? 'registrados (' + conFactura.map(function (k) { return k.codigo; }).join(', ') + ')' : 'NO registrados — si hay que emitir factura, pide RUT, razón social, giro y dirección comercial; para boleta no hacen falta'));
+  L.push(''); L.push('## Contactos (solo nombre y rol)');
+  if (cts.length) cts.forEach(function (k) { L.push('- ' + k.codigo + ' · ' + celda(k.nombre) + (roles(k) ? ' · ' + roles(k) : '') + (factura(k) ? ' · datos de factura: sí' : '')); });
+  else L.push('(ninguno)');
+  var abiertos = trs.filter(function (t) { return t.estado_ejecucion !== 'Ejecutado'; }).sort(ordenFecha);
+  L.push(''); L.push('## Trabajos abiertos ahora');
+  if (abiertos.length) abiertos.forEach(function (t) { var e = eqs.filter(function (x) { return x.id === t.equipo_id; })[0]; L.push('- ' + t.codigo + ' · ' + (e ? e.codigo + ' ' + celda(e.nombre_corto) : '') + ' · ' + celda(t.descripcion, 120) + ' · ' + t.estado_ejecucion); });
+  else L.push('(ninguno)');
+  L.push(''); L.push('## Vehículos y equipos');
+  if (!eqs.length) L.push('(sin vehículos registrados)');
+  else {
+    L.push('| Código | Nombre corto | Patente | Marca, modelo y año | Unidad de uso |');
+    L.push('|---|---|---|---|---|');
+    eqs.forEach(function (e) { L.push('| ' + e.codigo + ' | ' + celda(e.nombre_corto) + ' | ' + celda(e.patente) + ' | ' + celda([e.marca, e.modelo, e.version_modelo, e.anio].filter(function (x) { return !isEmpty_(x); }).join(' ')) + ' | ' + celda(e.unidad_uso) + ' |'); });
+  }
+  // Un bloque por vehículo: la IA lee solo el que le toca.
+  eqs.forEach(function (e) {
+    var te = trs.filter(function (t) { return t.equipo_id === e.id; }).sort(ordenFecha);
+    var tIds = {}; te.forEach(function (t) { tIds[t.id] = t; });
+    L.push(''); L.push('---'); L.push('');
+    L.push('## ' + e.codigo + ' · ' + celda(e.nombre_corto) + (e.patente ? ' · ' + celda(e.patente) : ''));
+    var ficha = [['Marca', e.marca], ['Modelo', e.modelo], ['Versión', e.version_modelo], ['Año', e.anio], ['Tipo', e.tipo_vehiculo], ['Motor', e.motor_codigo || e.motor_informado], ['Transmisión', e.transmision], ['VIN', e.vin], ['Unidad de uso', e.unidad_uso]]
+      .filter(function (x) { return !isEmpty_(x[1]); }).map(function (x) { return x[0] + ': ' + celda(x[1]); });
+    if (ficha.length) L.push('- ' + ficha.join(' · '));
+    L.push(''); L.push('### Trabajos (más reciente primero)');
+    if (!te.length) L.push('(ninguno)');
+    else {
+      L.push('| Código | Fecha | Km / horas | Tipo | Descripción | Ejecución | Próxima |');
+      L.push('|---|---|---|---|---|---|---|');
+      te.forEach(function (t) {
+        var uso = [isEmpty_(t.km) ? '' : miles(t.km) + ' km', isEmpty_(t.horas_equipo) ? '' : t.horas_equipo + ' h'].filter(Boolean).join(' / ');
+        var prox = [isEmpty_(t.proxima_km) ? '' : miles(t.proxima_km) + ' km', isEmpty_(t.proxima_horas) ? '' : t.proxima_horas + ' h', t.proxima_fecha || ''].filter(Boolean).join(' / ');
+        L.push('| ' + t.codigo + ' | ' + fecha(t) + ' | ' + uso + ' | ' + celda(t.tipo_trabajo) + ' | ' + celda(t.descripcion, 200) + ' | ' + celda(t.estado_ejecucion) + ' | ' + prox + ' |');
+      });
+    }
+    var de = det.filter(function (d) { return tIds[d.trabajo_id]; });
+    if (de.length) {
+      L.push(''); L.push('### Detalle técnico registrado');
+      de.forEach(function (d) {
+        var cant = isEmpty_(d.cantidad) ? '' : d.cantidad + (d.unidad ? ' ' + d.unidad : '') + (d.tipo_cantidad ? ' (' + d.tipo_cantidad + ')' : '');
+        L.push('- ' + tIds[d.trabajo_id].codigo + ' · ' + d.tipo + (d.componente ? ' · ' + celda(d.componente) : '') + ' · ' + celda(d.descripcion, 160) + (d.especificacion ? ' · ' + celda(d.especificacion) : '') + (cant ? ' · ' + cant : '') + (d.resultado ? ' · resultado: ' + celda(d.resultado, 80) : ''));
+      });
+    }
+    var re = refs.filter(function (r) { return r.equipo_id === e.id; });
+    L.push(''); L.push('### Referencias técnicas');
+    if (re.length) re.forEach(function (r) {
+      var cant = isEmpty_(r.cantidad) ? '' : r.cantidad + (r.unidad ? ' ' + r.unidad : '') + (r.tipo_cantidad ? ' (' + r.tipo_cantidad + ')' : '');
+      L.push('- ' + r.codigo + ' · ' + r.tipo + (r.componente ? ' · ' + celda(r.componente) : '') + (r.especificacion ? ' · ' + celda(r.especificacion) : '') + (cant ? ' · ' + cant : '') + (r.torque ? ' · torque ' + celda(r.torque) : '') + (r.descripcion ? ' · ' + celda(r.descripcion, 120) : '') + (catCod[r.catalogo_id] ? ' · catálogo ' + catCod[r.catalogo_id] : '') + ' · ' + (r.confirmado === true ? 'confirmado' : 'SIN CONFIRMAR'));
+    });
+    else L.push('(ninguna)');
+    var pe = peds.filter(function (x) { return pedidoEquipo_(ctx, x) === e.id; }).sort(function (a, b) { var fa = a.fecha_pedido || localDate_(a.creado_en), fb = b.fecha_pedido || localDate_(b.creado_en); return fa < fb ? 1 : -1; });
+    L.push(''); L.push('### Repuestos comprados (dónde y si sirvieron)');
+    if (pe.length) {
+      L.push('| Código | Fecha | Artículo | Código artículo | Calidad | Proveedor | Dónde | Cód. proveedor | Catálogo | Estado | Recibido | Resultado | Devolución | Link |');
+      L.push('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+      pe.forEach(function (x) {
+        var rec = recs.some(function (r) { return r.pedido_id === x.id; });
+        L.push('| ' + x.codigo + ' | ' + (x.fecha_pedido || localDate_(x.creado_en)) + ' | ' + celda(x.articulo, 80) + ' | ' + celda(x.codigo_articulo) + ' | ' + celda(x.calidad) + ' | ' + celda(x.proveedor) + ' | ' + celda(x.proveedor_detalle, 80) + ' | ' + celda(x.codigo_proveedor) + ' | ' + (catCod[x.catalogo_id] || '') + ' | ' + x.estado + ' | ' + (rec ? 'sí' : 'no') + ' | ' + (x.resultado || 'Por confirmar') + ' | ' + (x.devolucion || 'No aplica') + (x.devolucion_fecha ? ' ' + x.devolucion_fecha : '') + ' | ' + celda(x.link_compra || catLink[x.catalogo_id] || '') + ' |');
+      });
+    } else L.push('(ninguno)');
+    var pv = pends.filter(function (x) { return x.equipo_id === e.id; });
+    L.push(''); L.push('### Pendientes vigentes');
+    var vig = pv.filter(pendienteVigente_);
+    if (vig.length) vig.forEach(function (x) { L.push('- ' + x.codigo + ' · ' + celda(x.descripcion, 160) + (x.objetivo ? ' (' + celda(x.objetivo) + ')' : '') + ' · ' + x.estado); });
+    else L.push('(ninguno)');
+    var cerr = pv.filter(function (x) { return !pendienteVigente_(x); }).slice(-10);
+    if (cerr.length) { L.push(''); L.push('### Pendientes cerrados (últimos 10)'); cerr.forEach(function (x) { L.push('- ' + x.codigo + ' · ' + celda(x.descripcion, 120) + ' · ' + x.estado + (x.fecha_cierre ? ' ' + x.fecha_cierre : '') + (x.motivo_cierre ? ' · ' + celda(x.motivo_cierre, 80) : '')); }); }
+  });
+  return L.join('\n') + '\n';
+}
+
+function vistaContextoIA_(ctx, p) {
+  requireAdmin_(ctx);
+  var c = mustGet_(ctx, 'CLIENTES', p.cliente_id, 'Cliente');
+  return { data: { texto: contextoTexto_(ctx, c), archivo: contextoArchivo_(c), cliente_id: c.id, codigo: c.codigo }, warnings: [] };
+}
+
+/** Clientes cuyo contexto cambia con lo escrito en una solicitud (para regenerar sus archivos). */
+function clientesDeEscritos_(store, escritos) {
+  var ids = {};
+  (escritos || []).forEach(function (w) {
+    if (CONTEXTO_TABLAS.indexOf(w.tabla) < 0) return;
+    var r = store.get(w.tabla, w.id);
+    // Un aporte en borrador (de un técnico) no es dato oficial: no cambia el contexto hasta que se revisa.
+    if (!r || r.estado_aporte === 'Borrador') return;
+    var cid = w.tabla === 'CLIENTES' ? r.id : r.cliente_id;
+    if (!isEmpty_(cid)) ids[cid] = true;
+  });
+  return Object.keys(ids);
 }
 
 /** Stock calculado: conteo inicial confirmado + entradas − salidas ± ajustes. Sin conteo confirmado = desconocido. */
@@ -2302,7 +2708,11 @@ var PAQUETE_FORMATO = 'EG-PAQUETE-1';
 var PAQUETE_MAX_OPS = 200;
 var PAQUETE_MAX_TEXTO = 40000;
 var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES'];
-var PAQUETE_ACCIONES = ['crear', 'sesion_posterior'];
+var PAQUETE_ACCIONES = ['crear', 'sesion_posterior', 'editar'];
+/** Tablas que un paquete no corrige (tienen su propio flujo en la app). */
+var PAQUETE_EDITAR_PROHIBIDAS = ['SESIONES', 'IMPUTACIONES', 'RECEPCIONES', 'MOV_INVENTARIO', 'LISTAS'];
+/** Columnas que una IA nunca carga, aunque la tabla se pueda cargar: la autorización del dueño para publicar su historial la registra una persona en la app. */
+function paqueteColumnaProhibida_(tabla, k) { return tabla === 'EQUIPOS' && /^historial_/.test(String(k)); }
 
 /** Revisa la forma del paquete antes de tocar datos. */
 function paqueteForma_(pq) {
@@ -2316,17 +2726,35 @@ function paqueteForma_(pq) {
   ops.forEach(function (o, i) {
     var n = 'Operación ' + (i + 1);
     if (!o || typeof o !== 'object') fail_('PAQUETE', n + ': no es un objeto.');
-    Object.keys(o).forEach(function (k) { if (['ref', 'tabla', 'accion', 'buscar', 'datos', 'nota'].indexOf(k) < 0) fail_('PAQUETE', n + ': clave desconocida "' + k + '".'); });
+    Object.keys(o).forEach(function (k) { if (['ref', 'tabla', 'accion', 'buscar', 'datos', 'nota', 'cambios', 'esperado', 'motivo'].indexOf(k) < 0) fail_('PAQUETE', n + ': clave desconocida "' + k + '".'); });
     if (!CONTRACT.tables[o.tabla]) fail_('PAQUETE', n + ': tabla desconocida "' + o.tabla + '".');
     if (PAQUETE_TABLAS_PROHIBIDAS.indexOf(o.tabla) >= 0) fail_('PAQUETE', n + ': ' + o.tabla + ' no se carga desde un paquete. Se hace en la app.');
     var acc = o.accion || 'crear';
-    if (PAQUETE_ACCIONES.indexOf(acc) < 0) fail_('PAQUETE', n + ': acción "' + acc + '" no permitida (crear o sesion_posterior).');
+    if (PAQUETE_ACCIONES.indexOf(acc) < 0) fail_('PAQUETE', n + ': acción "' + acc + '" no permitida (crear, sesion_posterior o editar).');
+    if (acc === 'editar') {
+      // Corrección de un registro existente: se ubica por "buscar" (idealmente por código), se comprueba "esperado" y se cambia solo "cambios".
+      if (PAQUETE_EDITAR_PROHIBIDAS.indexOf(o.tabla) >= 0) fail_('PAQUETE', n + ': ' + o.tabla + ' no se corrige desde un paquete. Se hace en la app.');
+      if (!o.buscar || typeof o.buscar !== 'object' || Array.isArray(o.buscar) || !Object.keys(o.buscar).length) fail_('PAQUETE', n + ': "editar" necesita "buscar" (por ejemplo {"codigo": "PD-0012"}).');
+      if (o.datos !== undefined) fail_('PAQUETE', n + ': "editar" usa "cambios", no "datos".');
+      if (!o.cambios || typeof o.cambios !== 'object' || Array.isArray(o.cambios) || !Object.keys(o.cambios).length) fail_('PAQUETE', n + ': "editar" necesita "cambios" con al menos un campo.');
+      if (o.esperado !== undefined && (typeof o.esperado !== 'object' || Array.isArray(o.esperado))) fail_('PAQUETE', n + ': "esperado" debe ser un objeto.');
+      if (isEmpty_(o.motivo) || String(o.motivo).trim().length < 4) fail_('PAQUETE', n + ': "editar" necesita "motivo" (por qué se corrige).');
+      var colsE = colMap_(o.tabla);
+      Object.keys(o.cambios).forEach(function (k) {
+        if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se cambia desde un paquete (la autorización del historial se registra en la app).');
+        if (!colsE[k]) fail_('PAQUETE', n + ': ' + o.tabla + ' no tiene la columna "' + k + '".');
+        if (colsE[k].calc || CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' lo llena el sistema; no se cambia desde un paquete.');
+      });
+    } else if (o.cambios !== undefined || o.esperado !== undefined || o.motivo !== undefined) fail_('PAQUETE', n + ': "cambios", "esperado" y "motivo" son solo para la acción "editar".');
     if (acc === 'sesion_posterior' && o.tabla !== 'SESIONES') fail_('PAQUETE', n + ': sesion_posterior es solo para SESIONES.');
     if (acc === 'crear' && o.tabla === 'SESIONES') fail_('PAQUETE', n + ': las sesiones se cargan con accion "sesion_posterior".');
     if (acc === 'sesion_posterior' && o.buscar) fail_('PAQUETE', n + ': una sesión no lleva "buscar".');
     if (o.buscar !== undefined && (typeof o.buscar !== 'object' || Array.isArray(o.buscar) || !Object.keys(o.buscar).length)) fail_('PAQUETE', n + ': "buscar" debe ser un objeto con al menos un campo.');
     if (o.datos !== undefined && (typeof o.datos !== 'object' || Array.isArray(o.datos))) fail_('PAQUETE', n + ': "datos" debe ser un objeto.');
-    if (!o.buscar && !o.datos) fail_('PAQUETE', n + ': falta "datos".');
+    if (!o.buscar && !o.datos && acc !== 'editar') fail_('PAQUETE', n + ': falta "datos".');
+    [o.datos, o.buscar, o.esperado].forEach(function (obj) {
+      Object.keys(obj || {}).forEach(function (k) { if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se carga desde un paquete (la autorización del historial se registra en la app).'); });
+    });
     if (!isEmpty_(o.ref)) {
       if (!/^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(String(o.ref))) fail_('PAQUETE', n + ': ref "' + o.ref + '" no válida (letras, números y _).');
       if (refs[o.ref]) fail_('PAQUETE', n + ': ref "' + o.ref + '" repetida.');
@@ -2382,12 +2810,144 @@ function paqueteEtiqueta_(tabla, r) {
   return t.length > 90 ? t.slice(0, 87) + '…' : t;
 }
 
+/** Igualdad para comparar "esperado" con la base: números por valor, textos sin tildes ni mayúsculas, patentes normalizadas. */
+function paqueteMismoValor_(tabla, c, k, a, b) {
+  if (isEmpty_(a) && isEmpty_(b)) return true;
+  if (isEmpty_(a) !== isEmpty_(b)) return false;
+  if (tabla === 'EQUIPOS' && (k === 'patente' || k === 'vin')) return normPlate_(a) === normPlate_(b);
+  if (c && (c.t === 'int' || c.t === 'num' || c.t === 'money')) return Number(a) === Number(b);
+  if (c && c.t === 'bool') return String(a) === String(b);
+  if (c && (c.t === 'date' || c.t === 'datetime')) return String(a).slice(0, 10) === String(b).slice(0, 10);
+  return normTxt_(a) === normTxt_(b);
+}
+
+/** IA4 (1.7): corrige un registro existente. Queda en RECTIFICACIONES con el motivo y la fuente del paquete. */
+function paqueteEditar_(ctx, pq, o, ids, n, opId) {
+  var buscar = paqueteResolver_(ctx, o.buscar, ids, n);
+  var hall = paqueteBuscar_(ctx, o.tabla, buscar, n);
+  if (!hall.length) fail_('NO_EXISTE', n + ': no hay un registro de ' + o.tabla + ' que calce con ' + JSON.stringify(o.buscar) + '.');
+  if (hall.length > 1) fail_('AMBIGUO', n + ': hay ' + hall.length + ' registros que calzan (' + hall.map(function (r) { return r.codigo; }).join(', ') + '). Usa el código.');
+  var ex = hall[0], cols = colMap_(o.tabla);
+  // Ya aplicada en un reintento con la misma operación: no se repite.
+  if (opId && ex.ultima_op === opId) return { tabla: o.tabla, accion: 'editar', resultado: 'Ya aplicado', row: ex, avisos: [] };
+  var esperado = paqueteResolver_(ctx, o.esperado || {}, ids, n), dif = [];
+  Object.keys(esperado).forEach(function (k) {
+    if (!cols[k] && k !== 'codigo') fail_('PAQUETE', n + ': ' + o.tabla + ' no tiene la columna "' + k + '" en "esperado".');
+    if (!paqueteMismoValor_(o.tabla, cols[k], k, ex[k], esperado[k])) dif.push(k + ': la IA esperaba "' + esperado[k] + '" y en la base hay "' + (isEmpty_(ex[k]) ? '' : ex[k]) + '"');
+  });
+  if (dif.length) fail_('CAMBIO_PREVIO', n + ': ' + ex.codigo + ' cambió desde que se armó el paquete (' + dif.join('; ') + '). Actualiza el contexto y vuelve a pedir el paquete.');
+  var cambios = paqueteResolver_(ctx, o.cambios, ids, n), efectivos = {}, lista = [];
+  Object.keys(cambios).forEach(function (k) {
+    if (paqueteMismoValor_(o.tabla, cols[k], k, ex[k], cambios[k])) return;
+    efectivos[k] = cambios[k];
+    lista.push(k + ': "' + (isEmpty_(ex[k]) ? '' : ex[k]) + '" → "' + (isEmpty_(cambios[k]) ? '' : cambios[k]) + '"');
+  });
+  if (!lista.length) return { tabla: o.tabla, accion: 'editar', resultado: 'Sin cambios', row: ex, avisos: [{ code: 'SIN_CAMBIOS', message: ex.codigo + ' ya tenía esos valores; no se modifica.' }] };
+  var fuente = ('Paquete IA · ' + String(pq.fuente)).slice(0, 300);
+  var r = updateRow_(ctx, o.tabla, ex.id, null, efectivos, { opId: opId, motivo: String(o.motivo).slice(0, 500), fuente: fuente, skipVersion: true });
+  return { tabla: o.tabla, accion: 'editar', resultado: 'Modificado', row: r.row, avisos: [{ code: 'CAMBIO', message: 'Corrige ' + ex.codigo + ': ' + lista.join('; ') + '. Motivo: ' + o.motivo }].concat(r.warnings || []) };
+}
+
+/* ───────── 1.8: posibles duplicados y decisiones de la vista previa ─────────
+ * Un cliente, contacto o vehículo NUEVO que se parece a uno existente no se crea a ciegas: la vista previa lo muestra
+ * con sus parecidos y hay que decidir ("es otro, crear nuevo" o "es este código"). Las correcciones ("editar") y las
+ * opciones nuevas de lista también se confirman una por una. Sin esas decisiones, el paquete no se aplica.
+ */
+var PARECIDO_IGNORAR = ['de', 'del', 'la', 'las', 'los', 'el', 'y', 'e', 'da', 'do', 'spa', 'ltda', 'limitada', 'sa', 'eirl', 'cia', 'compania', 'sociedad', 'soc', 'comercial', 'servicios', 'empresa', 'empresas', 'hijo', 'hijos', 'hnos', 'hermanos', 'repuestos', 'repuesto', 'automotriz', 'automotora', 'autopartes', 'accesorios', 'lubricantes', 'distribuidora', 'importadora'];
+var PAQUETE_DECISION_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'PROVEEDORES'];
+function tokensNombre_(s) {
+  return normTxt_(s).replace(/[^a-z0-9 ]/g, ' ').split(' ').filter(function (t) { return t.length >= 2 && PARECIDO_IGNORAR.indexOf(t) < 0; });
+}
+/** Distancia de edición (solo importa si es 0, 1 o más). */
+function distancia_(a, b) {
+  if (a === b) return 0;
+  if (Math.abs(a.length - b.length) > 1) return 2;
+  var prev = [], i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    var cur = [i];
+    for (j = 1; j <= b.length; j++) cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a.charAt(i - 1) === b.charAt(j - 1) ? 0 : 1));
+    prev = cur;
+  }
+  return prev[b.length];
+}
+function tokenParecido_(a, b) { return a === b || (Math.min(a.length, b.length) >= 5 && distancia_(a, b) <= 1); }
+/** Dos nombres se parecen si comparten dos palabras (ej. "Álvaro Núñez" y "Álvaro Antonio Núñez Cornejo"), o la única palabra de uno. */
+function nombreParecido_(a, b) {
+  if (isEmpty_(a) || isEmpty_(b)) return false;
+  if (normTxt_(a) === normTxt_(b)) return true;
+  var ta = tokensNombre_(a), tb = tokensNombre_(b);
+  var comunes = ta.filter(function (x) { return tb.some(function (y) { return tokenParecido_(x, y); }); });
+  if (comunes.length >= 2) return true;
+  return comunes.length === 1 && comunes[0].length >= 4 && (ta.length === 1 || tb.length === 1);
+}
+function rutNorm_(r) { var x = String(r == null ? '' : r).toUpperCase().replace(/[^0-9K]/g, ''); return x.length >= 7 ? x : ''; }
+
+/** Registros existentes parecidos a uno nuevo. elegible = se puede usar en su lugar (misma tabla y, si aplica, mismo cliente). */
+function paqueteParecidos_(ctx, tabla, datos, excluir) {
+  var out = [], vistos = {}, nomCli = {};
+  rows_(ctx, 'CLIENTES').forEach(function (c) { nomCli[c.id] = c.nombre; });
+  var add = function (t, r, motivo, elegible, etiqueta) {
+    if (excluir[r.id] || vistos[r.id]) return;
+    vistos[r.id] = true;
+    out.push({ tabla: t, id: r.id, codigo: r.codigo, etiqueta: etiqueta, motivo: motivo, elegible: !!elegible });
+  };
+  if (tabla === 'CLIENTES' || tabla === 'CONTACTOS') {
+    var nom = datos.nombre, rut = rutNorm_(datos.rut);
+    activeRows_(ctx, 'CLIENTES').forEach(function (c) { if (nombreParecido_(nom, c.nombre)) add('CLIENTES', c, 'nombre parecido', tabla === 'CLIENTES', 'Cliente ' + c.nombre); });
+    activeRows_(ctx, 'CONTACTOS').forEach(function (k) {
+      var porRut = rut && rutNorm_(k.rut) === rut;
+      if (porRut || nombreParecido_(nom, k.nombre)) add('CONTACTOS', k, porRut ? 'mismo RUT' : 'nombre parecido', tabla === 'CONTACTOS' && k.cliente_id === datos.cliente_id, 'Contacto ' + k.nombre + ' (de ' + (nomCli[k.cliente_id] || 'otro cliente') + ')');
+    });
+  }
+  if (tabla === 'PROVEEDORES') {
+    activeRows_(ctx, 'PROVEEDORES').forEach(function (x) { if (nombreParecido_(datos.nombre, x.nombre)) add('PROVEEDORES', x, 'nombre parecido', true, 'Proveedor ' + x.nombre + (x.sucursal ? ' (' + x.sucursal + ')' : '')); });
+  }
+  if (tabla === 'EQUIPOS') {
+    var p = normPlate_(datos.patente), v = normPlate_(datos.vin);
+    activeRows_(ctx, 'EQUIPOS').forEach(function (e) {
+      var ep = e.patente_busqueda || normPlate_(e.patente), m = '';
+      if (p && ep === p) m = 'misma patente';
+      else if (v && normPlate_(e.vin) === v) m = 'mismo VIN';
+      else if (p.length >= 5 && ep.length >= 5 && distancia_(p, ep) <= 1) m = 'patente parecida';
+      if (m) add('EQUIPOS', e, m, e.cliente_id === datos.cliente_id, e.nombre_corto + (e.patente ? ' · ' + e.patente : '') + ' (de ' + (nomCli[e.cliente_id] || 'otro cliente') + ')');
+    });
+  }
+  return out;
+}
+
+/**
+ * Decisiones de la vista previa: { "3": "nuevo" | "ok" | "C-0004" }. Un código cambia esa operación por "usar el existente"
+ * (buscar por código); "nuevo" confirma que es otro; "ok" confirma una corrección u opción de lista. Devuelve el paquete ajustado.
+ */
+function paqueteDecisiones_(pq, dec) {
+  if (dec === undefined || dec === null) return { pq: pq, dec: {} };
+  if (typeof dec !== 'object' || Array.isArray(dec)) fail_('PAQUETE', '"decisiones" debe ser un objeto.');
+  var copia = clone_(pq), limpio = {}, cambia = false;
+  Object.keys(dec).forEach(function (k) {
+    var i = Number(k), v = String(dec[k] == null ? '' : dec[k]).trim(), o = copia.operaciones[i - 1];
+    if (!(i >= 1) || Math.floor(i) !== i || !o) fail_('PAQUETE', 'Hay una decisión para una operación que no existe (' + k + ').');
+    if (v === 'nuevo' || v === 'ok') { limpio[String(i)] = v; return; }
+    if (!/^(EG-)?[A-Z]{1,3}-\d{1,6}$/i.test(v)) fail_('PAQUETE', 'Operación ' + i + ': decisión no válida "' + v + '" (usa nuevo, ok o un código).');
+    if ((o.accion || 'crear') !== 'crear' || PAQUETE_DECISION_TABLAS.indexOf(o.tabla) < 0) fail_('PAQUETE', 'Operación ' + i + ': solo un cliente, contacto, vehículo o proveedor nuevo se puede cambiar por uno existente.');
+    o.buscar = { codigo: v.toUpperCase() };
+    limpio[String(i)] = v.toUpperCase();
+    cambia = true;
+  });
+  return { pq: cambia ? copia : pq, dec: limpio };
+}
+
+/** Lo que falta decidir en la vista previa: [{ n, requiere }]. */
+function paqueteFaltan_(resultados) {
+  return resultados.filter(function (x) { return x.requiere && !x.decidido; }).map(function (x) { return { n: x.n, requiere: x.requiere }; });
+}
+
 /**
  * Ejecuta las operaciones sobre ctx.store (una TxStore: nada se guarda hasta el commit).
  * Devuelve { resultados: [{ n, tabla, accion, resultado: 'Nuevo'|'Existente', codigo, id, etiqueta, avisos }], avisos }.
  */
-function paqueteEjecutar_(ctx, pq, baseOp, parcial) {
-  var ids = {}, resultados = parcial || [], avisosGlobales = [];
+function paqueteEjecutar_(ctx, pq, baseOp, parcial, decisiones) {
+  var ids = {}, resultados = parcial || [], avisosGlobales = [], creados = {}, dec = decisiones || {};
   pq.operaciones.forEach(function (o, i) {
     var n = 'Operación ' + (i + 1) + ' (' + o.tabla + (o.ref ? ' ' + o.ref : '') + ')';
     var acc = o.accion || 'crear';
@@ -2395,13 +2955,17 @@ function paqueteEjecutar_(ctx, pq, baseOp, parcial) {
     var res;
     try {
       var datos = paqueteResolver_(ctx, o.datos, ids, n);
-      var previo = opId ? findByOp_(ctx, o.tabla, opId) : null;
-      if (previo) {
+      var previo = opId && acc !== 'editar' ? findByOp_(ctx, o.tabla, opId) : null;
+      if (acc === 'editar') {
+        res = paqueteEditar_(ctx, pq, o, ids, n, opId);
+      } else if (previo) {
         res = { tabla: o.tabla, accion: acc, resultado: 'Ya aplicado', row: previo, avisos: [] };
       } else if (o.buscar) {
         var buscar = paqueteResolver_(ctx, o.buscar, ids, n);
         var hall = paqueteBuscar_(ctx, o.tabla, buscar, n);
         if (hall.length > 1) fail_('AMBIGUO', n + ': hay ' + hall.length + ' registros que calzan (' + hall.map(function (r) { return r.codigo; }).join(', ') + '). Precisa la búsqueda o usa el código.');
+        // Buscar por código es "usar ese registro": si no existe, no se crea otro con ese nombre.
+        if (!hall.length && !isEmpty_(buscar.codigo)) fail_('NO_EXISTE', n + ': no hay un registro vigente de ' + o.tabla + ' con el código ' + buscar.codigo + '. Revisa el código.');
         if (hall.length === 1) {
           var ex = hall[0], dif = [];
           Object.keys(datos).forEach(function (k) {
@@ -2414,8 +2978,14 @@ function paqueteEjecutar_(ctx, pq, baseOp, parcial) {
         if (!res) Object.keys(buscar).forEach(function (k) { if (k !== 'codigo' && isEmpty_(datos[k])) datos[k] = buscar[k]; });
       }
       if (!res && acc === 'crear') {
+        var parecidos = PAQUETE_DECISION_TABLAS.indexOf(o.tabla) >= 0 ? paqueteParecidos_(ctx, o.tabla, datos, creados) : [];
         var c = insertRow_(ctx, o.tabla, datos, { opId: opId });
-        res = { tabla: o.tabla, accion: acc, resultado: 'Nuevo', row: c.row, avisos: c.warnings };
+        var avisosC = c.warnings || [];
+        if (parecidos.length) avisosC = avisosC.filter(function (w) { return w.code !== 'DUPLICADO_POSIBLE'; }).concat([{ code: 'POSIBLE_DUPLICADO', message: 'Se parece a: ' + parecidos.map(function (x) { return x.codigo + ' ' + x.etiqueta + ' (' + x.motivo + ')'; }).join('; ') + '. Decide si es otro o el mismo.' }]);
+        res = { tabla: o.tabla, accion: acc, resultado: 'Nuevo', row: c.row, avisos: avisosC };
+        if (parecidos.length) { res.requiere = 'duplicado'; res.candidatos = parecidos; res.decidido = dec[String(i + 1)] === 'nuevo'; }
+        if (o.tabla === 'LISTAS') { res.requiere = 'lista'; res.decidido = dec[String(i + 1)] === 'ok'; }
+        creados[c.row.id] = true;
       }
       if (!res && acc === 'sesion_posterior') {
         var sp = sesionPosterior_(ctx, Object.assign({}, datos, { op_id: opId }));
@@ -2429,7 +2999,12 @@ function paqueteEjecutar_(ctx, pq, baseOp, parcial) {
       throw e;
     }
     if (!isEmpty_(o.ref)) ids[o.ref] = res.row.id;
-    resultados.push({ n: i + 1, ref: o.ref || '', tabla: o.tabla, accion: res.accion, resultado: res.resultado, id: res.row.id, codigo: res.row.codigo, etiqueta: paqueteEtiqueta_(o.tabla, res.row), avisos: res.avisos || [] });
+    if (res.resultado === 'Modificado') { res.requiere = 'correccion'; res.decidido = dec[String(i + 1)] === 'ok'; }
+    var item = { n: i + 1, ref: o.ref || '', tabla: o.tabla, accion: res.accion, resultado: res.resultado, id: res.row.id, codigo: res.row.codigo, etiqueta: paqueteEtiqueta_(o.tabla, res.row), avisos: res.avisos || [] };
+    if (res.requiere) { item.requiere = res.requiere; item.decidido = !!res.decidido; }
+    if (res.candidatos) item.candidatos = res.candidatos;
+    if (dec[String(i + 1)]) item.decision = dec[String(i + 1)];
+    resultados.push(item);
   });
   return { resultados: resultados, avisos: avisosGlobales };
 }
@@ -2448,15 +3023,16 @@ function paqueteHuella_(pq) {
 /** Vista previa: corre todo en una transacción que se descarta. No escribe nada. */
 function paqueteValidar_(ctx, p) {
   requireAdmin_(ctx);
-  var pq = p.paquete;
-  paqueteForma_(pq);
+  paqueteForma_(p.paquete);
+  var D = paqueteDecisiones_(p.paquete, p.decisiones), pq = D.pq;
   var tx = new TxStore(ctx.store);
   var c = {};
   Object.keys(ctx).forEach(function (k) { if (k !== '_assigned') c[k] = ctx[k]; });
   c.store = tx; c._tx = tx;
-  var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null, huella: paqueteHuella_(pq) };
+  var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null, huella: paqueteHuella_(pq), decisiones: D.dec, faltan: [] };
   try {
-    paqueteEjecutar_(c, pq, '', out.resultados);
+    paqueteEjecutar_(c, pq, '', out.resultados, D.dec);
+    out.faltan = paqueteFaltan_(out.resultados);
   } catch (e) {
     if (!(e && e.name === 'AppError')) throw e;
     out.valido = false;
@@ -2472,8 +3048,8 @@ function paqueteValidar_(ctx, p) {
 /** Aplica el paquete: todo junto o nada (la transacción la abre handle_). */
 function paqueteAplicar_(ctx, p) {
   requireAdmin_(ctx);
-  var pq = p.paquete;
-  paqueteForma_(pq);
+  paqueteForma_(p.paquete);
+  var D = paqueteDecisiones_(p.paquete, p.decisiones), pq = D.pq;
   // Lo que se aplica es exactamente lo que se revisó: la vista previa entrega la huella y aquí se exige igual.
   var huella = paqueteHuella_(pq);
   if (!isEmpty_(p.archivo_id) && isEmpty_(p.huella)) fail_('REQUERIDO', 'Falta la huella de la vista previa: revisa el paquete antes de aplicarlo.');
@@ -2484,19 +3060,26 @@ function paqueteAplicar_(ctx, p) {
     return x.op_id !== opPq && ((!isEmpty_(p.archivo_id) && x.archivo_id === String(p.archivo_id)) || x.huella === huella);
   })[0];
   if (previo) fail_('YA_PROCESADO', (previo.archivo_id && previo.archivo_id === String(p.archivo_id) ? 'Este archivo' : 'Este mismo paquete') + ' ya se aplicó como ' + previo.codigo + '.', { codigo: previo.codigo, archivo_id: previo.archivo_id || '' });
-  var r = paqueteEjecutar_(ctx, pq, p.op_id);
+  var r = paqueteEjecutar_(ctx, pq, p.op_id, null, D.dec);
+  var faltan = paqueteFaltan_(r.resultados);
+  if (faltan.length) {
+    var txt = { duplicado: 'posible duplicado', correccion: 'corrección', lista: 'opción nueva de lista' };
+    fail_('DECISION_REQUERIDA', 'Falta confirmar en la vista previa: ' + faltan.map(function (x) { return 'operación ' + x.n + ' (' + txt[x.requiere] + ')'; }).join(', ') + '.', { faltan: faltan });
+  }
+  var decTxt = Object.keys(D.dec).map(function (k) { return k + ' → ' + D.dec[k]; }).join('; ');
   var nuevos = r.resultados.filter(function (x) { return x.resultado === 'Nuevo'; }).length;
+  var modificados = r.resultados.filter(function (x) { return x.resultado === 'Modificado'; }).length;
   var resumen = r.resultados.map(function (x) { return x.n + '. ' + x.tabla + ' ' + x.codigo + ' ' + x.resultado + (x.etiqueta ? ' · ' + x.etiqueta : ''); }).join('\n');
   var tt = paqueteTexto_(pq);
   var reg = findByOp_(ctx, 'PAQUETES', opPq) || insertSystem_(ctx, 'PAQUETES', {
     archivo_id: isEmpty_(p.archivo_id) ? '' : String(p.archivo_id), huella: huella,
     fuente: String(pq.fuente).slice(0, 500), autor_ia: String(pq.autor_ia || '').slice(0, 100), operaciones: pq.operaciones.length,
     resumen: resumen, dudas: [].concat(pq.dudas || []).join('\n'), texto_original: tt.texto,
-    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s).' + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
+    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s)' + (modificados ? ', ' + modificados + ' corregido(s)' : '') + '.' + (decTxt ? ' Decisiones: ' + decTxt + '.' : '') + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
   }, { opId: opPq });
   var avisos = [];
   r.resultados.forEach(function (x) { (x.avisos || []).forEach(function (w) { avisos.push({ code: w.code, message: 'Op. ' + x.n + ' ' + x.tabla + ': ' + w.message }); }); });
-  return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos }, warnings: avisos };
+  return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos, modificados: modificados }, warnings: avisos };
 }
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
@@ -2694,6 +3277,8 @@ function handleInner_(ctx, action, p) {
     case 'mis_trabajos': return vistaMisTrabajos_(ctx, p);
     case 'control_economico': return vistaControlEconomico_(ctx, p);
     case 'cierre': return vistaCierre_(ctx, p);
+    case 'contexto_ia': return vistaContextoIA_(ctx, p);
+    case 'catalogo': return vistaCatalogo_(ctx, p);
     case 'historial_vista_previa': return historialVistaPrevia_(ctx, p);
     case 'historial_publicar': return historialPublicar_(ctx, p);
     case 'historial_revocar': return historialRevocar_(ctx, p);
@@ -3164,8 +3749,50 @@ function abrirCliente(id){
       '<div class="s">' + esc(ultimaTxt(v)) + (v.ultima_descripcion ? ' · ' + esc(v.ultima_descripcion.slice(0, 70)) : '') + '</div>' +
       '<div class="chips"><span class="chip">' + v.trabajos + ' trabajo' + (v.trabajos === 1 ? '' : 's') + '</span>' + (v.en_curso ? '<span class="chip live">En curso</span>' : '') + (v.pendientes_vigentes ? '<span class="chip warn">' + v.pendientes_vigentes + ' pendiente' + (v.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') + '</div></div></button>';
   }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin vehículos registrados.</p>') + '</div>';
-  h += '<button class="btn big ghost" type="button" data-act="cli-control" data-id="' + esc(c.cliente_id) + '">Control económico</button>';
+  h += '<div style="display:grid;gap:8px"><button class="btn big ghost" type="button" data-act="cli-control" data-id="' + esc(c.cliente_id) + '">Control económico</button>' +
+    '<button class="btn big ghost" type="button" data-act="cli-contexto" data-id="' + esc(c.cliente_id) + '">Contexto para IA</button></div>';
   abrirHoja(c.nombre, h);
+}
+
+/* ───── Contexto para IA (1.7): para pegar o subir al proyecto de IA del cliente ───── */
+function abrirContextoIA(clienteId){
+  call('contexto_ia', { cliente_id: clienteId }).then(function(r){
+    S.ctxIA = r.data;
+    var dr = r.data.drive;
+    var h = '<div class="block" id="ciaDrive">' + bloqueDriveContexto(dr) + '</div>' +
+      '<p class="s" style="margin:0 0 8px;color:var(--acero)">Lleva solo códigos, vehículos y su historial (trabajos, detalle técnico, referencias, repuestos y dónde se compraron, pendientes): sin RUT, teléfonos, montos ni costos.</p>' +
+      '<textarea class="i" id="ciaTexto" rows="14" readonly style="min-height:260px;font-family:ui-monospace,monospace;font-size:13px">' + esc(r.data.texto) + '</textarea>' +
+      '<div style="display:grid;gap:8px;margin-top:10px"><button class="btn big ghost" type="button" data-act="cia-copiar">Copiar</button><button class="btn big ghost" type="button" data-act="cia-bajar">Descargar ' + esc(r.data.archivo) + '</button></div>';
+    abrirHoja('Contexto para IA', h);
+  }).catch(function(){});
+}
+function bloqueDriveContexto(dr){
+  if (DEMO) return '<p class="s" style="margin:0">En modo demostración no hay Drive. En la app real, este contexto queda en la carpeta <b>Contextos IA EG</b> y se actualiza solo con cada cambio.</p>';
+  if (!dr) return '<p class="s" style="margin:0">La carpeta <b>Contextos IA EG</b> aún no está creada (se crea al instalar con crearContextos). Mientras, copia o descarga el texto.</p>';
+  return '<h3 style="margin-top:0">En Drive</h3><p class="s" style="margin:0 0 8px">' + (dr.existe ? 'El archivo <b>' + esc(S.ctxIA.archivo) + '</b> está en la carpeta Contextos IA EG y se actualiza solo con cada cambio de este cliente. Última actualización: ' + esc(fmtFecha(dr.actualizado)) + '.' : 'Este cliente aún no tiene su archivo en Drive.') + ' La IA lo lee con el conector de Drive; no lo edita.</p>' +
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" type="button" data-act="cia-drive">' + (dr.existe ? 'Actualizar ahora' : 'Guardar en Drive') + '</button>' + (dr.existe && dr.url ? '<a class="btn ghost" href="' + esc(dr.url) + '" target="_blank" rel="noopener">Abrir en Drive</a>' : '') + '</div>';
+}
+function guardarContextoDrive(btn){
+  var d = S.ctxIA; if (!d) return;
+  btn.disabled = true;
+  call('contexto_ia_guardar', { cliente_id: d.cliente_id }).then(function(r){
+    toast('Contexto guardado en Drive: ' + r.data.nombre + '.');
+    var el = $('ciaDrive'); if (el) el.innerHTML = bloqueDriveContexto({ existe: true, url: r.data.url, actualizado: r.data.actualizado });
+  }).catch(function(){ btn.disabled = false; });
+}
+function copiarContextoIA(){
+  var t = S.ctxIA && S.ctxIA.texto; if (!t) return;
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function(){ toast('Contexto copiado.'); }, function(){ $('ciaTexto').select(); toast('Selecciona y copia el texto.', 'err'); });
+  else { $('ciaTexto').select(); document.execCommand('copy'); toast('Contexto copiado.'); }
+}
+function bajarContextoIA(){
+  var d = S.ctxIA; if (!d) return;
+  try {
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([d.texto], { type: 'text/markdown;charset=utf-8' }));
+    a.download = d.archivo; document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+  } catch (e) { toast('No se pudo descargar; usa Copiar.', 'err'); }
 }
 
 /* ───── Nuevo trabajo rápido (administración) ───── */
@@ -3495,6 +4122,12 @@ function renderCierre(){
     h += seccion('Pedidos sin recibir (más de ' + d.dias + ' días o con entrega vencida)', d.pedidos_atrasados, function(x){
       return '<button class="item" type="button" data-act="ci-datos" data-t="PEDIDOS" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.articulo) + '</div><div class="s">' + esc(x.cliente) + (x.proveedor ? ' · ' + esc(x.proveedor) : '') + ' · ' + esc(x.estado) + (x.dias !== null ? ' hace ' + x.dias + ' días' : '') + '</div><div class="chips">' + (x.vencido ? '<span class="chip warn">Entrega esperada ' + esc(fmtFecha(x.entrega_esperada)) + '</span>' : '') + (x.recibido ? ' <span class="chip">Recibido ' + esc(x.recibido) + (x.cantidad !== null ? ' de ' + esc(x.cantidad) : '') + '</span>' : '') + '</div></div></button>';
     }, 'No hay pedidos atrasados.');
+    h += seccion('Repuestos por devolver al proveedor', d.repuestos_por_devolver || [], function(x){
+      return '<button class="item" type="button" data-act="ci-datos" data-t="PEDIDOS" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.articulo) + '</div><div class="s">' + esc(x.cliente) + (x.equipo ? ' · ' + esc(x.equipo) : '') + (x.proveedor ? ' · ' + esc(x.proveedor) : '') + (x.dias !== null ? ' · hace ' + x.dias + ' días' : '') + '</div><div class="chips"><span class="chip warn">' + esc(x.resultado) + '</span></div></div></button>';
+    }, 'No hay repuestos por devolver.');
+    h += seccion('Repuestos usados sin confirmar si sirvieron', d.repuestos_sin_confirmar || [], function(x){
+      return '<button class="item" type="button" data-act="ci-datos" data-t="PEDIDOS" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.codigo + ' · ' + x.articulo) + '</div><div class="s">' + esc(x.cliente) + (x.equipo ? ' · ' + esc(x.equipo) : '') + (x.proveedor ? ' · ' + esc(x.proveedor) : '') + ' · pedido ' + esc(fmtFecha(x.desde)) + '</div><div class="chips"><span class="chip">' + esc(x.motivo) + '</span></div></div></button>';
+    }, 'Todo lo comprado tiene su resultado (instalado, sobrante, no corresponde o defectuoso).');
     if (d.saldos.length) h += seccion('Saldos por cliente', d.saldos, function(x){
       return '<button class="item" type="button" data-act="cli-control" data-id="' + esc(x.cliente_id) + '"><div class="body"><div class="t">' + esc(x.cliente) + '</div><div class="s">Por cobrar ' + pesos(x.saldo_por_cobrar) + (x.pago_sin_imputar > 0 ? ' · pago sin asignar ' + pesos(x.pago_sin_imputar) : '') + '</div>' + (x.estado !== 'OK' ? '<div class="chips"><span class="chip warn">' + (x.estado === 'REVISAR' ? 'Revisar' : 'Incompleto') + '</span></div>' : '') + '</div></button>';
     }, '');
@@ -3519,8 +4152,8 @@ function renderRevisar(){
 
 
 /* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
-var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
-var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
+var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
 var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
 function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
 function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
@@ -3529,7 +4162,7 @@ function renderDatos(){
   var opts = TABLAS_DATOS.map(function(t){ return '<option value="' + t + '"' + (t === D.tabla ? ' selected' : '') + '>' + esc(NOMBRES[t]) + '</option>'; }).join('');
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
-    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -3632,6 +4265,65 @@ function mostrarIntegridad(){
   }).catch(function(){});
 }
 
+/* ───── Catálogo y precios (1.9): buscar un repuesto, ver su costo real y calcular el precio al cliente ───── */
+var CAT = { data:null, q:'' };
+function abrirCatalogo(){ call('catalogo', {}).then(function(r){ CAT.data = r.data; pintarCatalogo(); }).catch(function(){}); }
+function bloqueDriveCatalogo(dr){
+  if (DEMO) return '<p class="s" style="margin:0">En la app real, esta lista queda en Drive (Contextos IA EG → proveedores-y-precios.md) y se actualiza sola: la IA la usa para cotizar y revisar facturas.</p>';
+  if (!dr) return '<p class="s" style="margin:0">La carpeta Contextos IA EG aún no está creada.</p>';
+  return '<p class="s" style="margin:0 0 8px">' + (dr.existe ? 'En Drive: proveedores-y-precios.md · actualizado ' + esc(fmtFecha(dr.actualizado)) + '.' : 'Aún no está en Drive.') + '</p><div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="cat-drive">' + (dr.existe ? 'Actualizar ahora' : 'Guardar en Drive') + '</button>' + (dr.existe && dr.url ? '<a class="btn ghost" href="' + esc(dr.url) + '" target="_blank" rel="noopener">Abrir en Drive</a>' : '') + '</div>';
+}
+function pintarCatalogo(){
+  var d = CAT.data;
+  var h = '<div class="block" id="catDrive">' + bloqueDriveCatalogo(d.drive) + '</div>' +
+    '<label class="f"><span>Buscar por repuesto, código, código original, proveedor o vehículo</span><input class="i" id="catQ" value="' + esc(CAT.q) + '" placeholder="Ej. W712, filtro aire, Jimny"></label><div id="catLista"></div>' +
+    '<p class="s" style="color:var(--acero)">Proveedores, artículos y precios se cargan desde la IA (factura o cotización) o en Datos → Proveedores / Catálogo / Precios.</p>';
+  abrirHoja('Catálogo y precios', h);
+  $('catQ').addEventListener('input', function(){ CAT.q = this.value; listaCatalogo(); });
+  listaCatalogo();
+}
+function listaCatalogo(){
+  var q = normTxt_(CAT.q), d = CAT.data;
+  var items = d.items.filter(function(x){ return !q || normTxt_([x.codigo, x.descripcion, x.marca, x.codigo_original, x.codigo_proveedor, x.proveedor, x.aplica_a, x.calzo_en.join(' ')].join(' ')).indexOf(q) >= 0; });
+  $('catLista').innerHTML = items.length ? '<div class="list">' + items.map(function(x){
+    var u = x.ultimo;
+    return '<button class="item" type="button" data-act="cat-item" data-id="' + esc(x.id) + '"><div class="body"><div class="t">' + esc(x.descripcion) + (x.codigo_original ? ' · ' + esc(x.codigo_original) : '') + '</div>' +
+      '<div class="s">' + esc(x.proveedor) + ' · cód. ' + esc(x.codigo_proveedor) + (x.marca ? ' · ' + esc(x.marca) : '') + '</div>' +
+      '<div class="chips">' + (x.calidad ? '<span class="chip">' + esc(x.calidad) + '</span>' : '') + (u ? '<span class="chip' + (x.vigente ? ' ok' : ' warn') + '">' + pesos(u.costo_neto) + ' neto · ' + esc(fmtFecha(u.fecha)) + (x.vigente ? '' : ' · confirmar') + '</span>' : '<span class="chip warn">Sin precio</span>') + (x.descontinuado ? '<span class="chip warn">Descontinuado</span>' : '') + '</div></div></button>';
+  }).join('') + '</div>' : '<div class="empty">' + (d.items.length ? 'Nada calza con la búsqueda.' : 'El catálogo está vacío.') + '</div>';
+}
+function abrirArticulo(id){
+  var d = CAT.data, x = d.items.filter(function(i){ return i.id === id; })[0]; if (!x) return;
+  var pv = d.proveedores.filter(function(p){ return p.id === x.proveedor_id; })[0] || {};
+  var u = x.ultimo;
+  var h = '<div class="block"><dl class="kv"><dt>Proveedor</dt><dd>' + esc(x.proveedor) + (x.proveedor_sucursal ? ' (' + esc(x.proveedor_sucursal) + ')' : '') + '</dd><dt>Código proveedor</dt><dd>' + esc(x.codigo_proveedor) + '</dd>' +
+    (x.codigo_original ? '<dt>Código original</dt><dd>' + esc(x.codigo_original) + '</dd>' : '') + (x.marca ? '<dt>Marca</dt><dd>' + esc(x.marca) + '</dd>' : '') + (x.calidad ? '<dt>Calidad</dt><dd>' + esc(x.calidad) + '</dd>' : '') +
+    (x.aplica_a ? '<dt>Aplica a</dt><dd>' + esc(x.aplica_a) + '</dd>' : '') + (x.calzo_en.length ? '<dt>Calzó en</dt><dd>' + esc(x.calzo_en.join(', ')) + '</dd>' : '') + '</dl>' +
+    (x.link ? '<p style="margin:8px 0 0"><a href="' + esc(x.link) + '" target="_blank" rel="noopener">Abrir link de compra</a></p>' : '') + '</div>';
+  h += '<div class="block"><h3>Condiciones de ' + esc(pv.nombre || 'proveedor') + '</h3><p class="s" style="margin:0">Precios ' + esc(pv.precios_base || 'sin dato') + ' · descuento habitual ' + (pv.descuento_pct === null || pv.descuento_pct === undefined ? 'sin dato' : esc(pv.descuento_pct) + ' %') + (pv.descuento_condicion ? ' (' + esc(pv.descuento_condicion) + ')' : '') + (pv.medios_pago ? ' · pago: ' + esc(pv.medios_pago) : '') + (pv.telefono ? ' · ' + esc(pv.telefono) : '') + '</p></div>';
+  if (u) {
+    h += '<div class="block"><h3>Precio al cliente</h3><p class="s" style="margin:0 0 8px">Último costo: ' + pesos(u.costo_neto) + ' neto (' + pesos(u.costo_con_iva) + ' con IVA) · ' + esc(fmtFecha(u.fecha)) + (x.vigente ? '' : ' · <b>tiene ' + x.dias + ' días: confírmalo con el proveedor</b>') + '</p>' +
+      '<div class="row2"><label class="f"><span>Margen %</span><input class="i" id="catMargen" inputmode="decimal" value="' + esc(CAT.margen || '') + '" placeholder="Ej. 10"></label><label class="f"><span>Cantidad</span><input class="i" id="catCant" inputmode="decimal" value="1"></label></div><div id="catCalc" class="s"></div></div>';
+  } else h += '<div class="block"><p class="s" style="margin:0">Sin precio registrado. Cárgalo desde la factura o cotización (IA o Datos → Precios).</p></div>';
+  if (x.historial.length) h += '<div class="block"><h3>Historial de precios</h3><ul style="margin:0;padding-left:18px">' + x.historial.map(function(p){ return '<li class="s">' + esc(fmtFecha(p.fecha)) + ' · ' + esc(p.tipo) + ' · lista ' + pesos(p.precio_lista) + ' ' + esc(p.base) + (p.descuento_pct ? ' − ' + esc(p.descuento_pct) + ' %' : '') + ' → ' + pesos(p.costo_neto) + ' neto / ' + pesos(p.costo_con_iva) + ' con IVA' + (p.documento ? ' · ' + esc(p.documento) : '') + '</li>'; }).join('') + '</ul></div>';
+  h += '<button class="btn ghost" type="button" data-act="cat-volver">Volver al catálogo</button>';
+  abrirHoja(x.descripcion, h);
+  if (u) {
+    var calc = function(){
+      var m = String($('catMargen').value).replace(',', '.'), n = Number(String($('catCant').value).replace(',', '.')) || 1;
+      CAT.margen = $('catMargen').value;
+      if (m === '') { $('catCalc').innerHTML = 'Escribe el margen para ver el precio al cliente.'; return; }
+      var r; try { r = precioCliente_(u.costo_neto, Number(m), d.iva_pct); } catch (e) { $('catCalc').textContent = e.message; return; }
+      $('catCalc').innerHTML = pesos(u.costo_neto) + ' ÷ (1 − ' + esc(m) + ' %) = <b>' + pesos(r.neto) + ' neto</b> · ' + pesos(r.con_iva) + ' con IVA' + (n !== 1 ? '<br>× ' + n + ' = <b>' + pesos(Math.round(r.neto * n)) + ' neto</b> · ' + pesos(Math.round(r.con_iva * n)) + ' con IVA' : '') + '<br>Ganancia: ' + pesos(Math.round((r.neto - u.costo_neto) * n)) + ' neto.';
+    };
+    $('catMargen').addEventListener('input', calc); $('catCant').addEventListener('input', calc); calc();
+  }
+}
+function guardarCatalogoDrive(btn){
+  btn.disabled = true;
+  call('contexto_ia_guardar', { catalogo: true }).then(function(r){ toast('Guardado en Drive: ' + r.data.nombre + '.'); CAT.data.drive = { existe: true, url: r.data.url, actualizado: r.data.actualizado }; var el = $('catDrive'); if (el) el.innerHTML = bloqueDriveCatalogo(CAT.data.drive); }).catch(function(){ btn.disabled = false; });
+}
+
 /* ───── cargar desde IA: pegar paquete, vista previa, aplicar ───── */
 var PQ = { texto:'', paquete:null, op:null, archivo:null };
 function abrirPaquete(){
@@ -3664,10 +4356,12 @@ function leerPaquete(txt){
   try { return JSON.parse(txt.slice(a, b + 1)); }
   catch (e) { throw new Error('El paquete está incompleto o mal copiado. Cópialo de nuevo completo desde el chat.'); }
 }
-function validarPaquete(btn, archivo){
+function validarPaquete(btn, archivo, revisarDecisiones){
   var payload;
-  if (archivo) {
-    if (!PQ.archivo || PQ.archivo.id !== archivo.id || !PQ.op) { PQ.op = opId(); PQ.huella = null; }
+  if (revisarDecisiones) {
+    payload = PQ.archivo ? { archivo_id: PQ.archivo.id } : { paquete: PQ.paquete };
+  } else if (archivo) {
+    if (!PQ.archivo || PQ.archivo.id !== archivo.id || !PQ.op) { PQ.op = opId(); PQ.huella = null; PQ.dec = {}; }
     PQ.archivo = archivo; PQ.paquete = null;
     payload = { archivo_id: archivo.id };
   } else {
@@ -3675,36 +4369,94 @@ function validarPaquete(btn, archivo){
     var pq;
     try { pq = leerPaquete(txt); } catch (e) { return toast(e.message, 'err'); }
     // Mismo texto = misma operación: un doble toque en Aplicar no carga dos veces.
-    if (txt !== PQ.texto || !PQ.op || PQ.archivo) { PQ.op = opId(); PQ.huella = null; }
+    if (txt !== PQ.texto || !PQ.op || PQ.archivo) { PQ.op = opId(); PQ.huella = null; PQ.dec = {}; }
     PQ.texto = txt; PQ.paquete = pq; PQ.archivo = null;
     payload = { paquete: pq };
   }
+  PQ.dec = PQ.dec || {};
+  payload.decisiones = PQ.dec;
   btn.disabled = true;
   call('paquete_validar', payload).then(function(r){
     var d = r.data;
     // Si el contenido cambió desde la revisión anterior, es otra operación (y se aplica lo que se ve ahora).
     if (PQ.huella && PQ.huella !== d.huella) PQ.op = opId();
     PQ.huella = d.huella;
+    PQ.vista = d; PQ.decRevisadas = JSON.stringify(d.decisiones || {});
     var total = PQ.paquete ? PQ.paquete.operaciones.length : null;
     var h = '<div class="block"><h3>' + esc(d.fuente) + '</h3><p class="s" style="margin:0;color:var(--acero)">' + (PQ.archivo ? 'Bandeja: ' + esc(PQ.archivo.nombre) + ' · ' : '') + (d.autor_ia ? 'Armado por ' + esc(d.autor_ia) + ' · ' : '') + d.resultados.length + (total ? ' de ' + total : '') + ' operaciones revisadas</p></div>';
     if (!d.valido) h += '<div class="block" style="border-color:var(--freno)"><h3 style="color:var(--freno)">No se puede aplicar</h3><p style="margin:0">' + esc(d.error.message) + '</p><p class="s" style="margin:8px 0 0;color:var(--acero)">Pídele a la IA que corrija esa operación y vuelve a pegar el paquete.</p></div>';
     if (d.dudas && d.dudas.length) h += '<div class="block" style="border-color:#E9C46A;background:#FFF6DD"><h3>Dudas que dejó la IA</h3><ul style="margin:0;padding-left:18px">' + d.dudas.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
     var nuevos = d.resultados.filter(function(x){ return x.resultado === 'Nuevo'; }).length;
+    var modif = d.resultados.filter(function(x){ return x.resultado === 'Modificado'; }).length;
+    if (d.faltan && d.faltan.length) h += '<div class="block" style="border-color:#E9C46A;background:#FFF6DD"><h3>Confirma antes de aplicar</h3><p class="s" style="margin:0">Hay ' + d.faltan.length + (d.faltan.length === 1 ? ' operación' : ' operaciones') + ' marcada' + (d.faltan.length === 1 ? '' : 's') + ' en amarillo: posibles duplicados, correcciones u opciones nuevas de lista. Decide cada una abajo.</p></div>';
     if (d.resultados.length) h += '<div class="list">' + d.resultados.map(function(x){
-      var chip = x.resultado === 'Nuevo' ? '<span class="chip ok">Nuevo</span>' : '<span class="chip">Ya existe · ' + esc(x.codigo) + '</span>';
-      var av = (x.avisos || []).map(function(w){ return '<div class="s" style="color:var(--senal-osc);margin-top:4px">' + esc(w.message) + '</div>'; }).join('');
-      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + x.n + '. ' + esc(NOMBRES[x.tabla] || x.tabla) + '</div><div class="s">' + esc(x.etiqueta) + '</div><div class="chips">' + chip + '</div>' + av + '</div></div>';
+      var chip = x.resultado === 'Nuevo' ? '<span class="chip ok">Nuevo</span>' : x.resultado === 'Modificado' ? '<span class="chip warn">Corrige · ' + esc(x.codigo) + '</span>' : x.resultado === 'Sin cambios' ? '<span class="chip">Sin cambios · ' + esc(x.codigo) + '</span>' : '<span class="chip">Ya existe · ' + esc(x.codigo) + '</span>';
+      if (x.requiere === 'duplicado') chip += ' <span class="chip warn">Posible duplicado</span>';
+      if (x.requiere === 'lista') chip += ' <span class="chip warn">Nueva opción de lista</span>';
+      var av = (x.avisos || []).filter(function(w){ return w.code !== 'POSIBLE_DUPLICADO'; }).map(function(w){ return '<div class="s" style="color:var(--senal-osc);margin-top:4px">' + esc(w.message) + '</div>'; }).join('');
+      var marca = x.requiere ? ' style="cursor:default;border-color:#E9C46A"' : ' style="cursor:default"';
+      return '<div class="item"' + marca + '><div class="body"><div class="t">' + x.n + '. ' + esc(NOMBRES[x.tabla] || x.tabla) + '</div><div class="s">' + esc(x.etiqueta) + '</div><div class="chips">' + chip + '</div>' + av + decisionPaquete(x) + '</div></div>';
     }).join('') + '</div>';
-    h += '<div class="inline" style="flex-wrap:wrap;margin-top:12px">' + (d.valido ? '<button class="btn go" data-act="pq-aplicar">Aplicar paquete (' + nuevos + ' nuevos)</button>' : '') + '<button class="btn ghost" data-act="pq-abrir">Volver</button></div>';
+    h += '<div class="inline" style="flex-wrap:wrap;margin-top:12px">' + (d.valido ? '<button class="btn go" data-act="pq-aplicar" id="pqAplicar">Aplicar</button>' : '') + '<button class="btn ghost" data-act="pq-abrir">Volver</button></div>';
+    PQ.textoAplicar = 'Aplicar paquete (' + nuevos + ' nuevo' + (nuevos === 1 ? '' : 's') + (modif ? ', ' + modif + ' corrección' + (modif === 1 ? '' : 'es') : '') + ')';
     if (PQ.archivo) h += '<div class="block" style="margin-top:12px"><label class="f"><span>Si no corresponde, descártalo (queda marcado en Drive)</span><input class="i" id="pqMotivo" placeholder="Motivo, ej. duplicado o datos equivocados"></label><button class="btn danger" data-act="pq-descartar">Descartar archivo</button></div>';
     abrirHoja('Vista previa', h);
+    estadoAplicar();
   }).catch(function(){ btn.disabled = false; });
 }
+/** 1.8: controles para decidir cada operación marcada (duplicado, corrección, opción de lista). */
+function decisionPaquete(x){
+  var n = String(x.n), dv = (PQ.dec || {})[n], nom = 'pqd' + n;
+  if (dv && dv !== 'nuevo' && dv !== 'ok') return '<div class="s" style="margin-top:6px">Decidiste usar el registro existente <b>' + esc(dv) + '</b> en vez de crear uno nuevo. <button class="btn ghost" type="button" data-act="pq-dec-quitar" data-n="' + n + '" style="padding:4px 10px;min-height:0">Deshacer</button></div>';
+  if (!x.requiere) return '';
+  if (x.requiere === 'correccion') return '<label class="f inline" style="gap:8px;margin:8px 0 0"><input type="checkbox" data-pqdec="' + n + '" value="ok"' + (dv === 'ok' ? ' checked' : '') + '> Revisé esta corrección y está bien</label>';
+  if (x.requiere === 'lista') return '<label class="f inline" style="gap:8px;margin:8px 0 0"><input type="checkbox" data-pqdec="' + n + '" value="ok"' + (dv === 'ok' ? ' checked' : '') + '> Agregar esta opción a la lista</label>';
+  var cand = x.candidatos || [];
+  var h = '<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--linea);border-radius:8px"><div class="s" style="margin-bottom:6px"><b>Se parece a registros que ya existen.</b> ¿Es uno de ellos o es otro?</div>';
+  cand.filter(function(c){ return !c.elegible; }).forEach(function(c){ h += '<div class="s" style="color:var(--acero)">· ' + esc(c.codigo) + ' ' + esc(c.etiqueta) + ' (' + esc(c.motivo) + ')</div>'; });
+  cand.filter(function(c){ return c.elegible; }).forEach(function(c){ h += '<label class="f inline" style="gap:8px;margin:4px 0"><input type="radio" name="' + nom + '" data-pqdec="' + n + '" value="' + esc(c.codigo) + '"> Es este: ' + esc(c.codigo) + ' ' + esc(c.etiqueta) + ' (' + esc(c.motivo) + ')</label>'; });
+  h += '<label class="f inline" style="gap:8px;margin:4px 0"><input type="radio" name="' + nom + '" data-pqdec="' + n + '" value="otro"> Es otro registro existente: <input class="i" data-pqotro="' + n + '" placeholder="Código, ej. C-0004" style="width:140px;min-height:36px;padding:4px 8px"></label>';
+  h += '<label class="f inline" style="gap:8px;margin:4px 0"><input type="radio" name="' + nom + '" data-pqdec="' + n + '" value="nuevo"' + (dv === 'nuevo' ? ' checked' : '') + '> Es otro distinto: crear nuevo</label></div>';
+  return h;
+}
+function decisionPendiente(){
+  var d = PQ.vista; if (!d) return { faltan: 0, revisar: false };
+  var faltan = (d.faltan || []).filter(function(f){ var v = (PQ.dec || {})[String(f.n)]; return !(f.requiere === 'duplicado' ? v === 'nuevo' : v === 'ok'); }).length;
+  var cambios = JSON.stringify(Object.keys(PQ.dec || {}).filter(function(k){ var v = PQ.dec[k]; return v !== 'nuevo' && v !== 'ok'; }).sort().map(function(k){ return [k, PQ.dec[k]]; }));
+  var revisados = JSON.parse(PQ.decRevisadas || '{}');
+  var antes = JSON.stringify(Object.keys(revisados).filter(function(k){ var v = revisados[k]; return v !== 'nuevo' && v !== 'ok'; }).sort().map(function(k){ return [k, revisados[k]]; }));
+  return { faltan: faltan, revisar: cambios !== antes };
+}
+function estadoAplicar(){
+  var b = $('pqAplicar'); if (!b) return;
+  var e = decisionPendiente();
+  if (e.revisar) { b.disabled = false; b.textContent = 'Actualizar vista previa con mis decisiones'; b.setAttribute('data-revisar', '1'); return; }
+  b.removeAttribute('data-revisar');
+  b.disabled = e.faltan > 0;
+  b.textContent = e.faltan ? 'Aplicar (' + (e.faltan === 1 ? 'falta 1 confirmación' : 'faltan ' + e.faltan + ' confirmaciones') + ')' : PQ.textoAplicar;
+}
+function cambioDecision(ev){
+  var el = ev.target, n = el.getAttribute && (el.getAttribute('data-pqdec') || el.getAttribute('data-pqotro'));
+  if (!n) return;
+  PQ.dec = PQ.dec || {};
+  if (el.hasAttribute('data-pqotro')) { var rb = document.querySelector('input[data-pqdec="' + n + '"][value="otro"]'); if (rb) rb.checked = true; }
+  if (el.type === 'checkbox') { if (el.checked) PQ.dec[n] = 'ok'; else delete PQ.dec[n]; }
+  else {
+    var sel = document.querySelector('input[data-pqdec="' + n + '"]:checked'), v = sel ? sel.value : '';
+    if (v === 'otro') { var t = (document.querySelector('input[data-pqotro="' + n + '"]') || {}).value || ''; t = t.trim().toUpperCase(); if (/^(EG-)?[A-Z]{1,3}-\d{1,6}$/.test(t)) PQ.dec[n] = t; else delete PQ.dec[n]; }
+    else if (v) PQ.dec[n] = v; else delete PQ.dec[n];
+  }
+  estadoAplicar();
+}
+document.addEventListener('change', cambioDecision);
+document.addEventListener('input', function(ev){ if (ev.target.hasAttribute && ev.target.hasAttribute('data-pqotro')) cambioDecision(ev); });
 function aplicarPaquete(btn){
   if (!PQ.paquete && !PQ.archivo) return;
+  if (btn.getAttribute('data-revisar')) return validarPaquete(btn, null, true);
+  if (decisionPendiente().faltan) return toast('Falta confirmar algunas operaciones (en amarillo).', 'err');
   btn.disabled = true;
-  call('paquete_aplicar', PQ.archivo ? { archivo_id: PQ.archivo.id, op_id: PQ.op, huella: PQ.huella } : { paquete: PQ.paquete, op_id: PQ.op, huella: PQ.huella }).then(function(r){
-    toast('Paquete ' + r.data.codigo + ' aplicado: ' + r.data.nuevos + ' registro(s) nuevo(s).');
+  call('paquete_aplicar', PQ.archivo ? { archivo_id: PQ.archivo.id, op_id: PQ.op, huella: PQ.huella, decisiones: PQ.dec || {} } : { paquete: PQ.paquete, op_id: PQ.op, huella: PQ.huella, decisiones: PQ.dec || {} }).then(function(r){
+    toast('Paquete ' + r.data.codigo + ' aplicado: ' + r.data.nuevos + ' nuevo(s)' + (r.data.modificados ? ', ' + r.data.modificados + ' corregido(s)' : '') + '.' + (r.data.contextos && r.data.contextos.length ? ' Contexto IA actualizado en Drive.' : ''));
     PQ = { texto:'', paquete:null, op:null, archivo:null };
     cerrarHoja(); D.refs = {}; if (S.tab === 'datos') { cargarDatos(); contarBandeja(); } return cargar();
   }).catch(function(){ btn.disabled = false; });
@@ -3733,6 +4485,9 @@ document.addEventListener('click', function(ev){
   else if (a === 'hi-revocar') abrirRevocar();
   else if (a === 'hi-revocar-ok') revocarHistorial(el);
   else if (a === 'cli-control'){ D.cliente = id; mostrarControl(); }
+  else if (a === 'cli-contexto') abrirContextoIA(id);
+  else if (a === 'cia-copiar') copiarContextoIA();
+  else if (a === 'cia-bajar') bajarContextoIA();
   else if (a === 'ci-datos'){ D.tabla = el.getAttribute('data-t'); D.cliente = id || ''; S.tab = 'datos'; renderTabs(); render(); }
   else if (a === 'cerrar-hoja') cerrarHoja();
   else if (a === 'iniciar') iniciar(id, el);
@@ -3782,6 +4537,12 @@ document.addEventListener('click', function(ev){
   }
   else if (a === 'pq-validar') validarPaquete(el);
   else if (a === 'pq-aplicar') aplicarPaquete(el);
+  else if (a === 'pq-dec-quitar'){ delete PQ.dec[el.getAttribute('data-n')]; validarPaquete(el, null, true); }
+  else if (a === 'cia-drive') guardarContextoDrive(el);
+  else if (a === 'cat-abrir') abrirCatalogo();
+  else if (a === 'cat-item') abrirArticulo(id);
+  else if (a === 'cat-volver') pintarCatalogo();
+  else if (a === 'cat-drive') guardarCatalogoDrive(el);
   else if (a === 'acceso-salir') salir(false, el);
   else if (a === 'acceso-salir-todo') salir(true, el);
   else if (a === 'reintentar') arrancar();
@@ -3823,6 +4584,14 @@ var DemoApi = (function(){
   H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Aceite motor', componente:'Cárter', especificacion:'10W-40 VDS-4', cantidad:36, unidad:'L', tipo_cantidad:'Capacidad', visible_tecnico:true } });
   H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Torque', componente:'Tapón de cárter', torque:'60 Nm', visible_tecnico:true } });
   H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Documento', descripcion:'Condiciones comerciales acordadas con el cliente', visible_tecnico:false } });
+  var pv1 = H(vic, 'crear', { tabla:'PROVEEDORES', datos:{ nombre:'Repuestos Ejemplo', sucursal:'Rancagua', precios_base:'Neto', descuento_pct:38, descuento_condicion:'todos los medios de pago menos cheque', medios_pago:'Efectivo, transferencia, débito, crédito' } });
+  var pv2 = H(vic, 'crear', { tabla:'PROVEEDORES', datos:{ nombre:'Autopartes Demo', precios_base:'Con IVA' } });
+  var ca1 = H(vic, 'crear', { tabla:'CATALOGO', datos:{ proveedor_id:pv1.id, codigo_proveedor:'FA-12345', descripcion:'Filtro de aceite', marca:'Mann', codigo_original:'W712', calidad:'Alternativo', unidad:'un', aplica_a:'Toyota Hilux 2.4' } });
+  var ca2 = H(vic, 'crear', { tabla:'CATALOGO', datos:{ proveedor_id:pv2.id, codigo_proveedor:'TY-90915', descripcion:'Filtro de aceite', marca:'Toyota', codigo_original:'90915-YZZD4', calidad:'Original', unidad:'un', aplica_a:'Toyota Hilux 2.4' } });
+  var hoyD = new Date(), isoD = function(dd){ var x = new Date(hoyD.getTime() - dd * 86400000); return x.toISOString().slice(0, 10); };
+  H(vic, 'crear', { tabla:'PRECIOS', datos:{ catalogo_id:ca1.id, fecha:isoD(90), tipo:'Compra', precio_lista:18500, documento:'Factura 880' } });
+  H(vic, 'crear', { tabla:'PRECIOS', datos:{ catalogo_id:ca1.id, fecha:isoD(3), tipo:'Compra', precio_lista:20000, documento:'Factura 1001' } });
+  H(vic, 'crear', { tabla:'PRECIOS', datos:{ catalogo_id:ca2.id, fecha:isoD(75), tipo:'Cotización', precio_lista:23800, documento:'Cotización por WhatsApp' } });
   H(vic, 'crear', { tabla:'PENDIENTES', datos:{ equipo_id:e1.id, trabajo_origen_id:h1.id, descripcion:'Cambiar filtro secador de aire', objetivo:'Próxima mantención', estado:'Abierto', visible_tecnico:true } });
   H(vic, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:t1.id, tipo:'Procedimiento', componente:'Bomba de agua', descripcion:'Torque pernos bomba de agua 25 Nm en cruz. Usar sello nuevo.', visible_tecnico:true } });
   H(vic, 'crear', { tabla:'DETALLE', datos:{ trabajo_id:t1.id, tipo:'Observación', descripcion:'Cliente pide factura a nombre de la casa matriz (dato interno).' } });
