@@ -1388,7 +1388,11 @@ var RULES_ = {
         if (isEmpty_(row.fecha_fin)) row.fecha_fin = now_(ctx);
       }
       if (row.estado_ejecucion === 'Ejecutado' && isEmpty_(row.fecha_fin) && isEmpty_(row.fecha_inicio)) {
-        w.push({ code: 'SIN_FECHA', message: 'Trabajo ejecutado sin fecha real: no se podrá ordenar en el resumen.' });
+        // 1.9.1: un trabajo ejecutado nuevo (o al que se le borra la fecha) se rechaza. Uno antiguo que ya estaba
+        // ejecutado sin fecha solo avisa, para poder corregirlo de a poco sin bloquear otros cambios.
+        var legado = prev && prev.estado_ejecucion === 'Ejecutado' && isEmpty_(prev.fecha_fin) && isEmpty_(prev.fecha_inicio);
+        if (!legado) fail_('SIN_FECHA', 'Un trabajo ejecutado necesita fecha real (inicio o término). Si no hay hora, usa 12:00.');
+        w.push({ code: 'SIN_FECHA', message: 'Trabajo ejecutado sin fecha real: agrégale la fecha de inicio o término.' });
       }
     }
   },
@@ -1867,6 +1871,54 @@ function aporteRevisar_(ctx, p) {
   if (r.estado_aporte !== 'Borrador') fail_('VALOR_INVALIDO', 'El aporte ya fue revisado.');
   var res = updateRow_(ctx, p.tabla, p.id, p.version, { estado_aporte: p.decision, revisado_por: ctx.user.id === 'sistema' ? '' : ctx.user.id }, { opId: p.op_id, motivo: p.motivo || '', noRect: true });
   return { data: res.row, warnings: res.warnings };
+}
+
+/**
+ * Revisar en lote (1.9.1): aprueba o rechaza varios aportes en una sola solicitud.
+ * items: [{ tabla, id, version }]. Lo que ya fue revisado (por otra persona) o cambió de versión se salta y se informa.
+ */
+function aporteRevisarLote_(ctx, p) {
+  requireAdmin_(ctx);
+  if (['Aprobado', 'Rechazado'].indexOf(p.decision) < 0) fail_('VALOR_INVALIDO', 'Decisión: Aprobado o Rechazado.');
+  var items = Array.isArray(p.items) ? p.items : [];
+  if (!items.length) fail_('REQUERIDO', 'Selecciona al menos un aporte.');
+  if (items.length > 200) fail_('VALOR_INVALIDO', 'Máximo 200 aportes por vez.');
+  var hechos = [], saltados = [], warnings = [];
+  items.forEach(function (it) {
+    if (!it || ['DETALLE', 'PENDIENTES'].indexOf(it.tabla) < 0) fail_('VALOR_INVALIDO', 'Solo se revisan aportes de DETALLE o PENDIENTES.');
+    var r = mustGet_(ctx, it.tabla, it.id);
+    if (r.ultima_op === p.op_id) { hechos.push(r.codigo); return; }  // reintento de la misma solicitud
+    if (r.anulado === true) { saltados.push({ codigo: r.codigo, motivo: 'anulado' }); return; }
+    if (r.estado_aporte !== 'Borrador') { saltados.push({ codigo: r.codigo, motivo: 'ya revisado (' + r.estado_aporte + ')' }); return; }
+    if (Number(it.version) !== Number(r.version)) { saltados.push({ codigo: r.codigo, motivo: 'cambió mientras lo revisabas' }); return; }
+    var res = updateRow_(ctx, it.tabla, it.id, it.version, { estado_aporte: p.decision, revisado_por: ctx.user.id === 'sistema' ? '' : ctx.user.id }, { opId: p.op_id, motivo: p.motivo || '', noRect: true });
+    hechos.push(r.codigo); warnings = warnings.concat(res.warnings || []);
+  });
+  if (saltados.length) warnings.push({ code: 'SALTADOS', message: saltados.length + ' aporte(s) no se cambiaron: ' + saltados.map(function (s) { return s.codigo + ' ' + s.motivo; }).join('; ') + '.' });
+  return { data: { decision: p.decision, hechos: hechos, saltados: saltados }, warnings: warnings };
+}
+
+/** Aportes en borrador con su contexto (cliente, vehículo y trabajo) para la pestaña Revisar. */
+function vistaAportesPorRevisar_(ctx, p) {
+  requireAdmin_(ctx);
+  var items = [];
+  var nom = function (tabla, id) { return id ? getRow_(ctx, tabla, id) : null; };
+  ['DETALLE', 'PENDIENTES'].forEach(function (tabla) {
+    activeRows_(ctx, tabla).filter(function (r) { return r.estado_aporte === 'Borrador'; }).forEach(function (r) {
+      var tr = nom('TRABAJOS', tabla === 'DETALLE' ? r.trabajo_id : r.trabajo_origen_id);
+      var eq = nom('EQUIPOS', r.equipo_id || (tr && tr.equipo_id));
+      var cl = nom('CLIENTES', r.cliente_id || (tr && tr.cliente_id) || (eq && eq.cliente_id));
+      var cant = isEmpty_(r.cantidad) ? '' : r.cantidad + (r.unidad ? ' ' + r.unidad : '');
+      items.push({
+        tabla: tabla, id: r.id, version: r.version, codigo: r.codigo, creado_por: r.creado_por, creado_en: r.creado_en,
+        texto: tabla === 'DETALLE' ? r.tipo + (r.componente ? ' · ' + r.componente : '') + ': ' + r.descripcion + (r.especificacion ? ' · ' + r.especificacion : '') + (cant ? ' · ' + cant : '') + (r.resultado ? ' · resultado: ' + r.resultado : '')
+          : 'Pendiente: ' + r.descripcion + (r.objetivo ? ' (' + r.objetivo + ')' : ''),
+        trabajo: tr ? tr.codigo + ' · ' + tr.descripcion : '', patente: eq ? eq.patente || '' : '', equipo: eq ? eq.nombre_corto : '', cliente: cl ? cl.nombre : ''
+      });
+    });
+  });
+  items.sort(function (a, b) { return String(a.creado_en) < String(b.creado_en) ? -1 : 1; });
+  return { data: items, warnings: [] };
 }
 
 /* ───────────────────────── vistas calculadas ───────────────────────── */
@@ -2390,10 +2442,11 @@ function historialRevocar_(ctx, p) {
  * Contexto para IA (1.7; versión 2 en 1.8): un archivo por cliente con los CÓDIGOS que la IA usa en "buscar" y, por cada
  * vehículo, su historial (trabajos, detalle técnico, referencias, repuestos comprados y si sirvieron, pendientes).
  * La app lo regenera en Drive después de cada cambio; la IA solo lo lee. Así no necesita leer la base completa.
- * Minimiza datos: sin RUT, teléfonos, correos, montos, costos ni notas internas.
+ * Minimiza datos: sin RUT, teléfonos, correos, costos ni notas internas. Desde 1.9.1 (EG-CONTEXTO-3) incluye pagos,
+ * imputaciones y cobros por cubrir (montos al cliente), sin datos bancarios ni comprobantes.
  */
-var CONTEXTO_FORMATO = 'EG-CONTEXTO-2';
-var CONTEXTO_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'REFERENCIAS', 'TRABAJOS', 'DETALLE', 'PENDIENTES', 'PEDIDOS', 'RECEPCIONES'];
+var CONTEXTO_FORMATO = 'EG-CONTEXTO-3';
+var CONTEXTO_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'REFERENCIAS', 'TRABAJOS', 'DETALLE', 'PENDIENTES', 'PEDIDOS', 'RECEPCIONES', 'PAGOS', 'IMPUTACIONES', 'CONCEPTOS'];
 var CONTEXTO_DETALLE_TIPOS = ['Procedimiento', 'Fluido', 'Medición', 'Repuesto', 'Diagnóstico', 'Hallazgo'];
 function contextoArchivo_(c) { return 'contexto-cliente-' + c.codigo + '.md'; }
 
@@ -2432,6 +2485,7 @@ function contextoTexto_(ctx, c) {
   L.push(''); L.push('## Trabajos abiertos ahora');
   if (abiertos.length) abiertos.forEach(function (t) { var e = eqs.filter(function (x) { return x.id === t.equipo_id; })[0]; L.push('- ' + t.codigo + ' · ' + (e ? e.codigo + ' ' + celda(e.nombre_corto) : '') + ' · ' + celda(t.descripcion, 120) + ' · ' + t.estado_ejecucion); });
   else L.push('(ninguno)');
+  contextoPagos_(ctx, c, L, celda, miles);
   L.push(''); L.push('## Vehículos y equipos');
   if (!eqs.length) L.push('(sin vehículos registrados)');
   else {
@@ -2495,6 +2549,87 @@ function contextoTexto_(ctx, c) {
   return L.join('\n') + '\n';
 }
 
+/**
+ * Sección "Pagos y saldo a favor" (1.9.1): cada pago con su código MV, a qué cobros se imputó y cuánto queda sin imputar,
+ * más los cobros con saldo por cubrir. Así la IA imputa abonos futuros sin pedir el código. Sin datos bancarios
+ * (cuenta, comprobante, remitente) ni costos.
+ */
+function contextoPagos_(ctx, c, L, celda, miles) {
+  var pesos = function (n) { return '$' + miles(Math.round(Number(n) || 0)); };
+  var pagos = activeRows_(ctx, 'PAGOS').filter(function (x) { return x.cliente_id === c.id && x.anulado !== true; })
+    .sort(function (a, b) { return String(a.fecha) < String(b.fecha) ? 1 : String(a.fecha) > String(b.fecha) ? -1 : 0; });
+  var imps = activeRows_(ctx, 'IMPUTACIONES').filter(function (x) { return x.cliente_id === c.id; });
+  var cons = activeRows_(ctx, 'CONCEPTOS').filter(function (x) { return x.cliente_id === c.id && x.aportante === 'Taller' && x.etapa !== 'Anulado' && x.anulado !== true; });
+  var conCod = {}; activeRows_(ctx, 'CONCEPTOS').forEach(function (x) { if (x.cliente_id === c.id) conCod[x.id] = x; });
+  var trab = function (con) { var t = con && !isEmpty_(con.trabajo_id) ? getRow_(ctx, 'TRABAJOS', con.trabajo_id) : null; return t ? t.codigo : ''; };
+  L.push(''); L.push('## Pagos y saldo a favor');
+  if (!pagos.length) L.push('(sin pagos registrados)');
+  else {
+    L.push('| Código | Fecha | Monto | Medio | Confirmado | Imputado | Sin imputar | Imputado a |');
+    L.push('|---|---|---|---|---|---|---|---|');
+    pagos.forEach(function (x) {
+      var mis = imps.filter(function (i) { return i.pago_id === x.id; });
+      var imp = sumBy_(mis, 'monto');
+      var a = mis.map(function (i) { var con = conCod[i.concepto_id]; return (con ? con.codigo + (trab(con) ? ' (' + trab(con) + ')' : '') : '?') + ' ' + pesos(i.monto); }).join('; ');
+      L.push('| ' + x.codigo + ' | ' + (/^\d{4}-\d{2}-\d{2}$/.test(String(x.fecha)) ? String(x.fecha) : localDate_(x.fecha)) + ' | ' + pesos(x.monto) + ' | ' + celda(x.medio) + ' | ' + (x.confirmado === true ? 'sí' : 'NO') + ' | ' + pesos(imp) + ' | ' + pesos(Number(x.monto) - imp) + ' | ' + celda(a) + ' |');
+    });
+    var aFavor = sumBy_(pagos.filter(function (x) { return x.confirmado === true; }), 'monto') - sumBy_(imps, 'monto');
+    var sinConf = pagos.filter(function (x) { return x.confirmado !== true; });
+    L.push('');
+    L.push('- Saldo a favor del cliente (pagos confirmados sin imputar): ' + pesos(aFavor));
+    if (sinConf.length) L.push('- Pagos sin confirmar (no se pueden imputar hasta confirmarlos): ' + sinConf.map(function (x) { return x.codigo; }).join(', '));
+  }
+  var porCubrir = cons.map(function (con) {
+    var imp = sumBy_(imps.filter(function (i) { return i.concepto_id === con.id; }), 'monto');
+    return { con: con, imp: imp, falta: isEmpty_(con.monto_cliente) ? null : Number(con.monto_cliente) - imp };
+  }).filter(function (x) { return x.falta === null || x.falta > 0; });
+  L.push(''); L.push('### Cobros con saldo por cubrir');
+  if (!porCubrir.length) L.push('(ninguno)');
+  else porCubrir.forEach(function (x) {
+    L.push('- ' + x.con.codigo + (trab(x.con) ? ' (' + trab(x.con) + ')' : '') + ' · ' + celda(x.con.descripcion, 100) + ' · ' + x.con.etapa + ' · ' +
+      (x.falta === null ? 'SIN MONTO (no se puede imputar)' : 'monto ' + pesos(x.con.monto_cliente) + ' · imputado ' + pesos(x.imp) + ' · falta ' + pesos(x.falta)));
+  });
+  L.push('- Para imputar un saldo a favor, sin crear otro PAGO: { "ref": "mv", "tabla": "PAGOS", "buscar": { "codigo": "MV-…" } }, { "ref": "co", "tabla": "CONCEPTOS", "buscar": { "codigo": "CO-…" } } y { "tabla": "IMPUTACIONES", "datos": { "cliente_id": "@…", "pago_id": "@mv", "concepto_id": "@co", "monto": … } }. Monto ≤ sin imputar del pago y ≤ lo que falta del cobro.');
+}
+
+/**
+ * Índice de clientes (1.9.1): un solo archivo "clientes-indice.md" en "Contextos IA EG" con código, nombre, contactos y
+ * vehículos de cada cliente, para que la IA ubique al cliente (o uno parecido) en el paso 0 sin abrir cada contexto.
+ * Sin RUT, teléfonos, correos ni montos.
+ */
+var CONTEXTO_INDICE = '__indice';
+var INDICE_ARCHIVO = 'clientes-indice.md';
+var INDICE_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS'];
+function indiceClientesTexto_(ctx) {
+  var celda = function (v) { return String(v === null || v === undefined ? '' : v).replace(/\|/g, '/').replace(/\s+/g, ' ').trim(); };
+  var cts = activeRows_(ctx, 'CONTACTOS'), eqs = activeRows_(ctx, 'EQUIPOS');
+  var cls = activeRows_(ctx, 'CLIENTES').slice().sort(function (a, b) { return String(a.codigo) < String(b.codigo) ? -1 : 1; });
+  var L = [];
+  L.push('# Índice de clientes — Eisen Garage');
+  L.push('');
+  L.push('Formato EG-INDICE-1 · actualizado ' + localDate_(now_(ctx)) + ' por la app EG Registro. SOLO LECTURA: no lo edites.');
+  L.push('Paso 0: busca aquí al cliente por nombre, contacto o patente. Si está, abre su archivo de contexto. Si hay uno parecido, pregunta si es ese (con su código). Si no está, es cliente nuevo: primero un paquete "alta de cliente".');
+  L.push('');
+  L.push('| Código | Cliente | Tipo | Estado | Contactos | Vehículos y equipos | Archivo de contexto |');
+  L.push('|---|---|---|---|---|---|---|');
+  cls.forEach(function (c) {
+    var k = cts.filter(function (x) { return x.cliente_id === c.id; }).map(function (x) { return celda(x.nombre); }).join('; ');
+    var e = eqs.filter(function (x) { return x.cliente_id === c.id; }).map(function (x) { return x.codigo + ' ' + celda(x.nombre_corto) + (x.patente ? ' [' + celda(x.patente) + ']' : ''); }).join('; ');
+    L.push('| ' + c.codigo + ' | ' + celda(c.nombre) + ' | ' + celda(c.tipo) + ' | ' + celda(c.estado) + ' | ' + k + ' | ' + e + ' | ' + contextoArchivo_(c) + ' |');
+  });
+  L.push('');
+  L.push(cls.length + ' clientes.');
+  return L.join('\n') + '\n';
+}
+
+/** Nombre y texto de un archivo de "Contextos IA EG": un cliente, el catálogo o el índice. null si el cliente no existe. */
+function contextoDocumento_(ctx, id) {
+  if (id === CONTEXTO_CATALOGO) return { nombre: CATALOGO_ARCHIVO, texto: catalogoTexto_(ctx) };
+  if (id === CONTEXTO_INDICE) return { nombre: INDICE_ARCHIVO, texto: indiceClientesTexto_(ctx) };
+  var c = getRow_(ctx, 'CLIENTES', id);
+  return c ? { nombre: contextoArchivo_(c), texto: contextoTexto_(ctx, c) } : null;
+}
+
 function vistaContextoIA_(ctx, p) {
   requireAdmin_(ctx);
   var c = mustGet_(ctx, 'CLIENTES', p.cliente_id, 'Cliente');
@@ -2511,6 +2646,7 @@ function clientesDeEscritos_(store, escritos) {
     if (!r || r.estado_aporte === 'Borrador') return;
     var cid = w.tabla === 'CLIENTES' ? r.id : r.cliente_id;
     if (!isEmpty_(cid)) ids[cid] = true;
+    if (INDICE_TABLAS.indexOf(w.tabla) >= 0) ids[CONTEXTO_INDICE] = true;
   });
   return Object.keys(ids);
 }
@@ -3084,7 +3220,7 @@ function paqueteAplicar_(ctx, p) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -3266,6 +3402,8 @@ function handleInner_(ctx, action, p) {
     case 'sesion_posterior': return sesionPosterior_(ctx, p);
     case 'concepto_desde_sesiones': return conceptoDesdeSesiones_(ctx, p);
     case 'aporte_revisar': return aporteRevisar_(ctx, p);
+    case 'aporte_revisar_lote': return aporteRevisarLote_(ctx, p);
+    case 'aportes_por_revisar': return vistaAportesPorRevisar_(ctx, p);
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -3706,7 +3844,7 @@ function ultimaTxt(x){
   return x.ultima_fecha ? 'Última intervención: ' + fmtFecha(x.ultima_fecha) : 'Sin intervenciones';
 }
 function renderClientes(){
-  $('main').innerHTML = '<h2 class="section-title">Clientes</h2><p style="margin:-6px 0 12px;color:var(--acero)">Primero el cliente con la intervención más reciente; debajo, sus vehículos en el mismo orden.</p>' +
+  $('main').innerHTML = '<h2 class="section-title">Clientes</h2><p style="margin:-6px 0 12px;color:var(--acero)">Primero el cliente con la intervención más reciente. Toca «▸ vehículos» para ver los de cada cliente.</p>' +
     '<input id="cliBuscar" type="search" placeholder="Buscar cliente o patente" autocomplete="off" style="width:100%;margin-bottom:12px;padding:10px 12px;border:1px solid var(--linea);border-radius:var(--radio);background:var(--chapa);font-size:16px" value="' + esc(S.cliBuscar || '') + '">' +
     '<div id="cliLista" class="empty">Cargando…</div>';
   $('cliBuscar').addEventListener('input', function(){ S.cliBuscar = this.value; pintarClientes(); });
@@ -3726,11 +3864,18 @@ function pintarClientes(){
       '<button type="button" data-act="cliente" data-id="' + esc(c.cliente_id) + '" style="all:unset;cursor:pointer;display:block;width:100%">' +
       '<div class="t">' + esc(c.nombre) + ' <span style="font-weight:400;color:var(--acero)">· ' + esc(c.codigo) + '</span></div>' +
       '<div class="s">' + esc(ultimaTxt(c)) + '</div>' +
-      '<div class="chips"><span class="chip">' + c.equipos.length + ' vehículo' + (c.equipos.length === 1 ? '' : 's') + '</span>' +
+      '<div class="chips">' +
       (c.en_curso ? '<span class="chip live">En curso</span>' : '') +
       (c.pendientes_vigentes ? '<span class="chip warn">' + c.pendientes_vigentes + ' pendiente' + (c.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') +
       (c.estado && c.estado !== 'Activo' ? '<span class="chip">' + esc(c.estado) + '</span>' : '') + '</div></button>';
-    if (c.equipos.length) h += '<div style="margin-top:10px;display:grid;gap:6px">' + c.equipos.map(function(v){
+    var nv = c.equipos.length + ' vehículo' + (c.equipos.length === 1 ? '' : 's');
+    if (!c.equipos.length) return h + '<div class="chips"><span class="chip">Sin vehículos</span></div></div>';
+    // 1.9.1: vehículos contraídos por defecto; se abren con el botón. Si la búsqueda calza por patente, se abre solo.
+    var porPatente = qp && c.equipos.some(function(v){ return String(v.patente || '').toLowerCase().replace(/[\s·.-]/g, '').indexOf(qp) >= 0; });
+    var abierto = porPatente || !!(S.cliAbiertos || {})[c.cliente_id];
+    h += '<button type="button" data-act="cli-toggle" data-id="' + esc(c.cliente_id) + '" aria-expanded="' + abierto + '" style="all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:6px;margin-top:8px;min-height:32px;padding:2px 12px;border:1px solid var(--linea);border-radius:999px;background:var(--concreto);font-size:14px">' +
+      (abierto ? '▾ ' : '▸ ') + nv + '</button>';
+    if (abierto) h += '<div style="margin-top:10px;display:grid;gap:6px">' + c.equipos.map(function(v){
       return '<button type="button" data-act="ficha" data-id="' + esc(v.equipo_id) + '" style="all:unset;cursor:pointer;display:flex;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--linea)">' + plate(v.patente) +
         '<span style="min-width:0"><span style="display:block;font-weight:600">' + esc(v.nombre_corto) + '</span>' +
         '<span style="display:block;font-size:14px;color:var(--acero)">' + esc(ultimaTxt(v)) + (v.km ? ' · ' + fmtKm(v.km) : '') + (v.pendientes_vigentes ? ' · ' + v.pendientes_vigentes + ' pend.' : '') + '</span></span></button>';
@@ -4137,17 +4282,46 @@ function renderCierre(){
 
 /* ───── pestaña Revisar (administración) ───── */
 function renderRevisar(){
-  $('main').innerHTML = '<h2 class="section-title">Aportes por revisar</h2><div id="revBody" class="empty">Cargando…</div>';
-  Promise.all([call('listar', { tabla:'DETALLE', filtro:{ estado_aporte:'Borrador' } }), call('listar', { tabla:'PENDIENTES', filtro:{ estado_aporte:'Borrador' } })]).then(function(rs){
-    var items = rs[0].data.map(function(d){ return { tabla:'DETALLE', r:d, txt: d.tipo + ': ' + d.descripcion }; })
-      .concat(rs[1].data.map(function(p){ return { tabla:'PENDIENTES', r:p, txt: 'Pendiente: ' + p.descripcion }; }));
-    if (!items.length){ $('revBody').outerHTML = '<div class="empty">No hay aportes pendientes de revisión.</div>'; return; }
-    $('revBody').outerHTML = '<div class="list">' + items.map(function(it){
-      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + esc(it.txt) + '</div><div class="s">' + esc(it.r.codigo) + ' · ' + esc(it.r.creado_por) + '</div>' +
-        '<div class="inline" style="margin-top:8px"><button class="btn go" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.r.id) + '" data-v="' + it.r.version + '" data-d="Aprobado">Aprobar</button>' +
-        '<button class="btn ghost" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.r.id) + '" data-v="' + it.r.version + '" data-d="Rechazado">Rechazar</button></div></div></div>';
-    }).join('') + '</div>';
-  }).catch(function(){});
+  $('main').innerHTML = '<h2 class="section-title">Aportes por revisar</h2>' +
+    '<p style="margin:-6px 0 12px;color:var(--acero)">Datos que anotó un técnico (detalle técnico y pendientes). <b>Aprobar</b> = pasa a ser oficial: sale en la ficha y en el contexto de la IA. <b>Rechazar</b> = el dato está mal o repetido: queda guardado como rechazado, pero no se usa.</p>' +
+    '<div id="revBody" class="empty">Cargando…</div>';
+  call('aportes_por_revisar', {}).then(function(r){
+    S.rev = r.data; S.revSel = {};
+    if (!S.rev.length){ $('revBody').outerHTML = '<div id="revBody" class="empty">No hay aportes pendientes de revisión.</div>'; return; }
+    $('revBody').outerHTML = '<div id="revBody">' +
+      '<div class="inline" style="flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px;position:sticky;top:0;z-index:2;background:var(--concreto);padding:6px 0">' +
+      '<label style="display:inline-flex;align-items:center;gap:6px;min-height:36px"><input type="checkbox" id="revTodos" style="width:20px;height:20px"> Todos</label>' +
+      '<button class="btn go" data-act="rev-lote" data-d="Aprobado" disabled>Aprobar seleccionados</button>' +
+      '<button class="btn ghost" data-act="rev-lote" data-d="Rechazado" disabled>Rechazar seleccionados</button></div>' +
+      '<div class="list">' + S.rev.map(function(it, i){
+        var veh = [it.patente ? plate(it.patente) : '', it.equipo ? '<span>' + esc(it.equipo) + '</span>' : ''].join(' ');
+        return '<div class="item" style="cursor:default;align-items:flex-start"><input type="checkbox" class="rev-chk" data-i="' + i + '" aria-label="Seleccionar ' + esc(it.codigo) + '" style="width:22px;height:22px;margin:4px 10px 0 0;flex:none">' +
+          '<div class="body"><div class="t">' + esc(it.texto) + '</div>' +
+          (veh || it.cliente ? '<div class="s" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px">' + veh + (it.cliente ? '<span>· ' + esc(it.cliente) + '</span>' : '') + '</div>' : '') +
+          (it.trabajo ? '<div class="s">Trabajo ' + esc(it.trabajo) + '</div>' : '') +
+          '<div class="s">' + esc(it.codigo) + ' · ' + esc(it.creado_por) + (it.creado_en ? ' · ' + esc(fmtFecha(it.creado_en)) : '') + '</div>' +
+          '<div class="inline" style="margin-top:8px"><button class="btn go" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.id) + '" data-v="' + it.version + '" data-d="Aprobado">Aprobar</button>' +
+          '<button class="btn ghost" data-act="revisar" data-t="' + it.tabla + '" data-id="' + esc(it.id) + '" data-v="' + it.version + '" data-d="Rechazado">Rechazar</button></div></div></div>';
+      }).join('') + '</div></div>';
+    var marcar = function(){
+      var n = Object.keys(S.revSel).length;
+      document.querySelectorAll('[data-act="rev-lote"]').forEach(function(b){ b.disabled = !n; b.textContent = (b.getAttribute('data-d') === 'Aprobado' ? 'Aprobar' : 'Rechazar') + ' seleccionados' + (n ? ' (' + n + ')' : ''); });
+      $('revTodos').checked = n === S.rev.length;
+    };
+    document.querySelectorAll('.rev-chk').forEach(function(c){ c.addEventListener('change', function(){ var i = this.getAttribute('data-i'); if (this.checked) S.revSel[i] = true; else delete S.revSel[i]; marcar(); }); });
+    $('revTodos').addEventListener('change', function(){ var on = this.checked; S.revSel = {}; document.querySelectorAll('.rev-chk').forEach(function(c){ c.checked = on; if (on) S.revSel[c.getAttribute('data-i')] = true; }); marcar(); });
+  }).catch(function(){ var b = $('revBody'); if (b) b.textContent = 'No se pudo cargar.'; });
+}
+function revisarLote(btn){
+  var d = btn.getAttribute('data-d'), sel = Object.keys(S.revSel || {}).map(function(i){ return S.rev[i]; });
+  if (!sel.length) return;
+  if (d === 'Rechazado' && !confirm('¿Rechazar ' + sel.length + ' aporte' + (sel.length > 1 ? 's' : '') + '? Quedan guardados como rechazados y no se usan.')) return;
+  document.querySelectorAll('[data-act="rev-lote"]').forEach(function(b){ b.disabled = true; });
+  call('aporte_revisar_lote', { decision: d, items: sel.map(function(x){ return { tabla: x.tabla, id: x.id, version: x.version }; }), op_id: opId() }).then(function(r){
+    var n = r.data.hechos.length, s = r.data.saltados.length;
+    toast((d === 'Aprobado' ? 'Aprobados: ' : 'Rechazados: ') + n + (s ? ' · ' + s + ' sin cambiar (ya revisados o modificados)' : '') + '.');
+    renderRevisar();
+  }).catch(function(){ renderRevisar(); });
 }
 
 
@@ -4470,6 +4644,8 @@ document.addEventListener('click', function(ev){
   else if (a === 'trabajo') abrirTrabajo(id);
   else if (a === 'ficha') abrirFicha(id);
   else if (a === 'cliente') abrirCliente(id);
+  else if (a === 'rev-lote') revisarLote(el);
+  else if (a === 'cli-toggle'){ S.cliAbiertos = S.cliAbiertos || {}; if (S.cliAbiertos[id]) delete S.cliAbiertos[id]; else S.cliAbiertos[id] = true; pintarClientes(); }
   else if (a === 'nt-elegir') elegirVehiculoNT();
   else if (a === 'nt-vehiculo'){ var v = (S.inicio.resumen || []).filter(function(x){ return x.equipo_id === id; })[0]; if (v) abrirNuevoTrabajo({ id: v.equipo_id, nombre_corto: v.nombre_corto, patente: v.patente, cliente_id: v.cliente_id, cliente: v.cliente }); }
   else if (a === 'nt-ficha'){ var fe = S.ficha; if (fe && fe.cliente) abrirNuevoTrabajo({ id: fe.equipo.id, nombre_corto: fe.equipo.nombre_corto, patente: fe.equipo.patente, cliente_id: fe.cliente.id, cliente: fe.cliente.nombre }); }
