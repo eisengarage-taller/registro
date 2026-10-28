@@ -212,7 +212,9 @@ var CONTRACT = {
     tipo_movimiento: ['Entrada', 'Salida', 'Ajuste positivo', 'Ajuste negativo'],
     estado_herramienta: ['Operativa', 'En reparación', 'Baja', 'Por confirmar'],
     estado_presupuesto: ['Borrador', 'Publicado', 'Autorizado', 'Rechazado', 'Retirado'],
-    tipo_cobro: ['Transferencia', 'Efectivo', 'Tarjeta', 'Otro']
+    tipo_cobro: ['Transferencia', 'Efectivo', 'Tarjeta', 'Otro'],
+    tipo_captura: ['Nota', 'Audio', 'Foto', 'Video', 'Documento', 'Enlace', 'Otro'],
+    estado_captura: ['Nueva', 'Asignada', 'Procesada', 'Descartada']
   },
 
   /** Listas editables (hoja LISTAS). Se agregan filas sin cambiar la estructura; se desactivan, no se borran. */
@@ -813,6 +815,30 @@ var CONTRACT = {
       ]
     },
 
+    CAPTURAS: {
+      file: 'BASE', scope: 'central', prefix: 'CP', tecnico: 'ninguno',
+      d: 'EG Captura: lo que se guarda en terreno desde el celular (nota, audio, foto, documento, enlace) para ordenarlo después. El archivo queda en la carpeta Capturas EG de Drive hasta 90 días después de que la cuenta esté consolidada.',
+      columns: [
+        { k: 'fecha', t: 'datetime', req: true, d: 'Cuándo se capturó en el celular.' },
+        { k: 'tipo', t: 'enum', e: 'tipo_captura', req: true },
+        { k: 'titulo', t: 'text' },
+        { k: 'texto', t: 'long', d: 'Nota escrita o texto compartido.' },
+        { k: 'url', t: 'url', d: 'Enlace compartido.' },
+        { k: 'origen', t: 'text', d: 'App, Compartir (desde otra app) o equipo.' },
+        { k: 'archivo_id', t: 'text', calc: true, d: 'Archivo en la carpeta Capturas EG (lo llena el sistema).' },
+        { k: 'archivo_nombre', t: 'text', calc: true },
+        { k: 'archivo_url', t: 'url', calc: true },
+        { k: 'mime', t: 'text', calc: true },
+        { k: 'bytes', t: 'int', calc: true },
+        { k: 'archivo_borrado', t: 'bool', calc: true, d: 'Sí = el archivo se envió a la papelera de Drive (se recupera hasta 30 días).' },
+        { k: 'estado', t: 'enum', e: 'estado_captura', req: true, d: 'Nueva → Asignada (a un cliente o trabajo) → Procesada (ya cargada con un paquete) o Descartada.' },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
+        { k: 'paquete_id', t: 'ref', ref: 'PAQUETES', d: 'Paquete con el que se cargó.' },
+        { k: 'notas', t: 'long' }
+      ]
+    },
+
     VALORES_TRABAJADOR: {
       file: 'PAGO', scope: 'central', prefix: 'VT', tecnico: 'ninguno', soloAdministrador: true,
       d: 'Archivo aparte, solo Víctor. Valor que se le paga a cada persona por actividad.',
@@ -850,6 +876,9 @@ var CONTRACT = {
     { clave: 'avisos_horarios', valor: '09:00,14:00,19:00', nota: 'Modo Horarios: horas del día (HH:MM, separadas por coma) en que se envía el aviso si hay novedades.' },
     { clave: 'avisos_frecuencia_min', valor: '60', nota: 'Modo Frecuencia: minutos mínimos entre avisos (15 a 1440).' },
     { clave: 'avisos_correo', valor: 'eisengarage@gmail.com', nota: 'Correo que recibe los avisos.' },
+    { clave: 'capturas_carpeta_id', valor: '', nota: 'Carpeta "Capturas EG" (EG Captura): archivos que se suben desde el celular. La crea crearCapturas().' },
+    { clave: 'capturas_lectores', valor: '', nota: 'Cuentas extra que pueden VER la carpeta Capturas EG en Drive (separadas por coma). Los usuarios activos de administración se agregan solos.' },
+    { clave: 'capturas_origen', valor: 'https://eisengarage-taller.github.io', nota: 'Dirección desde la que la app EG Captura sube archivos a Drive (no cambiar salvo que se mueva la app).' },
     { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Meses tras los cuales se borran los datos personales de las solicitudes web (1 a 60).' }
   ]
 };
@@ -3626,7 +3655,7 @@ function revisarIntegridad_(ctx) {
 var PAQUETE_FORMATO = 'EG-PAQUETE-1';
 var PAQUETE_MAX_OPS = 200;
 var PAQUETE_MAX_TEXTO = 40000;
-var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES', 'CUENTAS_COBRO'];
+var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES', 'CUENTAS_COBRO', 'CAPTURAS'];
 var PAQUETE_ACCIONES = ['crear', 'sesion_posterior', 'editar'];
 /** Tablas que un paquete no corrige (tienen su propio flujo en la app). */
 var PAQUETE_EDITAR_PROHIBIDAS = ['SESIONES', 'IMPUTACIONES', 'RECEPCIONES', 'MOV_INVENTARIO', 'LISTAS'];
@@ -4050,9 +4079,70 @@ function conceptoAnularPagado_(ctx, p) {
   return { data: { concepto: u.row, liberado: liberado, imputaciones: imps.length, documentos: porEmitir.map(function (x) { return x.doc.codigo; }) }, warnings: w };
 }
 
+/* ───────── EG Captura (1.12): lo capturado en terreno, para ordenarlo después ───────── */
+var CAPTURA_MAX_BYTES = 300 * 1024 * 1024;
+var CAPTURA_DIAS_CONSERVAR = 90;
+
+/** Crea la fila de una captura. archivo (opcional) = datos del archivo ya subido a Capturas EG (los pone Api.gs). */
+function capturaCrear_(ctx, p, archivo) {
+  requireAdmin_(ctx);
+  var c = p.captura || {};
+  if (TIPOS_CAPTURA_().indexOf(c.tipo) < 0) fail_('VALOR_INVALIDO', 'Tipo de captura no válido.');
+  if (!archivo && isEmpty_(c.texto) && isEmpty_(c.url)) fail_('REQUERIDO', 'La captura está vacía: escribe una nota, un enlace o adjunta un archivo.');
+  var datos = { fecha: isEmpty_(c.fecha) ? now_(ctx) : c.fecha, tipo: c.tipo, titulo: c.titulo || '', texto: c.texto || '', url: c.url || '', origen: c.origen || '', estado: 'Nueva', notas: c.notas || '' };
+  if (archivo) { datos.archivo_id = archivo.id; datos.archivo_nombre = archivo.nombre; datos.archivo_url = archivo.url; datos.mime = archivo.mime; datos.bytes = archivo.bytes; }
+  var r = insertRow_(ctx, 'CAPTURAS', datos, { opId: p.op_id, allowCalc: true });
+  return { data: { captura: project_(ctx, 'CAPTURAS', r.row) }, warnings: r.warnings || [], duplicate: r.duplicate };
+}
+function TIPOS_CAPTURA_() { return CONTRACT.enums.tipo_captura; }
+
+/**
+ * Opción C (Víctor, 28-10-2026): el archivo de una captura se puede borrar 90 días después de que su cuenta esté consolidada:
+ * captura Procesada (o Descartada) y, si tiene trabajo, el trabajo Pagado y Revisado. Los 90 días corren desde el último cambio
+ * de la captura o del trabajo (lo más reciente). Devuelve las capturas con archivo que ya cumplen.
+ */
+function capturasBorrables_(ctx, hoyIso) {
+  requireAdmin_(ctx);
+  var hoy = toMs_(hoyIso || now_(ctx)), lim = CAPTURA_DIAS_CONSERVAR * 86400000;
+  return activeRows_(ctx, 'CAPTURAS').filter(function (c) {
+    if (isEmpty_(c.archivo_id) || c.archivo_borrado === true) return false;
+    if (c.estado !== 'Procesada' && c.estado !== 'Descartada') return false;
+    var desde = toMs_(c.editado_en || c.creado_en);
+    if (!isEmpty_(c.trabajo_id) && c.estado === 'Procesada') {
+      var t = getRow_(ctx, 'TRABAJOS', c.trabajo_id);
+      if (!t || t.estado_pago !== 'Pagado' || t.estado_revision !== 'Revisado') return false;
+      desde = Math.max(desde || 0, toMs_(t.editado_en || t.creado_en) || 0);
+    }
+    return desde !== null && hoy - desde >= lim;
+  }).map(function (c) { return { id: c.id, codigo: c.codigo, tipo: c.tipo, titulo: c.titulo, archivo_id: c.archivo_id, archivo_nombre: c.archivo_nombre, bytes: c.bytes, estado: c.estado, trabajo_id: c.trabajo_id }; });
+}
+
+/** Texto del recordatorio de 45 días. */
+function avisoCapturasCorreo_(lista, total) {
+  var mb = function (b) { return (Number(b) / 1048576).toFixed(1) + ' MB'; };
+  var L = ['Recordatorio EG Captura (cada 45 días).', '', 'Capturas con archivo en Drive: ' + total + '.'];
+  if (!lista.length) L.push('Ninguna se puede borrar todavía (opción C: cuenta consolidada + ' + CAPTURA_DIAS_CONSERVAR + ' días).');
+  else {
+    L.push('Se pueden borrar (' + lista.length + '): cuenta consolidada hace más de ' + CAPTURA_DIAS_CONSERVAR + ' días.', '');
+    lista.forEach(function (c) { L.push('• ' + c.codigo + ' · ' + c.tipo + ' · ' + (c.titulo || c.archivo_nombre || '') + (c.bytes ? ' · ' + mb(c.bytes) : '') + ' · ' + c.estado); });
+    L.push('', 'Para borrarlas: app EG Registro → Datos → Capturas → abrir la captura → "Enviar archivo a la papelera" (Drive lo guarda 30 días más).');
+  }
+  return { asunto: 'EG Captura: ' + (lista.length ? lista.length + ' captura(s) para borrar' : 'nada para borrar'), cuerpo: L.join('\n') };
+}
+
+/** Marca el archivo de una captura como borrado (Api.gs lo manda a la papelera de Drive solo si está en la lista de borrables). */
+function capturaMarcarBorrado_(ctx, p, hoyIso) {
+  requireAdmin_(ctx);
+  var c = mustGet_(ctx, 'CAPTURAS', p.captura_id, 'Captura');
+  if (c.archivo_borrado === true) return { data: { captura: c, ya: true }, warnings: [] };
+  if (!capturasBorrables_(ctx, hoyIso).some(function (x) { return x.id === c.id; })) fail_('NO_BORRABLE', 'Esta captura todavía no se puede borrar: su cuenta no está consolidada o no han pasado ' + CAPTURA_DIAS_CONSERVAR + ' días.');
+  var u = updateRow_(ctx, 'CAPTURAS', c.id, c.version, { archivo_borrado: true }, { opId: p.op_id, allowCalc: true, motivo: 'Archivo a la papelera (opción C)', fuente: 'App · Capturas' });
+  return { data: { captura: u.row, archivo_id: c.archivo_id }, warnings: [] };
+}
+
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -4353,6 +4443,9 @@ function handleInner_(ctx, action, p) {
     case 'respuesta_estado': return respuestaEstado_(ctx, p);
     case 'ajustes_guardar': return ajustesGuardar_(ctx, p);
     case 'concepto_anular_pagado': return conceptoAnularPagado_(ctx, p);
+    case 'captura_crear': return capturaCrear_(ctx, p, ctx._capturaArchivo || null);
+    case 'capturas_borrables': return { data: { capturas: capturasBorrables_(ctx) }, warnings: [] };
+    case 'captura_borrar_archivo': return capturaMarcarBorrado_(ctx, p);
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -5609,8 +5702,8 @@ function revisarLote(btn){
 
 
 /* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
-var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','CUENTAS_COBRO','PRESUPUESTOS','PRESUPUESTO_ITEMS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
-var NOMBRES = { CUENTAS_COBRO:'Medios de cobro', PRESUPUESTOS:'Presupuestos', PRESUPUESTO_ITEMS:'Ítems de presupuesto', CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','CUENTAS_COBRO','PRESUPUESTOS','PRESUPUESTO_ITEMS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES','CAPTURAS'];
+var NOMBRES = { CUENTAS_COBRO:'Medios de cobro', PRESUPUESTOS:'Presupuestos', PRESUPUESTO_ITEMS:'Ítems de presupuesto', CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA', CAPTURAS:'Capturas (EG Captura)' };
 var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
 function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
 function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
@@ -5676,6 +5769,8 @@ function abrirFormulario(fila){
         '<label class="f"><span>Fuente del dato correcto</span><input class="i" id="fxFuente" placeholder="Ej. factura, hoja de trabajo, cliente por teléfono"></label></div>';
       h += '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="dt-guardar"' + (fila ? ' data-id="' + esc(fila.id) + '" data-v="' + fila.version + '"' : '') + '>' + (fila ? 'Guardar cambios' : 'Crear') + '</button>';
       if (fila && t !== 'RECTIFICACIONES') h += '<button class="btn danger" data-act="dt-anular" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Anular</button>';
+      if (fila && t === 'CAPTURAS' && fila.archivo_url) h += '<a class="btn ghost" href="' + esc(fila.archivo_url) + '" target="_blank" rel="noopener">Abrir archivo</a>';
+      if (fila && t === 'CAPTURAS' && fila.archivo_id && fila.archivo_borrado !== true) h += '<button class="btn danger" data-act="dt-captura-papelera" data-id="' + esc(fila.id) + '" title="Solo si la cuenta está consolidada hace más de 90 días (opción C)">Enviar archivo a la papelera</button>';
       if (fila && t === 'CONCEPTOS' && fila.etapa !== 'Anulado') h += '<button class="btn danger" data-act="dt-anular-favor" data-id="' + esc(fila.id) + '" title="Anula el cobro y sus imputaciones; lo pagado queda a favor del cliente">Anular y dejar a favor</button>';
       if (fila && t === 'RECEPCIONES' && fila.estado !== 'Confirmada') h += '<button class="btn go" data-act="dt-confirmar" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Confirmar recepción</button>';
       if (fila && t === 'TRABAJOS') h += '<button class="btn ghost" data-act="dt-cobrar-mo" data-id="' + esc(fila.id) + '">Cobrar mano de obra desde sesiones</button>';
@@ -5998,6 +6093,9 @@ document.addEventListener('click', function(ev){
   else if (a === 'dt-control') mostrarControl();
   else if (a === 'dt-stock') mostrarStock();
   else if (a === 'dt-integridad') mostrarIntegridad();
+  else if (a === 'dt-captura-papelera'){
+    call('captura_borrar_archivo', { captura_id: id, op_id: opId() }).then(function(){ toast('Archivo enviado a la papelera de Drive (se recupera hasta 30 días).'); cerrarHoja(); cargarDatos(); }).catch(function(){});
+  }
   else if (a === 'dt-anular-favor'){
     var motivoF = $('fxMotivo') ? $('fxMotivo').value.trim() : '';
     if (!motivoF) { toast('Escribe el motivo en el campo "Motivo" antes de anular.', 'err'); if ($('fxMotivo')) $('fxMotivo').focus(); return; }
