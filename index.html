@@ -51,6 +51,7 @@ main{padding:16px}
 .chip{font-size:13px;border:1px solid var(--linea);border-radius:999px;padding:1px 9px;background:var(--concreto)}
 .chip.warn{border-color:#E9C46A;background:#FFF6DD}
 .chip.ok{border-color:#A7D3B5;background:#EAF6EE}
+.chip.bad{border-color:#E5A3A3;background:#FBEAEA;color:#9B2C2C;font-weight:600}
 .chip.live{border-color:var(--senal);background:#FCEFD2;color:var(--senal-osc);font-weight:600}
 .btn{appearance:none;border:2px solid var(--asfalto);background:var(--asfalto);color:#fff;border-radius:8px;padding:10px 16px;font-weight:600;cursor:pointer;min-height:44px}
 .btn.ghost{background:transparent;color:var(--asfalto)}
@@ -157,7 +158,7 @@ var APP_CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycby8W2UZmUiP
  * calc: la llena el sistema; nadie la escribe a mano.
  */
 var CONTRACT = {
-  version: 'EG-REG-1.5-BORRADOR',  // estructura compatible; la app va en 1.10
+  version: 'EG-REG-1.5-BORRADOR',  // estructura compatible; la app va en 1.11
   timezone: 'America/Santiago',
   roles: ['Administrador', 'Administracion', 'Tecnico'],
 
@@ -358,7 +359,8 @@ var CONTRACT = {
         { k: 'publicable', t: 'bool', d: 'Sí = el resumen para el cliente puede publicarse (portal futuro).' },
         { k: 'resumen_cliente', t: 'long' },
         { k: 'fuente', t: 'text' },
-        { k: 'notas', t: 'long' }
+        { k: 'notas', t: 'long' },
+        { k: 'fecha_aproximada', t: 'bool', tec: 'r', d: 'Sí = trabajo del historial con fecha estimada (ej. "hace 3 años": usa una fecha aproximada). Se muestra como "aprox. año". No lleva cobros, salvo que Víctor los autorice en la vista previa de un paquete.' }
       ]
     },
     ASIGNACIONES: {
@@ -837,7 +839,7 @@ var CONTRACT = {
     { clave: 'bandeja_carpeta_id', valor: '', nota: 'Carpeta "Bandeja EG" donde la IA deja paquetes por revisar. La crea crearBandeja().' },
     { clave: 'bandeja_editores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden DEJAR paquetes en la Bandeja (separadas por coma). Solo dejan archivos: revisar y aplicar sigue siendo en la app, con usuario habilitado.' },
     { clave: 'publico_planilla_id', valor: '', nota: 'Planilla PUBLICO (de eisengaragetaller@gmail.com, compartida como editora con esta cuenta). Solo recibe lo que se publica para clientes.' },
-    { clave: 'contextos_carpeta_id', valor: '', nota: 'Carpeta "Contextos IA EG": un archivo por cliente que la app mantiene al día y la IA solo lee. La crea crearContextos().' },
+    { clave: 'contextos_carpeta_id', valor: '', nota: 'Carpeta "Proyectos IA EG / Contextos" (de la cuenta de la IA, compartida como editora con esta): un archivo por cliente que la app mantiene al día y la IA solo lee.' },
     { clave: 'contextos_lectores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden LEER los contextos (separadas por coma), por ejemplo la del conector de Drive de la IA.' },
     { clave: 'iva_pct', valor: '19', nota: 'IVA en % para calcular costos y precios.' },
     { clave: 'precio_vigencia_dias', valor: '60', nota: 'Días después de los cuales un precio del catálogo se marca "por confirmar" al cotizar.' },
@@ -1471,6 +1473,10 @@ var RULES_ = {
 
   TRABAJOS: {
     before: function (ctx, row, prev, w) {
+      if (row.fecha_aproximada === true && (!prev || prev.fecha_aproximada !== true) && prev) {
+        var cob = activeRows_(ctx, 'CONCEPTOS').filter(function (x) { return x.trabajo_id === row.id && x.etapa !== 'Anulado'; });
+        if (cob.length) w.push({ code: 'TRABAJO_APROXIMADO', message: 'Este trabajo ya tiene cobros (' + cob.map(function (x) { return x.codigo; }).join(', ') + ') y quedó con fecha aproximada: revisa si corresponde.' });
+      }
       if (isEmpty_(row.estado_comercial)) row.estado_comercial = 'Por confirmar';
       if (isEmpty_(row.estado_ejecucion)) row.estado_ejecucion = 'Pendiente';
       if (isEmpty_(row.estado_revision)) row.estado_revision = 'Sin revisar';
@@ -1562,6 +1568,11 @@ var RULES_ = {
 
   CONCEPTOS: {
     before: function (ctx, row, prev, w) {
+      // 1.11: un trabajo del historial con fecha aproximada no lleva cobros, salvo que Víctor lo autorice en la vista previa de un paquete.
+      if (!isEmpty_(row.trabajo_id) && row.etapa !== 'Anulado' && (!prev || prev.trabajo_id !== row.trabajo_id || prev.etapa === 'Anulado')) {
+        var trA = getRow_(ctx, 'TRABAJOS', row.trabajo_id);
+        if (trA && trA.fecha_aproximada === true && ctx._autorizaAproximado !== true) fail_('TRABAJO_APROXIMADO', 'El trabajo ' + trA.codigo + ' es del historial (fecha aproximada): no lleva cobros. Si de verdad corresponde, cárgalo en un paquete y autorízalo en la vista previa.');
+      }
       if (row.aportante === 'Cliente' && Number(row.monto_cliente) > 0) w.push({ code: 'MATERIAL_CLIENTE', message: 'Material aportado por el cliente: el monto se guarda como referencia y no cuenta como venta.' });
       if (row.etapa === 'Confirmado' && isEmpty_(row.monto_cliente) && row.aportante === 'Taller') w.push({ code: 'SIN_MONTO', message: 'Cobro confirmado sin monto.' });
       if (prev) {
@@ -2540,7 +2551,9 @@ function historialContenido_(ctx, e) {
   var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) {
     return t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado' && t.publicable === true && !isEmpty_(t.resumen_cliente);
   }).map(function (t) {
-    return { fecha: localDate_(t.fecha_fin || t.fecha_inicio || ''), km: isEmpty_(t.km) ? null : Number(t.km), horas: isEmpty_(t.horas_equipo) ? null : Number(t.horas_equipo), tipo: t.tipo_trabajo || '', resumen: String(t.resumen_cliente) };
+    var o = { fecha: localDate_(t.fecha_fin || t.fecha_inicio || ''), km: isEmpty_(t.km) ? null : Number(t.km), horas: isEmpty_(t.horas_equipo) ? null : Number(t.horas_equipo), tipo: t.tipo_trabajo || '', resumen: String(t.resumen_cliente) };
+    if (t.fecha_aproximada === true) o.aprox = true;
+    return o;
   }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
   return {
     formato: HISTORIAL_FORMATO,
@@ -3174,7 +3187,7 @@ function avisoCorreo_(solicitudes, respuestas, sitio) {
     L.push('SOLICITUDES NUEVAS (' + solicitudes.length + ')', '');
     solicitudes.forEach(function (s) {
       var eqs = []; try { eqs = s.equipos ? JSON.parse(s.equipos) : []; } catch (e) {}
-      L.push('• ' + s.tipo + ' · ' + (s.origen === 'Portal' ? 'portal' : 'formulario general') + ' · ' + s.recibido_en.slice(0, 16).replace('T', ' '));
+      L.push('• ' + s.tipo + ' · ' + (s.origen === 'Portal' ? 'portal' : 'formulario general') + ' · ' + s.recibido_en.slice(0, 16).replace('T', ' ') + (s.motivo === 'Enlace revocado durante el envío' ? ' · ⚠ ENLACE REVOCADO DURANTE EL ENVÍO' : ''));
       L.push('  ' + [s.nombre, s.telefono, s.correo].filter(Boolean).join(' · '));
       var veh = eqs.length ? eqs.map(function (e) { return [e.nombre, e.patente].filter(Boolean).join(' '); }).join('; ') : s.vehiculo;
       if (veh) L.push('  Vehículo: ' + veh);
@@ -3276,7 +3289,7 @@ function contextoTexto_(ctx, c) {
       te.forEach(function (t) {
         var uso = [isEmpty_(t.km) ? '' : miles(t.km) + ' km', isEmpty_(t.horas_equipo) ? '' : t.horas_equipo + ' h'].filter(Boolean).join(' / ');
         var prox = [isEmpty_(t.proxima_km) ? '' : miles(t.proxima_km) + ' km', isEmpty_(t.proxima_horas) ? '' : t.proxima_horas + ' h', t.proxima_fecha || ''].filter(Boolean).join(' / ');
-        L.push('| ' + t.codigo + ' | ' + fecha(t) + ' | ' + uso + ' | ' + celda(t.tipo_trabajo) + ' | ' + celda(t.descripcion, 200) + ' | ' + celda(t.estado_ejecucion) + ' | ' + prox + ' |');
+        L.push('| ' + t.codigo + ' | ' + (t.fecha_aproximada === true ? 'aprox. ' + String(fecha(t)).slice(0, 4) : fecha(t)) + ' | ' + uso + ' | ' + celda(t.tipo_trabajo) + ' | ' + celda(t.descripcion, 200) + ' | ' + celda(t.estado_ejecucion) + ' | ' + prox + ' |');
       });
     }
     var de = det.filter(function (d) { return tIds[d.trabajo_id]; });
@@ -3359,7 +3372,7 @@ function contextoPagos_(ctx, c, L, celda, miles) {
 }
 
 /**
- * Índice de clientes (1.9.1): un solo archivo "clientes-indice.md" en "Contextos IA EG" con código, nombre, contactos y
+ * Índice de clientes (1.9.1): un solo archivo "clientes-indice.md" en "Proyectos IA EG / Contextos" con código, nombre, contactos y
  * vehículos de cada cliente, para que la IA ubique al cliente (o uno parecido) en el paso 0 sin abrir cada contexto.
  * Sin RUT, teléfonos, correos ni montos.
  */
@@ -3376,19 +3389,23 @@ function indiceClientesTexto_(ctx) {
   L.push('Formato EG-INDICE-1 · actualizado ' + localDate_(now_(ctx)) + ' por la app EG Registro. SOLO LECTURA: no lo edites.');
   L.push('Paso 0: busca aquí al cliente por nombre, contacto o patente. Si está, abre su archivo de contexto. Si hay uno parecido, pregunta si es ese (con su código). Si no está, es cliente nuevo: primero un paquete "alta de cliente".');
   L.push('');
+  // 1.11: enlace directo a cada archivo (la IA lo abre sin depender del buscador de Drive).
+  var enl = ctx.enlacesContexto || {};
+  if (enl[CATALOGO_ARCHIVO]) L.push('Proveedores y precios (uso interno): ' + CATALOGO_ARCHIVO + ' — ' + enl[CATALOGO_ARCHIVO]);
+  if (enl[CATALOGO_ARCHIVO]) L.push('');
   L.push('| Código | Cliente | Tipo | Estado | Contactos | Vehículos y equipos | Archivo de contexto |');
   L.push('|---|---|---|---|---|---|---|');
   cls.forEach(function (c) {
     var k = cts.filter(function (x) { return x.cliente_id === c.id; }).map(function (x) { return celda(x.nombre); }).join('; ');
     var e = eqs.filter(function (x) { return x.cliente_id === c.id; }).map(function (x) { return x.codigo + ' ' + celda(x.nombre_corto) + (x.patente ? ' [' + celda(x.patente) + ']' : ''); }).join('; ');
-    L.push('| ' + c.codigo + ' | ' + celda(c.nombre) + ' | ' + celda(c.tipo) + ' | ' + celda(c.estado) + ' | ' + k + ' | ' + e + ' | ' + contextoArchivo_(c) + ' |');
+    L.push('| ' + c.codigo + ' | ' + celda(c.nombre) + ' | ' + celda(c.tipo) + ' | ' + celda(c.estado) + ' | ' + k + ' | ' + e + ' | ' + contextoArchivo_(c) + (enl[contextoArchivo_(c)] ? ' — ' + enl[contextoArchivo_(c)] : '') + ' |');
   });
   L.push('');
   L.push(cls.length + ' clientes.');
   return L.join('\n') + '\n';
 }
 
-/** Nombre y texto de un archivo de "Contextos IA EG": un cliente, el catálogo o el índice. null si el cliente no existe. */
+/** Nombre y texto de un archivo de "Proyectos IA EG / Contextos": un cliente, el catálogo o el índice. null si el cliente no existe. */
 function contextoDocumento_(ctx, id) {
   if (id === CONTEXTO_CATALOGO) return { nombre: CATALOGO_ARCHIVO, texto: catalogoTexto_(ctx) };
   if (id === CONTEXTO_INDICE) return { nombre: INDICE_ARCHIVO, texto: indiceClientesTexto_(ctx) };
@@ -3884,12 +3901,18 @@ function paqueteEjecutar_(ctx, pq, baseOp, parcial, decisiones) {
       }
       if (!res && acc === 'crear') {
         var parecidos = PAQUETE_DECISION_TABLAS.indexOf(o.tabla) >= 0 ? paqueteParecidos_(ctx, o.tabla, datos, creados) : [];
-        var c = insertRow_(ctx, o.tabla, datos, { opId: opId });
+        // 1.11: cobro en un trabajo con fecha aproximada: se permite solo si Víctor lo autoriza en la vista previa.
+        var trAprox = o.tabla === 'CONCEPTOS' && !isEmpty_(datos.trabajo_id) ? getRow_(ctx, 'TRABAJOS', datos.trabajo_id) : null;
+        var esAprox = !!(trAprox && trAprox.fecha_aproximada === true && datos.etapa !== 'Anulado');
+        if (esAprox) ctx._autorizaAproximado = true;
+        var c;
+        try { c = insertRow_(ctx, o.tabla, datos, { opId: opId }); } finally { if (esAprox) ctx._autorizaAproximado = false; }
         var avisosC = c.warnings || [];
         if (parecidos.length) avisosC = avisosC.filter(function (w) { return w.code !== 'DUPLICADO_POSIBLE'; }).concat([{ code: 'POSIBLE_DUPLICADO', message: 'Se parece a: ' + parecidos.map(function (x) { return x.codigo + ' ' + x.etiqueta + ' (' + x.motivo + ')'; }).join('; ') + '. Decide si es otro o el mismo.' }]);
         res = { tabla: o.tabla, accion: acc, resultado: 'Nuevo', row: c.row, avisos: avisosC };
         if (parecidos.length) { res.requiere = 'duplicado'; res.candidatos = parecidos; res.decidido = dec[String(i + 1)] === 'nuevo'; }
         if (o.tabla === 'LISTAS') { res.requiere = 'lista'; res.decidido = dec[String(i + 1)] === 'ok'; }
+        if (esAprox) { res.requiere = 'aproximado'; res.decidido = dec[String(i + 1)] === 'ok'; res.avisos = (res.avisos || []).concat([{ code: 'TRABAJO_APROXIMADO', message: 'Cobro en un trabajo del historial con fecha aproximada (' + trAprox.codigo + '): confírmalo solo si corresponde.' }]); }
         creados[c.row.id] = true;
       }
       if (!res && acc === 'sesion_posterior') {
@@ -3968,7 +3991,7 @@ function paqueteAplicar_(ctx, p) {
   var r = paqueteEjecutar_(ctx, pq, p.op_id, null, D.dec);
   var faltan = paqueteFaltan_(r.resultados);
   if (faltan.length) {
-    var txt = { duplicado: 'posible duplicado', correccion: 'corrección', lista: 'opción nueva de lista' };
+    var txt = { duplicado: 'posible duplicado', correccion: 'corrección', lista: 'opción nueva de lista', aproximado: 'cobro en trabajo con fecha aproximada' };
     fail_('DECISION_REQUERIDA', 'Falta confirmar en la vista previa: ' + faltan.map(function (x) { return 'operación ' + x.n + ' (' + txt[x.requiere] + ')'; }).join(', ') + '.', { faltan: faltan });
   }
   var decTxt = Object.keys(D.dec).map(function (k) { return k + ' → ' + D.dec[k]; }).join('; ');
@@ -3987,9 +4010,49 @@ function paqueteAplicar_(ctx, p) {
   return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos, modificados: modificados }, warnings: avisos };
 }
 
+/**
+ * 1.11: anular un cobro que ya tiene pagos imputados y dejar ese dinero a favor del cliente.
+ * Lo pueden hacer Víctor y Victoria (administración), con motivo. Si el cobro está en una boleta o factura EMITIDA,
+ * no se anula (primero nota de crédito). Si está en un documento "Por emitir", se saca de ese documento.
+ * Se anulan solo las imputaciones de este cobro: el resto de cada pago no se toca. Lo liberado queda como pago sin imputar.
+ */
+function conceptoAnularPagado_(ctx, p) {
+  requireAdmin_(ctx);
+  if (isEmpty_(p.motivo)) fail_('REQUERIDO', 'Indica por qué se anula el cobro.');
+  var con = mustGet_(ctx, 'CONCEPTOS', p.concepto_id, 'Cobro');
+  var imps = activeRows_(ctx, 'IMPUTACIONES').filter(function (i) { return i.concepto_id === con.id; });
+  if (con.etapa === 'Anulado' || con.anulado === true) {
+    if (ctx._opRepetida) return { data: { concepto: con, liberado: 0, imputaciones: 0, documentos: [] }, warnings: [], duplicate: true };
+    fail_('ANULADO', 'El cobro ' + con.codigo + ' ya está anulado.');
+  }
+  var dcs = activeRows_(ctx, 'DOC_CONCEPTOS').filter(function (d) { return d.concepto_id === con.id; });
+  var emitidos = [], porEmitir = [];
+  dcs.forEach(function (d) {
+    var doc = getRow_(ctx, 'DOC_VENTA', d.documento_id);
+    if (!doc || doc.anulado === true || doc.estado === 'Anulado') return;
+    if (doc.estado === 'Emitido') emitidos.push(doc); else porEmitir.push({ dc: d, doc: doc });
+  });
+  if (emitidos.length) fail_('DOCUMENTO_EMITIDO', 'El cobro ' + con.codigo + ' está en ' + emitidos.map(function (x) { return x.tipo + (x.folio ? ' ' + x.folio : ''); }).join(', ') + ' ya emitida. Primero emite una nota de crédito (consúltalo con el contador) y regístrala; después anula el cobro.');
+  var motivo = 'Cobro ' + con.codigo + ' anulado: ' + p.motivo, fuente = 'App · Anular cobro y dejar a favor';
+  var liberado = 0, w = [];
+  imps.forEach(function (i, n) {
+    liberado += Number(i.monto) || 0;
+    anularRow_(ctx, 'IMPUTACIONES', i.id, i.version, motivo, p.op_id + '#i' + n, fuente);
+  });
+  porEmitir.forEach(function (x, n) {
+    anularRow_(ctx, 'DOC_CONCEPTOS', x.dc.id, x.dc.version, motivo, p.op_id + '#d' + n, fuente);
+    w.push({ code: 'DOCUMENTO_AJUSTADO', message: 'Se sacó del documento por emitir ' + x.doc.codigo + ' (' + x.doc.tipo + '). Revisa sus montos antes de emitirlo.' });
+  });
+  var actual = getRow_(ctx, 'CONCEPTOS', con.id);
+  var u = updateRow_(ctx, 'CONCEPTOS', con.id, actual.version, { etapa: 'Anulado' }, { opId: p.op_id, motivo: motivo, fuente: fuente });
+  if (activeRows_(ctx, 'SESIONES').some(function (s) { return s.concepto_id === con.id; })) w.push({ code: 'SESIONES_LIGADAS', message: 'Hay sesiones de tiempo ligadas a este cobro: si corresponde, desvincúlalas.' });
+  if (liberado > 0) w.push({ code: 'SALDO_A_FAVOR', message: '$' + liberado + ' quedan a favor del cliente (pago sin imputar). Puedes imputarlos a otro cobro o registrar la devolución.' });
+  return { data: { concepto: u.row, liberado: liberado, imputaciones: imps.length, documentos: porEmitir.map(function (x) { return x.doc.codigo; }) }, warnings: w };
+}
+
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -4289,6 +4352,7 @@ function handleInner_(ctx, action, p) {
     case 'solicitud_estado': return solicitudEstado_(ctx, p);
     case 'respuesta_estado': return respuestaEstado_(ctx, p);
     case 'ajustes_guardar': return ajustesGuardar_(ctx, p);
+    case 'concepto_anular_pagado': return conceptoAnularPagado_(ctx, p);
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -4809,9 +4873,9 @@ function abrirContextoIA(clienteId){
   }).catch(function(){});
 }
 function bloqueDriveContexto(dr){
-  if (DEMO) return '<p class="s" style="margin:0">En modo demostración no hay Drive. En la app real, este contexto queda en la carpeta <b>Contextos IA EG</b> y se actualiza solo con cada cambio.</p>';
-  if (!dr) return '<p class="s" style="margin:0">La carpeta <b>Contextos IA EG</b> aún no está creada (se crea al instalar con crearContextos). Mientras, copia o descarga el texto.</p>';
-  return '<h3 style="margin-top:0">En Drive</h3><p class="s" style="margin:0 0 8px">' + (dr.existe ? 'El archivo <b>' + esc(S.ctxIA.archivo) + '</b> está en la carpeta Contextos IA EG y se actualiza solo con cada cambio de este cliente. Última actualización: ' + esc(fmtFecha(dr.actualizado)) + '.' : 'Este cliente aún no tiene su archivo en Drive.') + ' La IA lo lee con el conector de Drive; no lo edita.</p>' +
+  if (DEMO) return '<p class="s" style="margin:0">En modo demostración no hay Drive. En la app real, este contexto queda en la carpeta <b>Proyectos IA EG / Contextos</b> y se actualiza solo con cada cambio.</p>';
+  if (!dr) return '<p class="s" style="margin:0">La carpeta <b>Proyectos IA EG / Contextos</b> aún no está creada (se crea al instalar con crearContextos). Mientras, copia o descarga el texto.</p>';
+  return '<h3 style="margin-top:0">En Drive</h3><p class="s" style="margin:0 0 8px">' + (dr.existe ? 'El archivo <b>' + esc(S.ctxIA.archivo) + '</b> está en la carpeta Proyectos IA EG / Contextos y se actualiza solo con cada cambio de este cliente. Última actualización: ' + esc(fmtFecha(dr.actualizado)) + '.' : 'Este cliente aún no tiene su archivo en Drive.') + ' La IA lo lee con el conector de Drive; no lo edita.</p>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn go" type="button" data-act="cia-drive">' + (dr.existe ? 'Actualizar ahora' : 'Guardar en Drive') + '</button>' + (dr.existe && dr.url ? '<a class="btn ghost" href="' + esc(dr.url) + '" target="_blank" rel="noopener">Abrir en Drive</a>' : '') + '</div>';
 }
 function guardarContextoDrive(btn){
@@ -5145,7 +5209,7 @@ function pintarWeb(){
         '<div class="s">' + esc(fechaHora(s.recibido_en)) + ' · ' + (s.origen === 'Portal' ? 'portal' : 'formulario general') + (s.telefono ? ' · <a href="https://wa.me/' + waNumero(s.telefono) + '" target="_blank" rel="noopener">' + esc(s.telefono) + '</a>' : '') + (s.correo ? ' · ' + esc(s.correo) : '') + (s.contacto ? ' · prefiere ' + esc(s.contacto) : '') + '</div>' +
         (veh ? '<div class="s">Vehículo: ' + esc(veh) + '</div>' : '') +
         '<p style="margin:6px 0;white-space:pre-wrap">' + esc(s.mensaje) + '</p>' +
-        '<div class="chips">' + chipEstadoSol(s.estado) + (s.trabajo ? '<span class="chip">' + esc(s.trabajo) + '</span>' : '') + (s.motivo ? '<span class="chip">' + esc(s.motivo) + '</span>' : '') + '</div>' +
+        '<div class="chips">' + chipEstadoSol(s.estado) + (s.trabajo ? '<span class="chip">' + esc(s.trabajo) + '</span>' : '') + (s.motivo ? '<span class="chip' + (s.motivo === 'Enlace revocado durante el envío' ? ' bad' : '') + '">' + esc(s.motivo) + '</span>' : '') + '</div>' +
         (abierta ? '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn go" type="button" data-act="sol-convertir" data-id="' + esc(s.id) + '">Convertir en trabajo</button>' +
           (s.estado === 'Nueva' ? '<button class="btn" type="button" data-act="sol-estado" data-id="' + esc(s.id) + '" data-e="Contactado">Contactado</button>' : '') +
           '<button class="btn ghost" type="button" data-act="sol-ia" data-id="' + esc(s.id) + '">Llevar a IA</button>' +
@@ -5612,6 +5676,7 @@ function abrirFormulario(fila){
         '<label class="f"><span>Fuente del dato correcto</span><input class="i" id="fxFuente" placeholder="Ej. factura, hoja de trabajo, cliente por teléfono"></label></div>';
       h += '<div class="inline" style="flex-wrap:wrap"><button class="btn" data-act="dt-guardar"' + (fila ? ' data-id="' + esc(fila.id) + '" data-v="' + fila.version + '"' : '') + '>' + (fila ? 'Guardar cambios' : 'Crear') + '</button>';
       if (fila && t !== 'RECTIFICACIONES') h += '<button class="btn danger" data-act="dt-anular" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Anular</button>';
+      if (fila && t === 'CONCEPTOS' && fila.etapa !== 'Anulado') h += '<button class="btn danger" data-act="dt-anular-favor" data-id="' + esc(fila.id) + '" title="Anula el cobro y sus imputaciones; lo pagado queda a favor del cliente">Anular y dejar a favor</button>';
       if (fila && t === 'RECEPCIONES' && fila.estado !== 'Confirmada') h += '<button class="btn go" data-act="dt-confirmar" data-id="' + esc(fila.id) + '" data-v="' + fila.version + '">Confirmar recepción</button>';
       if (fila && t === 'TRABAJOS') h += '<button class="btn ghost" data-act="dt-cobrar-mo" data-id="' + esc(fila.id) + '">Cobrar mano de obra desde sesiones</button>';
       h += '</div>';
@@ -5662,8 +5727,8 @@ function mostrarIntegridad(){
 var CAT = { data:null, q:'' };
 function abrirCatalogo(){ call('catalogo', {}).then(function(r){ CAT.data = r.data; pintarCatalogo(); }).catch(function(){}); }
 function bloqueDriveCatalogo(dr){
-  if (DEMO) return '<p class="s" style="margin:0">En la app real, esta lista queda en Drive (Contextos IA EG → proveedores-y-precios.md) y se actualiza sola: la IA la usa para cotizar y revisar facturas.</p>';
-  if (!dr) return '<p class="s" style="margin:0">La carpeta Contextos IA EG aún no está creada.</p>';
+  if (DEMO) return '<p class="s" style="margin:0">En la app real, esta lista queda en Drive (Proyectos IA EG / Contextos → proveedores-y-precios.md) y se actualiza sola: la IA la usa para cotizar y revisar facturas.</p>';
+  if (!dr) return '<p class="s" style="margin:0">La carpeta Proyectos IA EG / Contextos aún no está creada.</p>';
   return '<p class="s" style="margin:0 0 8px">' + (dr.existe ? 'En Drive: proveedores-y-precios.md · actualizado ' + esc(fmtFecha(dr.actualizado)) + '.' : 'Aún no está en Drive.') + '</p><div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="cat-drive">' + (dr.existe ? 'Actualizar ahora' : 'Guardar en Drive') + '</button>' + (dr.existe && dr.url ? '<a class="btn ghost" href="' + esc(dr.url) + '" target="_blank" rel="noopener">Abrir en Drive</a>' : '') + '</div>';
 }
 function pintarCatalogo(){
@@ -5786,6 +5851,7 @@ function validarPaquete(btn, archivo, revisarDecisiones){
       var chip = x.resultado === 'Nuevo' ? '<span class="chip ok">Nuevo</span>' : x.resultado === 'Modificado' ? '<span class="chip warn">Corrige · ' + esc(x.codigo) + '</span>' : x.resultado === 'Sin cambios' ? '<span class="chip">Sin cambios · ' + esc(x.codigo) + '</span>' : '<span class="chip">Ya existe · ' + esc(x.codigo) + '</span>';
       if (x.requiere === 'duplicado') chip += ' <span class="chip warn">Posible duplicado</span>';
       if (x.requiere === 'lista') chip += ' <span class="chip warn">Nueva opción de lista</span>';
+      if (x.requiere === 'aproximado') chip += ' <span class="chip warn">Cobro en trabajo aproximado</span>';
       var av = (x.avisos || []).filter(function(w){ return w.code !== 'POSIBLE_DUPLICADO'; }).map(function(w){ return '<div class="s" style="color:var(--senal-osc);margin-top:4px">' + esc(w.message) + '</div>'; }).join('');
       var marca = x.requiere ? ' style="cursor:default;border-color:#E9C46A"' : ' style="cursor:default"';
       return '<div class="item"' + marca + '><div class="body"><div class="t">' + x.n + '. ' + esc(NOMBRES[x.tabla] || x.tabla) + '</div><div class="s">' + esc(x.etiqueta) + '</div><div class="chips">' + chip + '</div>' + av + decisionPaquete(x) + '</div></div>';
@@ -5804,6 +5870,7 @@ function decisionPaquete(x){
   if (!x.requiere) return '';
   if (x.requiere === 'correccion') return '<label class="f inline" style="gap:8px;margin:8px 0 0"><input type="checkbox" data-pqdec="' + n + '" value="ok"' + (dv === 'ok' ? ' checked' : '') + '> Revisé esta corrección y está bien</label>';
   if (x.requiere === 'lista') return '<label class="f inline" style="gap:8px;margin:8px 0 0"><input type="checkbox" data-pqdec="' + n + '" value="ok"' + (dv === 'ok' ? ' checked' : '') + '> Agregar esta opción a la lista</label>';
+  if (x.requiere === 'aproximado') return '<label class="f inline" style="gap:8px;margin:8px 0 0"><input type="checkbox" data-pqdec="' + n + '" value="ok"' + (dv === 'ok' ? ' checked' : '') + '> Autorizo este cobro en un trabajo con fecha aproximada</label>';
   var cand = x.candidatos || [];
   var h = '<div style="margin-top:8px;padding:8px 10px;border:1px solid var(--linea);border-radius:8px"><div class="s" style="margin-bottom:6px"><b>Se parece a registros que ya existen.</b> ¿Es uno de ellos o es otro?</div>';
   cand.filter(function(c){ return !c.elegible; }).forEach(function(c){ h += '<div class="s" style="color:var(--acero)">· ' + esc(c.codigo) + ' ' + esc(c.etiqueta) + ' (' + esc(c.motivo) + ')</div>'; });
@@ -5931,6 +5998,11 @@ document.addEventListener('click', function(ev){
   else if (a === 'dt-control') mostrarControl();
   else if (a === 'dt-stock') mostrarStock();
   else if (a === 'dt-integridad') mostrarIntegridad();
+  else if (a === 'dt-anular-favor'){
+    var motivoF = $('fxMotivo') ? $('fxMotivo').value.trim() : '';
+    if (!motivoF) { toast('Escribe el motivo en el campo "Motivo" antes de anular.', 'err'); if ($('fxMotivo')) $('fxMotivo').focus(); return; }
+    call('concepto_anular_pagado', { concepto_id: id, motivo: motivoF, op_id: opId() }).then(function(r){ toast('Cobro anulado' + (r.data.liberado ? ': $' + r.data.liberado.toLocaleString('es-CL') + ' quedan a favor del cliente' : '') + '.'); cerrarHoja(); D.refs = {}; cargarDatos(); return cargar(); }).catch(function(){});
+  }
   else if (a === 'dt-anular'){
     var motivo = $('fxMotivo') ? $('fxMotivo').value.trim() : '';
     if (!motivo) { toast('Escribe el motivo en el campo "Motivo" antes de anular.', 'err'); if ($('fxMotivo')) $('fxMotivo').focus(); return; }
