@@ -51,6 +51,11 @@ textarea{min-height:110px;resize:vertical}
 .chip{display:inline-block;font-size:12px;border-radius:999px;padding:1px 8px;margin-left:6px;border:1px solid var(--linea);background:var(--concreto)}
 .chip.ok{border-color:#A7D3B5;background:#EAF6EE;color:var(--ok)}
 .chip.err{border-color:#E5A3A3;background:#FBEAEA;color:var(--freno)}
+.seg{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.seg button{border:1px solid var(--linea);background:#fff;border-radius:999px;padding:7px 12px;font:600 14px Barlow,sans-serif;color:var(--asfalto);cursor:pointer}
+.seg button.on{background:var(--asfalto);color:#fff;border-color:var(--asfalto)}
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+select{width:100%;font:16px Barlow,sans-serif;border:1px solid var(--linea);border-radius:8px;padding:10px;background:#fff;color:var(--asfalto)}
 .empty{color:var(--acero);background:var(--chapa);border:1px dashed var(--linea);border-radius:var(--radio);padding:16px}
 .aviso{background:#FFF6DD;border:1px solid #E9C46A;border-radius:var(--radio);padding:12px 14px;margin-top:12px}
 .toast{position:fixed;left:16px;right:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));max-width:560px;margin:0 auto;background:var(--asfalto);color:#fff;border-radius:10px;padding:12px 14px;opacity:0;transform:translateY(10px);transition:.2s;pointer-events:none;z-index:30}
@@ -173,6 +178,10 @@ function procesarItem(item) {
       return subida.then(function () {
         var c = { tipo: a ? (i === 0 ? item.tipo : tipoDe(a.mime)) : item.tipo, fecha: item.fecha, origen: item.origen, titulo: item.titulo || (a ? a.nombre : ''), texto: i === 0 ? item.texto : '', url: i === 0 ? item.url : '' };
         if (a && i === 0 && item.tipo === 'Nota') c.tipo = tipoDe(a.mime);
+        // Destino para todas las partes; montos solo en la primera (un mismo documento no se cuenta dos veces).
+        var ex = item.extra || {};
+        Object.keys(ex).forEach(function (k) { if (i === 0 || k === 'destino' || k === 'cliente_id') c[k] = ex[k]; });
+        if (i > 0 && ex.destino === 'Personal') c.destino = 'Por definir';
         return api('captura_crear', { captura: c, archivo_id: a ? a.drive_id : '', op_id: item.id + '#' + i });
       }).then(function (r) {
         if (a) { a.hecho = true; a.codigo = r.captura.codigo; a.blob = null; } else item.codigo = r.captura.codigo;
@@ -218,12 +227,41 @@ function pintar() {
   h += '<div class="card"><label for="cTitulo">Título (opcional: cliente, patente, trabajo)</label><input type="text" id="cTitulo" value="' + esc(F.titulo || '') + '" placeholder="Ej. KFDG29 frenos">' +
     '<label for="cTexto">Nota</label><textarea id="cTexto" placeholder="Lo que quieras dejar anotado">' + esc(F.texto || '') + '</textarea>' +
     (F.mostrarUrl || F.url ? '<label for="cUrl">Enlace</label><input type="url" id="cUrl" value="' + esc(F.url || '') + '" placeholder="https://">' : '') +
+    formDestino() +
     (F.archivos.length ? '<ul class="files">' + F.archivos.map(function (a, i) { return '<li><span>' + esc(a.nombre) + ' · ' + mb(a.blob.size) + '</span><button data-a="quitar" data-i="' + i + '">Quitar</button></li>'; }).join('') + '</ul>' : '') +
     '<div class="row"><button class="btn go" data-a="guardar">Guardar captura</button>' + (tiene ? '<button class="btn ghost" data-a="limpiar">Limpiar</button>' : '') + '</div></div>';
   h += '<div id="listas"></div>';
   $('main').innerHTML = h;
   pintarListas();
 }
+
+/* 1.13: para qué es (Taller, Cliente, Personal = cuentas con mamá) y montos. Todo opcional. */
+var DESTINOS = ['Taller', 'Cliente', 'Personal', 'Por definir'];
+function clientesGuardados() { try { return JSON.parse(localStorage.getItem('eg_captura_clientes') || '[]'); } catch (e) { return []; } }
+function cargarClientes() {
+  if (!navigator.onLine || !llave()) return;
+  api('listar', { tabla: 'CLIENTES' }).then(function (l) {
+    var c = l.filter(function (x) { return x.estado !== 'Inactivo'; }).map(function (x) { return { id: x.id, nombre: x.nombre, codigo: x.codigo }; }).sort(function (a, b) { return a.nombre < b.nombre ? -1 : 1; });
+    try { localStorage.setItem('eg_captura_clientes', JSON.stringify(c)); } catch (e) {}
+    if (F.destino === 'Cliente') pintar();
+  }).catch(function () {});
+}
+function montoInput(id, label, v) { return '<div><label for="' + id + '">' + label + '</label><input type="text" inputmode="numeric" id="' + id + '" value="' + esc(v == null ? '' : v) + '" placeholder="$"></div>'; }
+function formDestino() {
+  var h = '<label>¿Para qué es?</label><div class="seg">' + DESTINOS.map(function (d) { return '<button type="button" data-a="destino" data-v="' + d + '" class="' + (F.destino === d ? 'on' : '') + '">' + (d === 'Personal' ? 'Personal (mamá)' : d) + '</button>'; }).join('') + '</div>';
+  if (F.destino === 'Cliente') {
+    var cs = clientesGuardados();
+    h += '<label for="cCliente">Cliente</label><select id="cCliente"><option value="">Otro / no sé (lo dice la nota)</option>' + cs.map(function (c) { return '<option value="' + esc(c.id) + '"' + (F.cliente_id === c.id ? ' selected' : '') + '>' + esc(c.nombre) + '</option>'; }).join('') + '</select>';
+    h += '<div class="dos">' + montoInput('cMonto', 'Monto', F.monto) + '<div><label for="cMontoTipo">Ese monto es</label><select id="cMontoTipo">' + ['', 'A cobrar', 'Costo real', 'Por definir'].map(function (x) { return '<option value="' + x + '"' + (F.monto_tipo === x ? ' selected' : '') + '>' + (x || '—') + '</option>'; }).join('') + '</select></div></div>';
+  } else if (F.destino === 'Taller') {
+    h += montoInput('cMonto', 'Monto total (gasto del taller)', F.monto);
+  } else if (F.destino === 'Personal') {
+    h += '<label>¿Quién pagó? <span style="font-size:13px">(desde la cuenta de mamá = Mamá)</span></label><div class="seg">' + ['Yo', 'Mamá'].map(function (x) { return '<button type="button" data-a="pago" data-v="' + x + '" class="' + (F.pago_por === x ? 'on' : '') + '">' + x + '</button>'; }).join('') + '</div>';
+    h += '<div class="dos">' + montoInput('cMio', 'Lo mío', F.monto_mio) + montoInput('cMama', 'Lo de mamá', F.monto_mama) + '</div>';
+  }
+  return h;
+}
+function numero(v) { var s = String(v || '').replace(/[^\d]/g, ''); return s ? Number(s) : ''; }
 
 function pintarListas() {
   Promise.all([cola.todos(), cola.todos('hechas')]).then(function (r) {
@@ -243,7 +281,11 @@ function pintarListas() {
 }
 function pintarAvance(id, i, f) { var b = $('bar-' + id + '-' + i); if (b) b.style.width = Math.round(f * 100) + '%'; }
 
-function leerForm() { if ($('cTitulo')) F.titulo = $('cTitulo').value.trim(); if ($('cTexto')) F.texto = $('cTexto').value.trim(); if ($('cUrl')) F.url = $('cUrl').value.trim(); }
+function leerForm() {
+  if ($('cTitulo')) F.titulo = $('cTitulo').value.trim(); if ($('cTexto')) F.texto = $('cTexto').value.trim(); if ($('cUrl')) F.url = $('cUrl').value.trim();
+  if ($('cCliente')) F.cliente_id = $('cCliente').value; if ($('cMonto')) F.monto = numero($('cMonto').value); if ($('cMontoTipo')) F.monto_tipo = $('cMontoTipo').value;
+  if ($('cMio')) F.monto_mio = numero($('cMio').value); if ($('cMama')) F.monto_mama = numero($('cMama').value);
+}
 function agregarArchivos(lista, origen) {
   Array.prototype.forEach.call(lista || [], function (f) {
     if (f.size > MAX_BYTES) { toast(f.name + ' pesa más de 300 MB: no se puede subir.', true); return; }
@@ -258,12 +300,23 @@ function guardar() {
   leerForm();
   if (!F.archivos.length && !F.texto && !F.url) { toast('Escribe una nota, un enlace o adjunta un archivo.', true); return; }
   var tipo = F.archivos.length ? tipoDe(F.archivos[0].mime) : (F.url && !F.texto ? 'Enlace' : 'Nota');
-  var item = { id: uid(), creado: new Date().toISOString(), fecha: new Date().toISOString(), tipo: tipo, origen: F.origen || 'App', titulo: F.titulo || '', texto: F.texto || '', url: F.url || '', archivos: F.archivos };
+  var item = { id: uid(), creado: new Date().toISOString(), fecha: new Date().toISOString(), tipo: tipo, origen: F.origen || 'App', titulo: F.titulo || '', texto: F.texto || '', url: F.url || '', archivos: F.archivos, extra: extraDestino() };
+  if (F.destino === 'Personal' && !F.pago_por && (F.monto_mio || F.monto_mama)) { toast('Indica quién pagó (Yo o Mamá).', true); return; }
   cola.poner(item).then(function () {
     F = { archivos: [], tipo: 'Nota', origen: 'App' };
     toast(navigator.onLine ? 'Guardada. Subiendo…' : 'Guardada en el celular. Se sube cuando haya señal.');
     pintar(); procesar();
   }).catch(function (e) { toast('No se pudo guardar en el celular: ' + e.message, true); });
+}
+
+/** Campos de destino que van al servidor (solo los que corresponden). */
+function extraDestino() {
+  var x = {}; if (!F.destino) return x;
+  x.destino = F.destino;
+  if (F.destino === 'Cliente') { if (F.cliente_id) x.cliente_id = F.cliente_id; if (F.monto !== '' && F.monto != null) x.monto = F.monto; if (F.monto_tipo) x.monto_tipo = F.monto_tipo; }
+  if (F.destino === 'Taller' && F.monto !== '' && F.monto != null) x.monto = F.monto;
+  if (F.destino === 'Personal') { if (F.pago_por) x.pago_por = F.pago_por; if (F.monto_mio) x.monto_mio = F.monto_mio; if (F.monto_mama) x.monto_mama = F.monto_mama; }
+  return x;
 }
 
 function grabar() {
@@ -298,6 +351,8 @@ document.addEventListener('click', function (ev) {
   else if (a === 'quitar') { leerForm(); F.archivos.splice(Number(el.getAttribute('data-i')), 1); pintar(); }
   else if (a === 'limpiar') { F = { archivos: [], tipo: 'Nota', origen: 'App' }; pintar(); }
   else if (a === 'guardar') guardar();
+  else if (a === 'destino') { var v = el.getAttribute('data-v'); F.destino = F.destino === v ? '' : v; if (F.destino === 'Cliente' && !clientesGuardados().length) cargarClientes(); pintar(); }
+  else if (a === 'pago') { F.pago_por = el.getAttribute('data-v'); pintar(); }
   else if (a === 'subir') procesar();
   else if (a === 'recargar') location.reload();
 });
@@ -325,7 +380,7 @@ function cargarCompartido() {
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
-cargarCompartido().then(function () { pintar(); procesar(); }).catch(function () { pintar(); });
+cargarCompartido().then(function () { pintar(); procesar(); cargarClientes(); }).catch(function () { pintar(); });
 </script>
 </body>
 </html>
