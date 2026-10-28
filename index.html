@@ -214,7 +214,13 @@ var CONTRACT = {
     estado_presupuesto: ['Borrador', 'Publicado', 'Autorizado', 'Rechazado', 'Retirado'],
     tipo_cobro: ['Transferencia', 'Efectivo', 'Tarjeta', 'Otro'],
     tipo_captura: ['Nota', 'Audio', 'Foto', 'Video', 'Documento', 'Enlace', 'Otro'],
-    estado_captura: ['Nueva', 'Asignada', 'Procesada', 'Descartada']
+    estado_captura: ['Nueva', 'Asignada', 'Procesada', 'Descartada'],
+    destino_captura: ['Taller', 'Cliente', 'Personal', 'Por definir'],
+    tipo_monto: ['A cobrar', 'Costo real', 'Por definir'],
+    pago_familia: ['Yo', 'Mamá'],
+    documento_gasto: ['Factura', 'Boleta', 'Sin documento', 'Otro'],
+    categoria_gasto: ['Insumos', 'Herramientas', 'Repuestos para stock', 'Arriendo', 'Servicios básicos', 'Combustible', 'Mantención del local', 'Transporte y envíos', 'Publicidad', 'Honorarios', 'Software y suscripciones', 'Otro'],
+    pagado_con: ['Cuenta empresa', 'Dinero personal (reembolsar)', 'Por definir']
   },
 
   /** Listas editables (hoja LISTAS). Se agregan filas sin cambiar la estructura; se desactivan, no se borran. */
@@ -831,10 +837,41 @@ var CONTRACT = {
         { k: 'mime', t: 'text', calc: true },
         { k: 'bytes', t: 'int', calc: true },
         { k: 'archivo_borrado', t: 'bool', calc: true, d: 'Sí = el archivo se envió a la papelera de Drive (se recupera hasta 30 días).' },
-        { k: 'estado', t: 'enum', e: 'estado_captura', req: true, d: 'Nueva → Asignada (a un cliente o trabajo) → Procesada (ya cargada con un paquete) o Descartada.' },
+        { k: 'estado', t: 'enum', e: 'estado_captura', req: true, d: 'Nueva → Asignada (a un cliente o trabajo) → Procesada (ya cargada con un paquete) o Descartada. Si no se indica: Nueva.' },
         { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
         { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
         { k: 'paquete_id', t: 'ref', ref: 'PAQUETES', d: 'Paquete con el que se cargó.' },
+        { k: 'notas', t: 'long' },
+        { k: 'destino', t: 'enum', e: 'destino_captura', d: 'Para qué es: Taller (gasto del taller), Cliente, Personal (cuentas con mamá) o Por definir.' },
+        { k: 'monto', t: 'money', d: 'Monto informado al capturar (total del documento).' },
+        { k: 'monto_tipo', t: 'enum', e: 'tipo_monto', d: 'Si es para un cliente: el monto es lo que se le cobra (A cobrar), lo que costó (Costo real) o Por definir.' },
+        { k: 'pago_por', t: 'enum', e: 'pago_familia', d: 'Personal: quién pagó (si se compró desde la cuenta de mamá, pagó Mamá).' },
+        { k: 'monto_mio', t: 'money', d: 'Personal: parte que es de Víctor.' },
+        { k: 'monto_mama', t: 'money', d: 'Personal: parte que es de mamá.' },
+        { k: 'familia_corte', t: 'text', calc: true, d: 'Personal: código del corte de cuentas que ya incluyó este movimiento.' },
+        { k: 'corte', t: 'bool', calc: true, d: 'Sí = esta fila es un corte de cuentas con mamá (no un movimiento).' }
+      ]
+    },
+
+    GASTOS: {
+      file: 'BASE', scope: 'central', prefix: 'GA', tecnico: 'ninguno',
+      d: 'Gastos generales del taller (insumos, herramientas, arriendo, servicios, combustible…), con su documento. Base del resumen mensual para el contador. Los repuestos de un cliente van en PEDIDOS/PRECIOS; lo personal, en las cuentas con mamá.',
+      columns: [
+        { k: 'fecha', t: 'date', req: true },
+        { k: 'categoria', t: 'enum', e: 'categoria_gasto', req: true },
+        { k: 'descripcion', t: 'text', req: true },
+        { k: 'proveedor_id', t: 'ref', ref: 'PROVEEDORES' },
+        { k: 'proveedor_texto', t: 'text', d: 'Proveedor si no está en PROVEEDORES (ej. bencinera, supermercado).' },
+        { k: 'documento', t: 'enum', e: 'documento_gasto', req: true },
+        { k: 'documento_numero', t: 'text', d: 'Folio de la factura o boleta.' },
+        { k: 'total', t: 'money', req: true, d: 'Total pagado (con IVA si corresponde).' },
+        { k: 'neto', t: 'money', d: 'Neto (factura). Vacío en factura = se calcula con el IVA de CONFIG.' },
+        { k: 'iva', t: 'money', d: 'IVA de la factura (crédito fiscal). Vacío en factura = se calcula.' },
+        { k: 'medio_pago', t: 'lista', l: 'medios_pago' },
+        { k: 'pagado_con', t: 'enum', e: 'pagado_con', d: 'Cuenta empresa, o dinero personal que hay que reembolsar.' },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', d: 'Si el gasto fue por un cliente.' },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
+        { k: 'captura_id', t: 'ref', ref: 'CAPTURAS', d: 'Captura (foto o PDF) de donde salió.' },
         { k: 'notas', t: 'long' }
       ]
     },
@@ -878,6 +915,7 @@ var CONTRACT = {
     { clave: 'avisos_correo', valor: 'eisengarage@gmail.com', nota: 'Correo que recibe los avisos.' },
     { clave: 'capturas_carpeta_id', valor: '', nota: 'Carpeta "Capturas EG" (EG Captura): archivos que se suben desde el celular. La crea crearCapturas().' },
     { clave: 'capturas_lectores', valor: '', nota: 'Cuentas extra que pueden VER la carpeta Capturas EG en Drive (separadas por coma). Los usuarios activos de administración se agregan solos.' },
+    { clave: 'familia_planilla_id', valor: '', nota: 'Planilla aparte "Cuentas con mamá" (saldo y movimientos). La crea crearFamilia(); la app la mantiene al día.' },
     { clave: 'capturas_origen', valor: 'https://eisengarage-taller.github.io', nota: 'Dirección desde la que la app EG Captura sube archivos a Drive (no cambiar salvo que se mueva la app).' },
     { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Meses tras los cuales se borran los datos personales de las solicitudes web (1 a 60).' }
   ]
@@ -1807,6 +1845,32 @@ var RULES_ = {
     before: function (ctx, row) {
       row.correo = String(row.correo || '').toLowerCase();
       if (activeRows_(ctx, 'USUARIOS').some(function (u) { return u.id !== row.id && u.correo === row.correo; })) fail_('DUPLICADO', 'Ya existe un usuario con ese correo.');
+    }
+  },
+
+  CAPTURAS: {
+    before: function (ctx, row, prev, w) {
+      ['monto', 'monto_mio', 'monto_mama'].forEach(function (k) { if (!isEmpty_(row[k]) && Number(row[k]) < 0) fail_('VALOR_INVALIDO', 'Los montos no pueden ser negativos.'); });
+      if (isEmpty_(row.estado)) row.estado = 'Nueva';
+      if (row.destino !== 'Personal' && (!isEmpty_(row.pago_por) || !isEmpty_(row.monto_mio) || !isEmpty_(row.monto_mama))) fail_('VALOR_INVALIDO', 'Pagó, monto mío y monto de mamá son solo para destino Personal.');
+      if (row.destino === 'Personal' && (!isEmpty_(row.cliente_id) || !isEmpty_(row.trabajo_id))) fail_('VALOR_INVALIDO', 'Lo personal no se asigna a un cliente ni a un trabajo.');
+      // Un movimiento ya incluido en un corte de cuentas no cambia (el corte quedó cerrado con ese monto).
+      if (prev && !isEmpty_(prev.familia_corte) && !isSystem_(ctx) && ['pago_por', 'monto_mio', 'monto_mama', 'destino'].some(function (k) { return String(prev[k]) !== String(row[k]); })) fail_('CORTE_CERRADO', 'Este movimiento ya está en el corte ' + prev.familia_corte + ': no se cambia. Registra un ajuste nuevo.');
+      // Personal completo (quién pagó y al menos un monto): queda Procesado solo, no necesita a la IA.
+      if (!prev && row.destino === 'Personal' && row.estado === 'Nueva' && familiaCompleto_(row)) row.estado = 'Procesada';
+    }
+  },
+
+  GASTOS: {
+    before: function (ctx, row, prev, w) {
+      if (!(Number(row.total) > 0)) fail_('VALOR_INVALIDO', 'El total del gasto debe ser mayor que cero.');
+      if (row.documento === 'Factura' && isEmpty_(row.neto) && isEmpty_(row.iva)) {
+        row.neto = Math.round(Number(row.total) / (1 + ivaPct_(ctx) / 100)); row.iva = Number(row.total) - row.neto;
+        if (w) w.push({ code: 'IVA_CALCULADO', message: 'Neto e IVA calculados desde el total (' + ivaPct_(ctx) + ' %). Corrígelos si la factura dice otra cosa.' });
+      }
+      if (!isEmpty_(row.neto) && !isEmpty_(row.iva) && Math.abs(Number(row.neto) + Number(row.iva) - Number(row.total)) > 1) fail_('VALOR_INVALIDO', 'Neto + IVA no suma el total.');
+      if (row.documento !== 'Factura' && !isEmpty_(row.iva) && Number(row.iva) > 0 && w) w.push({ code: 'IVA_SIN_FACTURA', message: 'Solo la factura da crédito fiscal: revisa el IVA de este gasto.' });
+      if (!isEmpty_(row.captura_id)) { var cp = getRow_(ctx, 'CAPTURAS', row.captura_id); if (cp && cp.destino === 'Personal') fail_('VALOR_INVALIDO', 'Esa captura es personal (cuentas con mamá), no un gasto del taller.'); }
     }
   },
 
@@ -3421,7 +3485,8 @@ function indiceClientesTexto_(ctx) {
   // 1.11: enlace directo a cada archivo (la IA lo abre sin depender del buscador de Drive).
   var enl = ctx.enlacesContexto || {};
   if (enl[CATALOGO_ARCHIVO]) L.push('Proveedores y precios (uso interno): ' + CATALOGO_ARCHIVO + ' — ' + enl[CATALOGO_ARCHIVO]);
-  if (enl[CATALOGO_ARCHIVO]) L.push('');
+  if (enl[CAPTURAS_ARCHIVO]) L.push('Capturas pendientes (EG Captura): ' + CAPTURAS_ARCHIVO + ' — ' + enl[CAPTURAS_ARCHIVO]);
+  if (enl[CATALOGO_ARCHIVO] || enl[CAPTURAS_ARCHIVO]) L.push('');
   L.push('| Código | Cliente | Tipo | Estado | Contactos | Vehículos y equipos | Archivo de contexto |');
   L.push('|---|---|---|---|---|---|---|');
   cls.forEach(function (c) {
@@ -3437,6 +3502,7 @@ function indiceClientesTexto_(ctx) {
 /** Nombre y texto de un archivo de "Proyectos IA EG / Contextos": un cliente, el catálogo o el índice. null si el cliente no existe. */
 function contextoDocumento_(ctx, id) {
   if (id === CONTEXTO_CATALOGO) return { nombre: CATALOGO_ARCHIVO, texto: catalogoTexto_(ctx) };
+  if (id === CONTEXTO_CAPTURAS) return { nombre: CAPTURAS_ARCHIVO, texto: capturasPendientesTexto_(ctx) };
   if (id === CONTEXTO_INDICE) return { nombre: INDICE_ARCHIVO, texto: indiceClientesTexto_(ctx) };
   var c = getRow_(ctx, 'CLIENTES', id);
   return c ? { nombre: contextoArchivo_(c), texto: contextoTexto_(ctx, c) } : null;
@@ -3655,10 +3721,11 @@ function revisarIntegridad_(ctx) {
 var PAQUETE_FORMATO = 'EG-PAQUETE-1';
 var PAQUETE_MAX_OPS = 200;
 var PAQUETE_MAX_TEXTO = 40000;
-var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES', 'CUENTAS_COBRO', 'CAPTURAS'];
+var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES', 'CUENTAS_COBRO'];
 var PAQUETE_ACCIONES = ['crear', 'sesion_posterior', 'editar'];
 /** Tablas que un paquete no corrige (tienen su propio flujo en la app). */
-var PAQUETE_EDITAR_PROHIBIDAS = ['SESIONES', 'IMPUTACIONES', 'RECEPCIONES', 'MOV_INVENTARIO', 'LISTAS'];
+var PAQUETE_EDITAR_PROHIBIDAS = ['SESIONES', 'IMPUTACIONES', 'RECEPCIONES', 'MOV_INVENTARIO', 'LISTAS', 'CAPTURAS'];
+var PAQUETE_MAX_CAPTURAS = 50;
 /** Columnas que una IA nunca carga, aunque la tabla se pueda cargar: la autorización del dueño para publicar su historial la registra una persona en la app. */
 function paqueteMotivoProhibida_(tabla) { return tabla === 'EQUIPOS' ? 'la autorización del historial se registra en la app' : tabla === 'CLIENTES' ? 'el portal del cliente se publica en la app' : 'el estado del presupuesto cambia con Publicar o Confirmar en la app'; }
 function paqueteColumnaProhibida_(tabla, k) { return (tabla === 'EQUIPOS' && /^historial_/.test(String(k))) || (tabla === 'CLIENTES' && /^portal_/.test(String(k))) || (tabla === 'PRESUPUESTOS' && k === 'estado'); }
@@ -3670,6 +3737,10 @@ function paqueteForma_(pq) {
   if (isEmpty_(pq.fuente)) fail_('PAQUETE', 'Falta "fuente": de dónde viene la información.');
   var ops = pq.operaciones;
   if (!Array.isArray(ops) || !ops.length) fail_('PAQUETE', 'El paquete no trae operaciones.');
+  if (pq.capturas !== undefined) {
+    if (!Array.isArray(pq.capturas) || pq.capturas.some(function (c) { return typeof c !== 'string' || !/^CP-\d{4,}$/.test(c); })) fail_('PAQUETE', '"capturas" debe ser una lista de códigos (ej. ["CP-0003"]).');
+    if (pq.capturas.length > PAQUETE_MAX_CAPTURAS) fail_('PAQUETE', 'Demasiadas capturas en un paquete (máximo ' + PAQUETE_MAX_CAPTURAS + ').');
+  }
   if (ops.length > PAQUETE_MAX_OPS) fail_('PAQUETE', 'Demasiadas operaciones (' + ops.length + '). Máximo ' + PAQUETE_MAX_OPS + ': divide el paquete.');
   var refs = {};
   ops.forEach(function (o, i) {
@@ -3988,6 +4059,7 @@ function paqueteValidar_(ctx, p) {
   c.store = tx; c._tx = tx;
   var out = { valido: true, fuente: pq.fuente, autor_ia: pq.autor_ia || '', dudas: [].concat(pq.dudas || []), resultados: [], error: null, huella: paqueteHuella_(pq), decisiones: D.dec, faltan: [] };
   try {
+    out.capturas = paqueteCapturas_(c, pq).map(function (x) { return { codigo: x.codigo, tipo: x.tipo, titulo: x.titulo || x.archivo_nombre || '', destino: x.destino || '' }; });
     paqueteEjecutar_(c, pq, '', out.resultados, D.dec);
     out.faltan = paqueteFaltan_(out.resultados);
   } catch (e) {
@@ -4017,6 +4089,7 @@ function paqueteAplicar_(ctx, p) {
     return x.op_id !== opPq && ((!isEmpty_(p.archivo_id) && x.archivo_id === String(p.archivo_id)) || x.huella === huella);
   })[0];
   if (previo) fail_('YA_PROCESADO', (previo.archivo_id && previo.archivo_id === String(p.archivo_id) ? 'Este archivo' : 'Este mismo paquete') + ' ya se aplicó como ' + previo.codigo + '.', { codigo: previo.codigo, archivo_id: previo.archivo_id || '' });
+  var capturas = paqueteCapturas_(ctx, pq);
   var r = paqueteEjecutar_(ctx, pq, p.op_id, null, D.dec);
   var faltan = paqueteFaltan_(r.resultados);
   if (faltan.length) {
@@ -4036,7 +4109,9 @@ function paqueteAplicar_(ctx, p) {
   }, { opId: opPq });
   var avisos = [];
   r.resultados.forEach(function (x) { (x.avisos || []).forEach(function (w) { avisos.push({ code: w.code, message: 'Op. ' + x.n + ' ' + x.tabla + ': ' + w.message }); }); });
-  return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos, modificados: modificados }, warnings: avisos };
+  // 1.13: las capturas de las que salió el paquete quedan Procesadas y ligadas a él.
+  capturas.forEach(function (cp) { if (cp.estado !== 'Procesada' || cp.paquete_id !== reg.id) sysUpdate_(ctx, 'CAPTURAS', cp.id, { estado: 'Procesada', paquete_id: reg.id }, 'Procesada con el paquete ' + reg.codigo); });
+  return { data: { id: reg.id, codigo: reg.codigo, resultados: r.resultados, nuevos: nuevos, modificados: modificados, capturas: capturas.map(function (x) { return x.codigo; }) }, warnings: avisos };
 }
 
 /**
@@ -4090,6 +4165,11 @@ function capturaCrear_(ctx, p, archivo) {
   if (TIPOS_CAPTURA_().indexOf(c.tipo) < 0) fail_('VALOR_INVALIDO', 'Tipo de captura no válido.');
   if (!archivo && isEmpty_(c.texto) && isEmpty_(c.url)) fail_('REQUERIDO', 'La captura está vacía: escribe una nota, un enlace o adjunta un archivo.');
   var datos = { fecha: isEmpty_(c.fecha) ? now_(ctx) : c.fecha, tipo: c.tipo, titulo: c.titulo || '', texto: c.texto || '', url: c.url || '', origen: c.origen || '', estado: 'Nueva', notas: c.notas || '' };
+  // 1.13: para qué es (Taller, Cliente, Personal) y montos.
+  ['destino', 'monto', 'monto_tipo', 'pago_por', 'monto_mio', 'monto_mama', 'cliente_id'].forEach(function (k) { if (!isEmpty_(c[k])) datos[k] = c[k]; });
+  if (datos.cliente_id && !getRow_(ctx, 'CLIENTES', datos.cliente_id)) fail_('NO_EXISTE', 'El cliente elegido no existe.');
+  if (datos.cliente_id && !datos.destino) datos.destino = 'Cliente';
+  if (!isEmpty_(datos.cliente_id) && datos.estado === 'Nueva') datos.estado = 'Asignada';
   if (archivo) { datos.archivo_id = archivo.id; datos.archivo_nombre = archivo.nombre; datos.archivo_url = archivo.url; datos.mime = archivo.mime; datos.bytes = archivo.bytes; }
   var r = insertRow_(ctx, 'CAPTURAS', datos, { opId: p.op_id, allowCalc: true });
   return { data: { captura: project_(ctx, 'CAPTURAS', r.row) }, warnings: r.warnings || [], duplicate: r.duplicate };
@@ -4107,6 +4187,8 @@ function capturasBorrables_(ctx, hoyIso) {
   return activeRows_(ctx, 'CAPTURAS').filter(function (c) {
     if (isEmpty_(c.archivo_id) || c.archivo_borrado === true) return false;
     if (c.estado !== 'Procesada' && c.estado !== 'Descartada') return false;
+    // Personal (cuentas con mamá): consolidada = incluida en un corte de cuentas.
+    if (c.destino === 'Personal' && c.corte !== true && c.estado === 'Procesada' && isEmpty_(c.familia_corte)) return false;
     var desde = toMs_(c.editado_en || c.creado_en);
     if (!isEmpty_(c.trabajo_id) && c.estado === 'Procesada') {
       var t = getRow_(ctx, 'TRABAJOS', c.trabajo_id);
@@ -4130,6 +4212,97 @@ function avisoCapturasCorreo_(lista, total) {
   return { asunto: 'EG Captura: ' + (lista.length ? lista.length + ' captura(s) para borrar' : 'nada para borrar'), cuerpo: L.join('\n') };
 }
 
+/** 1.13: capturas que nombra un paquete ("capturas": ["CP-…"]). Tienen que existir y estar pendientes (Nueva o Asignada). */
+function paqueteCapturas_(ctx, pq) {
+  var vistos = {};
+  return (pq.capturas || []).map(function (cod) {
+    if (vistos[cod]) fail_('PAQUETE', 'La captura ' + cod + ' está repetida en "capturas".');
+    vistos[cod] = true;
+    var cp = activeRows_(ctx, 'CAPTURAS').filter(function (x) { return x.codigo === cod; })[0];
+    if (!cp) fail_('PAQUETE', 'La captura ' + cod + ' no existe.');
+    if (cp.estado === 'Procesada' || cp.estado === 'Descartada') fail_('PAQUETE', 'La captura ' + cod + ' ya está ' + cp.estado.toLowerCase() + '.');
+    return cp;
+  });
+}
+
+/* ───────── 1.13 Cuentas con mamá (Personal): lo de cada uno es de cada uno ─────────
+ * Si pagó Víctor, la parte de mamá suma a "mamá me debe". Si pagó mamá (o desde su cuenta), la parte de Víctor suma a "le debo".
+ * Saldo > 0 = mamá le debe a Víctor; < 0 = Víctor le debe a mamá. Un corte cierra los movimientos abiertos con su saldo.
+ */
+function familiaCompleto_(c) { return !isEmpty_(c.pago_por) && (Number(c.monto_mio) > 0 || Number(c.monto_mama) > 0); }
+function familiaEfecto_(c) { return c.pago_por === 'Yo' ? Number(c.monto_mama) || 0 : -(Number(c.monto_mio) || 0); }
+function familiaResumen_(ctx) {
+  requireAdmin_(ctx);
+  var todas = activeRows_(ctx, 'CAPTURAS').filter(function (c) { return c.destino === 'Personal' && c.estado !== 'Descartada'; });
+  var mov = function (c) { return { id: c.id, codigo: c.codigo, fecha: c.fecha, titulo: c.titulo || c.texto || c.archivo_nombre || '', pago_por: c.pago_por, monto_mio: Number(c.monto_mio) || 0, monto_mama: Number(c.monto_mama) || 0, efecto: familiaEfecto_(c), archivo_url: c.archivo_url || '', corte: c.familia_corte || '' }; };
+  var abiertos = todas.filter(function (c) { return c.corte !== true && isEmpty_(c.familia_corte) && familiaCompleto_(c); }).map(mov);
+  var incompletos = todas.filter(function (c) { return c.corte !== true && !familiaCompleto_(c); }).map(mov);
+  var cortes = todas.filter(function (c) { return c.corte === true; }).map(function (c) { return { codigo: c.codigo, fecha: c.fecha, saldo: (c.pago_por === 'Mamá' ? -1 : 1) * (Number(c.monto) || 0), notas: c.notas || '' }; });
+  var saldo = abiertos.reduce(function (s, m) { return s + m.efecto; }, 0);
+  var orden = function (a, b) { return String(a.fecha) < String(b.fecha) ? -1 : 1; };
+  abiertos.sort(orden); incompletos.sort(orden); cortes.sort(orden);
+  return { saldo: saldo, texto: familiaSaldoTexto_(saldo), abiertos: abiertos, incompletos: incompletos, cortes: cortes, cerrados: todas.filter(function (c) { return c.corte !== true && !isEmpty_(c.familia_corte); }).map(mov) };
+}
+function familiaSaldoTexto_(s) { var f = function (n) { return '$' + Math.round(Math.abs(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); }; return s > 0 ? 'Mamá te debe ' + f(s) : s < 0 ? 'Le debes a mamá ' + f(s) : 'Cuentas al día ($0)'; }
+/** Corte: guarda el saldo como una fila y marca los movimientos abiertos con su código. Idempotente por op_id. */
+function familiaCorte_(ctx, p) {
+  requireAdmin_(ctx);
+  var prev = findByOp_(ctx, 'CAPTURAS', p.op_id);
+  if (prev) return { data: { corte: prev, resumen: familiaResumen_(ctx) }, warnings: [], duplicate: true };
+  var r = familiaResumen_(ctx);
+  if (!r.abiertos.length) fail_('SIN_MOVIMIENTOS', 'No hay movimientos abiertos para cortar.');
+  var corte = insertRow_(ctx, 'CAPTURAS', { fecha: now_(ctx), tipo: 'Otro', titulo: 'Corte de cuentas con mamá', texto: r.texto + ' (' + r.abiertos.length + ' movimientos).', destino: 'Personal', estado: 'Procesada', corte: true, monto: Math.abs(r.saldo), pago_por: r.saldo < 0 ? 'Mamá' : 'Yo', notas: p.notas || '' }, { opId: p.op_id, allowCalc: true }).row;
+  // pago_por del corte solo indica el sentido del saldo (Mamá = Víctor le debía). No es un movimiento.
+  r.abiertos.forEach(function (m) { sysUpdate_(ctx, 'CAPTURAS', m.id, { familia_corte: corte.codigo }, 'Incluido en el corte ' + corte.codigo); });
+  return { data: { corte: project_(ctx, 'CAPTURAS', corte), resumen: familiaResumen_(ctx) }, warnings: [] };
+}
+
+/** 1.13 Resumen mensual de gastos del taller (para el contador). mes = 'AAAA-MM'. */
+function gastosResumen_(ctx, p) {
+  requireAdmin_(ctx);
+  var mes = String(p.mes || localDate_(now_(ctx)).slice(0, 7));
+  if (!/^\d{4}-\d{2}$/.test(mes)) fail_('VALOR_INVALIDO', 'Mes no válido (AAAA-MM).');
+  var gs = activeRows_(ctx, 'GASTOS').filter(function (g) { return String(g.fecha).slice(0, 7) === mes; });
+  var porCat = {}, tot = { total: 0, neto_factura: 0, iva_credito: 0, sin_factura: 0, reembolsar: 0 };
+  gs.forEach(function (g) {
+    var t = Number(g.total) || 0;
+    porCat[g.categoria] = (porCat[g.categoria] || 0) + t; tot.total += t;
+    if (g.documento === 'Factura') { tot.neto_factura += Number(g.neto) || 0; tot.iva_credito += Number(g.iva) || 0; } else tot.sin_factura += t;
+    if (g.pagado_con === 'Dinero personal (reembolsar)') tot.reembolsar += t;
+  });
+  var categorias = Object.keys(porCat).sort().map(function (k) { return { categoria: k, total: porCat[k] }; });
+  var detalle = gs.sort(function (a, b) { return String(a.fecha) < String(b.fecha) ? -1 : 1; }).map(function (g) { return { codigo: g.codigo, fecha: g.fecha, categoria: g.categoria, descripcion: g.descripcion, documento: g.documento + (g.documento_numero ? ' ' + g.documento_numero : ''), total: Number(g.total) || 0, neto: g.neto, iva: g.iva, pagado_con: g.pagado_con || '' }; });
+  return { data: { mes: mes, cantidad: gs.length, totales: tot, categorias: categorias, detalle: detalle }, warnings: [] };
+}
+
+/** 1.13: archivo "capturas-pendientes.md" para la IA (Proyectos IA EG / Contextos): lo nuevo por revisar y armar en paquetes. */
+var CONTEXTO_CAPTURAS = '__capturas';
+var CAPTURAS_ARCHIVO = 'capturas-pendientes.md';
+function capturasPendientesTexto_(ctx) {
+  var pesos = function (n) { return isEmpty_(n) ? '' : '$' + Math.round(Number(n)).toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.'); };
+  var celda = function (s, n) { return String(s == null ? '' : s).replace(/\s+/g, ' ').replace(/\|/g, '/').slice(0, n || 2000); };
+  var ps = activeRows_(ctx, 'CAPTURAS').filter(function (c) { return (c.estado === 'Nueva' || c.estado === 'Asignada') && c.corte !== true; })
+    .sort(function (a, b) { return String(a.fecha) < String(b.fecha) ? -1 : 1; });
+  var L = ['# Capturas pendientes — Eisen Garage', '', 'Formato EG-CAPTURAS-1 · actualizado ' + localDate_(now_(ctx)) + ' por la app EG Registro. SOLO LECTURA.',
+    'Para cada captura: revisa la nota y el archivo (foto o PDF; los audios no se pueden escuchar: pide a Víctor un resumen), pregunta lo que falte y arma el paquete con "capturas": ["CP-…"] (regla 31). Lo que no sirva para el registro, ponlo en dudas como "descartar CP-…".', ''];
+  if (!ps.length) { L.push('No hay capturas pendientes.'); return L.join('\n') + '\n'; }
+  ps.forEach(function (c) {
+    var cli = c.cliente_id ? getRow_(ctx, 'CLIENTES', c.cliente_id) : null, tr = c.trabajo_id ? getRow_(ctx, 'TRABAJOS', c.trabajo_id) : null;
+    L.push('## ' + c.codigo + ' · ' + c.tipo + ' · ' + String(c.fecha).slice(0, 16).replace('T', ' ') + ' · ' + c.estado);
+    if (c.titulo) L.push('- Título: ' + celda(c.titulo, 200));
+    L.push('- Destino: ' + (c.destino || 'Por definir') + (c.monto !== '' && c.monto !== null && c.monto !== undefined ? ' · monto ' + pesos(c.monto) + ' (' + (c.monto_tipo || 'Por definir') + ')' : ''));
+    if (c.destino === 'Personal') L.push('- Personal (cuentas con mamá): pagó ' + (c.pago_por || '¿?') + ' · mío ' + (pesos(c.monto_mio) || '¿?') + ' · de mamá ' + (pesos(c.monto_mama) || '¿?') + ' → falta completar (paquete "editar" no aplica: pide a Víctor completarlo en la app).');
+    if (cli) L.push('- Cliente: ' + cli.codigo + ' ' + celda(cli.nombre, 100));
+    if (tr) L.push('- Trabajo: ' + tr.codigo + ' ' + celda(tr.descripcion, 120));
+    if (c.texto) L.push('- Nota: ' + celda(c.texto, 2000));
+    if (c.url) L.push('- Enlace: ' + c.url);
+    if (c.archivo_id && c.archivo_borrado !== true) L.push('- Archivo: ' + celda(c.archivo_nombre, 150) + ' (' + (c.mime || '') + ') — https://drive.google.com/file/d/' + c.archivo_id + '/view');
+    L.push('');
+  });
+  L.push(ps.length + ' captura(s) pendiente(s).');
+  return L.join('\n') + '\n';
+}
+
 /** Marca el archivo de una captura como borrado (Api.gs lo manda a la papelera de Drive solo si está en la lista de borrables). */
 function capturaMarcarBorrado_(ctx, p, hoyIso) {
   requireAdmin_(ctx);
@@ -4142,7 +4315,7 @@ function capturaMarcarBorrado_(ctx, p, hoyIso) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -4446,6 +4619,10 @@ function handleInner_(ctx, action, p) {
     case 'captura_crear': return capturaCrear_(ctx, p, ctx._capturaArchivo || null);
     case 'capturas_borrables': return { data: { capturas: capturasBorrables_(ctx) }, warnings: [] };
     case 'captura_borrar_archivo': return capturaMarcarBorrado_(ctx, p);
+    case 'familia_resumen': return { data: familiaResumen_(ctx), warnings: [] };
+    case 'familia_corte': return familiaCorte_(ctx, p);
+    case 'gastos_resumen': return gastosResumen_(ctx, p);
+    case 'capturas_pendientes': requireAdmin_(ctx); return { data: { texto: capturasPendientesTexto_(ctx) }, warnings: [] };
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -5702,8 +5879,8 @@ function revisarLote(btn){
 
 
 /* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
-var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','CUENTAS_COBRO','PRESUPUESTOS','PRESUPUESTO_ITEMS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES','CAPTURAS'];
-var NOMBRES = { CUENTAS_COBRO:'Medios de cobro', PRESUPUESTOS:'Presupuestos', PRESUPUESTO_ITEMS:'Ítems de presupuesto', CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA', CAPTURAS:'Capturas (EG Captura)' };
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','CUENTAS_COBRO','PRESUPUESTOS','PRESUPUESTO_ITEMS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES','CAPTURAS','GASTOS'];
+var NOMBRES = { CUENTAS_COBRO:'Medios de cobro', PRESUPUESTOS:'Presupuestos', PRESUPUESTO_ITEMS:'Ítems de presupuesto', CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA', CAPTURAS:'Capturas (EG Captura)', GASTOS:'Gastos del taller' };
 var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
 function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
 function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
@@ -5712,7 +5889,8 @@ function renderDatos(){
   var opts = TABLAS_DATOS.map(function(t){ return '<option value="' + t + '"' + (t === D.tabla ? ' selected' : '') + '>' + esc(NOMBRES[t]) + '</option>'; }).join('');
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
-    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div>' +
+    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -5810,6 +5988,55 @@ function mostrarStock(){
     var h = it.length ? '<div class="tw"><table class="h"><thead><tr><th>Artículo</th><th>Dueño</th><th class="n">Stock</th></tr></thead><tbody>' + it.map(function(x){ return '<tr><td>' + esc(x.codigo + ' · ' + x.articulo) + '</td><td>' + esc(x.propietario === 'Cliente' && x.cliente_nombre ? x.cliente_nombre : x.propietario) + '</td><td class="n">' + (x.conocido ? esc(x.stock) + ' ' + esc(x.unidad) : 'Sin conteo') + '</td></tr>'; }).join('') + '</tbody></table></div>' : '<div class="empty">No hay artículos en inventario.</div>';
     if (r.data.errores.length) h += '<div class="block" style="margin-top:12px"><h3>Movimientos no contados</h3><ul style="margin:0;padding-left:18px">' + r.data.errores.map(function(x){ return '<li>' + esc(x) + '</li>'; }).join('') + '</ul></div>';
     abrirHoja('Stock', h);
+  }).catch(function(){});
+}
+/* ───── 1.13: capturas nuevas, gastos del mes y cuentas con mamá ───── */
+function irATabla(tabla, id){
+  D.tabla = tabla; D.cliente = ''; cerrarHoja(); renderDatos();
+  if (!id) return;
+  call('listar', { tabla: tabla }).then(function(r){ D.filas = r.data; var f = r.data.filter(function(x){ return x.id === id; })[0]; if (f) abrirFormulario(f); }).catch(function(){});
+}
+function mostrarCapturas(){
+  call('listar', { tabla: 'CAPTURAS' }).then(function(r){
+    var L = r.data.filter(function(c){ return (c.estado === 'Nueva' || c.estado === 'Asignada') && c.corte !== true; }).sort(function(a, b){ return String(a.fecha) < String(b.fecha) ? 1 : -1; });
+    var h = '<p class="s" style="margin:0 0 10px">Para cargarlas: en el chat de GPT o Claude escribe <b>"revisa las capturas nuevas"</b>. La IA arma el paquete y lo deja en la Bandeja EG; al aplicarlo, estas capturas quedan Procesadas.</p>';
+    h += L.length ? '<div class="list">' + L.map(function(c){
+      return '<div class="item" style="cursor:default;display:block"><div class="t">' + esc(c.codigo + ' · ' + (c.titulo || c.texto || c.archivo_nombre || c.tipo).slice(0, 80)) + '</div>' +
+        '<div class="s">' + esc(fmtFecha(c.fecha)) + ' · ' + esc(c.tipo) + ' · ' + esc(c.destino || 'Por definir') + (c.monto !== '' && c.monto != null ? ' · ' + esc(pesos(c.monto)) + (c.monto_tipo ? ' (' + esc(c.monto_tipo) + ')' : '') : '') + ' · ' + esc(c.estado) + '</div>' +
+        '<div class="inline" style="margin-top:8px;flex-wrap:wrap">' + (c.archivo_url ? '<a class="btn ghost" href="' + esc(c.archivo_url) + '" target="_blank" rel="noopener">Ver archivo</a>' : '') +
+        '<button class="btn ghost" data-act="cp-abrir" data-id="' + esc(c.id) + '">Asignar / editar</button><button class="btn danger" data-act="cp-descartar" data-id="' + esc(c.id) + '" data-v="' + c.version + '">Descartar</button></div></div>';
+    }).join('') + '</div>' : '<div class="empty">No hay capturas pendientes.</div>';
+    abrirHoja('Capturas nuevas (' + L.length + ')', h);
+  }).catch(function(){});
+}
+function mostrarGastos(mes){
+  call('gastos_resumen', mes ? { mes: mes } : {}).then(function(r){
+    var d = r.data, t = d.totales;
+    var h = '<div class="inline" style="flex-wrap:wrap;align-items:flex-end"><label class="f" style="margin:0"><span>Mes</span><input class="i" type="month" id="gaMes" value="' + esc(d.mes) + '"></label><button class="btn ghost" data-act="ga-ver">Ver</button><button class="btn go" data-act="ga-nuevo">Registrar gasto</button></div>';
+    h += '<div class="tw" style="margin-top:12px"><table class="h"><tbody>' +
+      '<tr><td>Total gastado (' + d.cantidad + ')</td><td class="n"><b>' + esc(pesos(t.total)) + '</b></td></tr>' +
+      '<tr><td>Facturas: neto</td><td class="n">' + esc(pesos(t.neto_factura)) + '</td></tr>' +
+      '<tr><td>Facturas: IVA (crédito fiscal)</td><td class="n">' + esc(pesos(t.iva_credito)) + '</td></tr>' +
+      '<tr><td>Boletas y sin documento</td><td class="n">' + esc(pesos(t.sin_factura)) + '</td></tr>' +
+      '<tr><td>Pagado con dinero personal (reembolsar)</td><td class="n">' + esc(pesos(t.reembolsar)) + '</td></tr></tbody></table></div>';
+    if (d.categorias.length) h += '<h3 style="margin:14px 0 6px">Por categoría</h3><div class="tw"><table class="h"><tbody>' + d.categorias.map(function(c){ return '<tr><td>' + esc(c.categoria) + '</td><td class="n">' + esc(pesos(c.total)) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    if (d.detalle.length) h += '<h3 style="margin:14px 0 6px">Detalle</h3><div class="tw"><table class="h"><thead><tr><th>Fecha</th><th>Gasto</th><th>Documento</th><th class="n">Total</th></tr></thead><tbody>' + d.detalle.map(function(g){ return '<tr><td>' + esc(g.fecha) + '</td><td>' + esc(g.codigo + ' · ' + g.categoria + ' · ' + g.descripcion) + '</td><td>' + esc(g.documento) + '</td><td class="n">' + esc(pesos(g.total)) + '</td></tr>'; }).join('') + '</tbody></table></div>';
+    else h += '<div class="empty" style="margin-top:12px">Sin gastos registrados este mes.</div>';
+    h += '<p class="s" style="margin-top:12px">Resumen para el contador. Revisa con él cómo registrar el IVA y los reembolsos.</p>';
+    abrirHoja('Gastos del taller · ' + d.mes, h);
+  }).catch(function(){});
+}
+var FA_CORTE = 0;
+function mostrarFamilia(){
+  call('familia_resumen', {}).then(function(r){
+    var d = r.data, fila = function(m){ return '<tr><td>' + esc(String(m.fecha).slice(0, 10)) + '</td><td>' + esc(m.codigo + ' · ' + m.titulo).slice(0, 70) + '</td><td>' + esc(m.pago_por || '¿?') + '</td><td class="n">' + esc(m.monto_mio ? pesos(m.monto_mio) : '') + '</td><td class="n">' + esc(m.monto_mama ? pesos(m.monto_mama) : '') + '</td><td class="n">' + (m.efecto >= 0 ? '+' : '−') + esc(pesos(Math.abs(m.efecto))) + '</td></tr>'; };
+    var cab = '<thead><tr><th>Fecha</th><th>Detalle</th><th>Pagó</th><th class="n">Mío</th><th class="n">De mamá</th><th class="n">Saldo</th></tr></thead>';
+    var h = '<div class="block" style="text-align:center"><div class="s">Saldo</div><div style="font:700 26px Barlow Condensed,sans-serif">' + esc(d.texto) + '</div><div class="s">Si pagaste tú, lo de mamá suma a lo que te debe. Si pagó ella (o desde su cuenta), lo tuyo suma a lo que le debes.</div></div>';
+    h += '<h3 style="margin:14px 0 6px">Abiertos (' + d.abiertos.length + ')</h3>' + (d.abiertos.length ? '<div class="tw"><table class="h">' + cab + '<tbody>' + d.abiertos.map(fila).join('') + '</tbody></table></div>' : '<div class="empty">Sin movimientos abiertos.</div>');
+    if (d.incompletos.length) h += '<h3 style="margin:14px 0 6px">Por completar (' + d.incompletos.length + ')</h3><p class="s" style="margin:0 0 6px">Falta quién pagó o los montos. Ábrelas en Datos → Capturas.</p><div class="list">' + d.incompletos.map(function(m){ return '<button class="item" type="button" data-act="cp-abrir" data-id="' + esc(m.id) + '"><div class="body"><div class="t">' + esc(m.codigo + ' · ' + m.titulo) + '</div></div></button>'; }).join('') + '</div>';
+    if (d.cortes.length) h += '<h3 style="margin:14px 0 6px">Cortes anteriores</h3><ul style="margin:0;padding-left:18px">' + d.cortes.map(function(c){ return '<li>' + esc(String(c.fecha).slice(0, 10) + ' · ' + c.codigo + ' · ' + (c.saldo > 0 ? 'mamá debía ' : c.saldo < 0 ? 'debías ' : 'al día ') + pesos(Math.abs(c.saldo))) + '</li>'; }).join('') + '</ul>';
+    if (d.abiertos.length) h += '<div class="inline" style="margin-top:14px"><button class="btn danger" data-act="fa-corte">' + (FA_CORTE ? 'Confirmar corte (' + esc(d.texto) + ')' : 'Hacer corte de cuentas') + '</button></div><p class="s">Haz el corte cuando ya se pagó la diferencia: el saldo vuelve a $0 y los movimientos quedan en el historial.</p>';
+    abrirHoja('Cuentas con mamá', h);
   }).catch(function(){});
 }
 function mostrarIntegridad(){
@@ -6093,6 +6320,21 @@ document.addEventListener('click', function(ev){
   else if (a === 'dt-control') mostrarControl();
   else if (a === 'dt-stock') mostrarStock();
   else if (a === 'dt-integridad') mostrarIntegridad();
+  else if (a === 'cp-nuevas') mostrarCapturas();
+  else if (a === 'cp-abrir') irATabla('CAPTURAS', id);
+  else if (a === 'cp-descartar'){
+    if (el.getAttribute('data-ok') !== '1') { el.setAttribute('data-ok', '1'); el.textContent = 'Confirmar descarte'; return; }
+    call('editar', { tabla: 'CAPTURAS', id: id, version: Number(el.getAttribute('data-v')), cambios: { estado: 'Descartada' }, op_id: opId() }).then(function(){ toast('Captura descartada.'); mostrarCapturas(); }).catch(function(){});
+  }
+  else if (a === 'ga-mes') mostrarGastos();
+  else if (a === 'ga-ver') mostrarGastos($('gaMes') ? $('gaMes').value : '');
+  else if (a === 'ga-nuevo') { D.tabla = 'GASTOS'; cerrarHoja(); renderDatos(); abrirFormulario(null); }
+  else if (a === 'fa-ver') { FA_CORTE = 0; mostrarFamilia(); }
+  else if (a === 'fa-corte'){
+    if (!FA_CORTE) { FA_CORTE = 1; mostrarFamilia(); return; }
+    FA_CORTE = 0;
+    call('familia_corte', { op_id: opId() }).then(function(r){ toast('Corte ' + r.data.corte.codigo + ' hecho. ' + r.data.resumen.texto + '.'); mostrarFamilia(); }).catch(function(){});
+  }
   else if (a === 'dt-captura-papelera'){
     call('captura_borrar_archivo', { captura_id: id, op_id: opId() }).then(function(){ toast('Archivo enviado a la papelera de Drive (se recupera hasta 30 días).'); cerrarHoja(); cargarDatos(); }).catch(function(){});
   }
