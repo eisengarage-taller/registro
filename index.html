@@ -157,7 +157,7 @@ var APP_CONFIG = { API_URL: 'https://script.google.com/macros/s/AKfycby8W2UZmUiP
  * calc: la llena el sistema; nadie la escribe a mano.
  */
 var CONTRACT = {
-  version: 'EG-REG-1.5-BORRADOR',
+  version: 'EG-REG-1.5-BORRADOR',  // estructura compatible; la app va en 1.10
   timezone: 'America/Santiago',
   roles: ['Administrador', 'Administracion', 'Tecnico'],
 
@@ -209,7 +209,9 @@ var CONTRACT = {
     rol: ['Administrador', 'Administracion', 'Tecnico'],
     propietario_item: ['Taller', 'Cliente'],
     tipo_movimiento: ['Entrada', 'Salida', 'Ajuste positivo', 'Ajuste negativo'],
-    estado_herramienta: ['Operativa', 'En reparación', 'Baja', 'Por confirmar']
+    estado_herramienta: ['Operativa', 'En reparación', 'Baja', 'Por confirmar'],
+    estado_presupuesto: ['Borrador', 'Publicado', 'Autorizado', 'Rechazado', 'Retirado'],
+    tipo_cobro: ['Transferencia', 'Efectivo', 'Tarjeta', 'Otro']
   },
 
   /** Listas editables (hoja LISTAS). Se agregan filas sin cambiar la estructura; se desactivan, no se borran. */
@@ -245,7 +247,13 @@ var CONTRACT = {
         { k: 'estado', t: 'enum', e: 'estado_cliente', req: true },
         { k: 'historico_id', t: 'text', d: 'ID del archivo HISTÓRICO de este cliente (solo lectura).' },
         { k: 'fuente', t: 'text' },
-        { k: 'notas', t: 'long' }
+        { k: 'notas', t: 'long' },
+        { k: 'portal_solicitudes', t: 'bool', d: 'Portal del cliente (1.10): Sí = puede pedir trabajos desde su enlace.' },
+        { k: 'portal_cuenta', t: 'bool', d: 'Portal: Sí = muestra su estado de cuenta (A2) hasta portal_cuenta_vence.' },
+        { k: 'portal_cuenta_vence', t: 'date', d: 'Portal: hasta qué día se ve el estado de cuenta.' },
+        { k: 'portal_cobro', t: 'text', d: 'Portal: medios de cobro (códigos CC-… separados por coma) que se muestran con el estado de cuenta.' },
+        { k: 'portal_codigo', t: 'text', calc: true, d: 'Código del enlace del portal. Lo genera el sistema; se borra al revocar. No compartir fuera del enlace.' },
+        { k: 'portal_publicado_en', t: 'datetime', calc: true, d: 'Última publicación del portal.' }
       ]
     },
     CONTACTOS: {
@@ -724,6 +732,69 @@ var CONTRACT = {
       ]
     },
 
+    CUENTAS_COBRO: {
+      file: 'BASE', scope: 'central', prefix: 'CC', tecnico: 'ninguno',
+      d: 'Medios de cobro de Eisen Garage SpA que se pueden mostrar al cliente en un presupuesto o estado de cuenta (cuentas bancarias, efectivo, tarjeta). Se elige cuáles mostrar en cada caso.',
+      columns: [
+        { k: 'nombre', t: 'text', req: true, d: 'Cómo se ve en la lista (ej. BancoEstado Cuenta Emprendedor).' },
+        { k: 'tipo', t: 'enum', e: 'tipo_cobro', req: true },
+        { k: 'banco', t: 'text' },
+        { k: 'tipo_cuenta', t: 'text', d: 'Ej. Cuenta Corriente, Cuenta Vista, Chequera Electrónica.' },
+        { k: 'numero', t: 'text', d: 'Número de cuenta.' },
+        { k: 'titular', t: 'text', d: 'Ej. Eisen Garage SpA.' },
+        { k: 'rut', t: 'text', d: 'RUT del titular.' },
+        { k: 'correo', t: 'email', d: 'Correo para avisar la transferencia.' },
+        { k: 'detalle', t: 'text', d: 'Texto para el cliente (ej. "Efectivo o tarjeta en el taller").' },
+        { k: 'activo', t: 'bool', req: true },
+        { k: 'orden', t: 'int' },
+        { k: 'notas', t: 'long', d: 'Notas internas (no se publican).' }
+      ]
+    },
+    PRESUPUESTOS: {
+      file: 'BASE', scope: 'cliente', prefix: 'PS', tecnico: 'ninguno',
+      d: 'Presupuestos para el cliente (A3). Se publican por enlace o en el portal; el cliente responde y Víctor confirma. Los ítems van en PRESUPUESTO_ITEMS.',
+      columns: [
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', req: true },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS', req: true },
+        { k: 'equipo_id', t: 'ref', ref: 'EQUIPOS' },
+        { k: 'titulo', t: 'text', req: true, d: 'Ej. Reparación fuga de refrigerante.' },
+        { k: 'diagnostico', t: 'long', d: 'Lo que se encontró y lo que se propone, en palabras para el cliente.' },
+        { k: 'condiciones', t: 'long', d: 'Condiciones para el cliente (garantía, plazos, abono).' },
+        { k: 'validez_dias', t: 'int', d: 'Días de validez desde que se publica. Vacío = CONFIG.presupuesto_validez_dias.' },
+        { k: 'cobro', t: 'text', d: 'Medios de cobro a mostrar (códigos CC-… separados por coma). Vacío = ninguno.' },
+        { k: 'estado', t: 'enum', e: 'estado_presupuesto', req: true },
+        { k: 'notas', t: 'long', d: 'Notas internas (no se publican).' },
+        { k: 'revision', t: 'int', calc: true, d: 'Revisión publicada vigente.' },
+        { k: 'vence_en', t: 'date', calc: true, d: 'Último día de validez de lo publicado.' },
+        { k: 'publicado_en', t: 'datetime', calc: true },
+        { k: 'enlace_codigo', t: 'text', calc: true, d: 'Código del enlace del presupuesto. No compartir fuera del enlace.' },
+        { k: 'respuesta', t: 'text', calc: true, d: 'Última respuesta del cliente (Autorizo, No autorizo, Consulta).' },
+        { k: 'respuesta_detalle', t: 'long', calc: true, d: 'Quién respondió, cuándo, mensaje y opcionales aceptados.' },
+        { k: 'cerrado_en', t: 'datetime', calc: true, d: 'Cuándo se confirmó la autorización o el rechazo.' }
+      ]
+    },
+    PRESUPUESTO_ITEMS: {
+      file: 'BASE', scope: 'cliente', prefix: 'PI', tecnico: 'ninguno',
+      d: 'Líneas de un presupuesto. Precio al cliente neto (más IVA). El precio sale del costo y el margen: precio = costo ÷ (1 − margen %).',
+      columns: [
+        { k: 'presupuesto_id', t: 'ref', ref: 'PRESUPUESTOS', req: true },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES', d: 'Lo completa el sistema desde el presupuesto.' },
+        { k: 'orden', t: 'int' },
+        { k: 'tipo', t: 'enum', e: 'tipo_concepto', req: true },
+        { k: 'descripcion', t: 'text', req: true },
+        { k: 'cantidad', t: 'num', d: 'Vacío = 1.' },
+        { k: 'unidad', t: 'lista', l: 'unidades' },
+        { k: 'catalogo_id', t: 'ref', ref: 'CATALOGO', d: 'Repuesto del catálogo: si no se indica el costo, se toma su último costo neto.' },
+        { k: 'costo_unitario', t: 'money', d: 'Costo neto unitario (uso interno, nunca se publica).' },
+        { k: 'margen_pct', t: 'num', d: 'Margen en % sobre el precio (ej. 30). Con el costo calcula el precio.' },
+        { k: 'precio_unitario', t: 'money', d: 'Precio neto unitario al cliente. Vacío = se calcula con costo y margen.' },
+        { k: 'opcional', t: 'bool', d: 'Sí = recomendado: el cliente elige si lo acepta.' },
+        { k: 'total', t: 'money', calc: true, d: 'Cantidad × precio unitario (neto).' },
+        { k: 'concepto_id', t: 'ref', ref: 'CONCEPTOS', calc: true, d: 'Cobro creado al confirmar la autorización.' },
+        { k: 'notas', t: 'long', d: 'Notas internas (no se publican).' }
+      ]
+    },
+
     PAQUETES: {
       file: 'BASE', scope: 'central', prefix: 'PQ', tecnico: 'ninguno',
       d: 'Paquetes de datos que arma una IA (Claude o GPT) desde un dictado o informe, revisados y aplicados en la app. Guardan la fuente y el texto original.',
@@ -770,7 +841,14 @@ var CONTRACT = {
     { clave: 'contextos_lectores', valor: 'eisengarage@gmail.com', nota: 'Cuentas que pueden LEER los contextos (separadas por coma), por ejemplo la del conector de Drive de la IA.' },
     { clave: 'iva_pct', valor: '19', nota: 'IVA en % para calcular costos y precios.' },
     { clave: 'precio_vigencia_dias', valor: '60', nota: 'Días después de los cuales un precio del catálogo se marca "por confirmar" al cotizar.' },
-    { clave: 'publico_url_base', valor: 'https://eisengarage-clientes.github.io/historial/', nota: 'Dirección de la página del historial para clientes. El enlace se arma como <url>#k=<código>.' }
+    { clave: 'publico_url_base', valor: 'https://eisengarage-clientes.github.io/historial/', nota: 'Dirección de la página del historial para clientes. El enlace se arma como <url>#k=<código>.' },
+    { clave: 'presupuesto_validez_dias', valor: '15', nota: 'Días de validez de un presupuesto publicado (se puede cambiar en cada presupuesto).' },
+    { clave: 'cuenta_vence_dias', valor: '30', nota: 'Días que se ve el estado de cuenta en el portal (se puede cambiar en cada cliente).' },
+    { clave: 'avisos_modo', valor: 'Horarios', nota: 'Correo de aviso de solicitudes y respuestas web: Horarios, Frecuencia o Desactivado.' },
+    { clave: 'avisos_horarios', valor: '09:00,14:00,19:00', nota: 'Modo Horarios: horas del día (HH:MM, separadas por coma) en que se envía el aviso si hay novedades.' },
+    { clave: 'avisos_frecuencia_min', valor: '60', nota: 'Modo Frecuencia: minutos mínimos entre avisos (15 a 1440).' },
+    { clave: 'avisos_correo', valor: 'eisengarage@gmail.com', nota: 'Correo que recibe los avisos.' },
+    { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Meses tras los cuales se borran los datos personales de las solicitudes web (1 a 60).' }
   ]
 };
 
@@ -1717,6 +1795,66 @@ var RULES_ = {
     }
   },
 
+  CUENTAS_COBRO: {
+    before: function (ctx, row) {
+      if (row.tipo === 'Transferencia' && (isEmpty_(row.banco) || isEmpty_(row.numero) || isEmpty_(row.titular))) fail_('REQUERIDO', 'Para una cuenta de transferencia indica banco, número y titular.');
+      if (isEmpty_(row.activo)) row.activo = true;
+    }
+  },
+
+  PRESUPUESTOS: {
+    before: function (ctx, row, prev, w) {
+      var accion = ctx._presupuestoAccion === true;
+      if (!prev && isEmpty_(row.estado)) row.estado = 'Borrador';
+      if (!accion) {
+        if (!prev && row.estado !== 'Borrador') fail_('VALOR_INVALIDO', 'Un presupuesto nuevo parte como Borrador; se publica con "Publicar".');
+        if (prev && row.estado !== prev.estado) fail_('VALOR_INVALIDO', 'El estado del presupuesto cambia con Publicar, Confirmar o Retirar.');
+        if (prev && PRESUPUESTO_CERRADOS.indexOf(prev.estado) >= 0) {
+          var cambia = Object.keys(colMap_('PRESUPUESTOS')).some(function (k) { return k !== 'notas' && !CONTRACT.technicalColumns.some(function (t) { return t.k === k; }) && String(prev[k]) !== String(row[k]); });
+          if (cambia) fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + prev.codigo + ' está ' + prev.estado + ': solo se pueden cambiar sus notas.');
+        }
+      }
+      var tr = mustGet_(ctx, 'TRABAJOS', row.trabajo_id, 'Trabajo');
+      if (isEmpty_(row.cliente_id)) row.cliente_id = tr.cliente_id;
+      if (isEmpty_(row.equipo_id) && !isEmpty_(tr.equipo_id)) row.equipo_id = tr.equipo_id;
+      if (!isEmpty_(row.validez_dias) && !(Number(row.validez_dias) >= 1 && Number(row.validez_dias) <= 365)) fail_('VALOR_INVALIDO', 'La validez debe estar entre 1 y 365 días.');
+      row.cobro = cobroCodigos_(ctx, row.cobro);
+      if (prev && prev.estado === 'Publicado' && !accion) w.push({ code: 'PUBLICADO', message: 'El cliente sigue viendo lo publicado hasta que vuelvas a publicar.' });
+    }
+  },
+
+  PRESUPUESTO_ITEMS: {
+    before: function (ctx, row, prev, w) {
+      var ps = mustGet_(ctx, 'PRESUPUESTOS', row.presupuesto_id, 'Presupuesto');
+      if (prev && prev.presupuesto_id !== row.presupuesto_id) fail_('VALOR_INVALIDO', 'Un ítem no se cambia de presupuesto.');
+      if (PRESUPUESTO_CERRADOS.indexOf(ps.estado) >= 0 && ctx._presupuestoAccion !== true) fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' está ' + ps.estado + ': sus ítems ya no se cambian.');
+      row.cliente_id = ps.cliente_id;
+      if (isEmpty_(row.cantidad)) row.cantidad = 1;
+      if (!(Number(row.cantidad) > 0)) fail_('VALOR_INVALIDO', 'La cantidad debe ser mayor que cero.');
+      if (!isEmpty_(row.catalogo_id) && isEmpty_(row.costo_unitario)) {
+        var u = activeRows_(ctx, 'PRECIOS').filter(function (x) { return x.catalogo_id === row.catalogo_id; }).sort(precioOrden_)[0];
+        if (u) {
+          row.costo_unitario = u.costo_neto;
+          var dias = diasEntre_(u.fecha, today_(ctx));
+          w.push({ code: 'COSTO_CATALOGO', message: 'Costo tomado del catálogo: $' + u.costo_neto + ' neto (' + u.fecha + ').' });
+          if (dias !== null && dias > vigenciaDias_(ctx)) w.push({ code: 'PRECIO_ANTIGUO', message: 'El precio del catálogo tiene ' + dias + ' días: confírmalo con el proveedor.' });
+        }
+      }
+      if (!isEmpty_(row.margen_pct) && !(Number(row.margen_pct) >= 0 && Number(row.margen_pct) < 100)) fail_('VALOR_INVALIDO', 'El margen debe estar entre 0 y 99 %.');
+      if (isEmpty_(row.precio_unitario)) {
+        if (isEmpty_(row.costo_unitario) || isEmpty_(row.margen_pct)) fail_('REQUERIDO', 'Ítem "' + row.descripcion + '": indica el precio al cliente, o el costo y el margen.');
+        row.precio_unitario = precioCliente_(row.costo_unitario, row.margen_pct, ivaPct_(ctx)).neto;
+      }
+      if (Number(row.precio_unitario) < 0) fail_('VALOR_INVALIDO', 'El precio no puede ser negativo.');
+      if (!isEmpty_(row.costo_unitario) && Number(row.precio_unitario) < Number(row.costo_unitario)) w.push({ code: 'BAJO_COSTO', message: 'Ítem "' + row.descripcion + '": el precio ($' + row.precio_unitario + ') es menor que el costo ($' + row.costo_unitario + ').' });
+      row.total = Math.round(Number(row.cantidad) * Number(row.precio_unitario));
+    },
+    anular: function (ctx, row) {
+      var ps = getRow_(ctx, 'PRESUPUESTOS', row.presupuesto_id);
+      if (ps && PRESUPUESTO_CERRADOS.indexOf(ps.estado) >= 0 && ctx._presupuestoAccion !== true) fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' está ' + ps.estado + ': sus ítems ya no se cambian.');
+    }
+  },
+
   LISTAS: {
     before: function (ctx, row) {
       if (activeRows_(ctx, 'LISTAS').some(function (l) { return l.id !== row.id && l.lista === row.lista && l.valor === row.valor; })) fail_('DUPLICADO', 'Ese valor ya existe en la lista ' + row.lista + '.');
@@ -2423,7 +2561,7 @@ function historialPublicar_(ctx, p) {
   var revision = nueva ? (ult ? Number(ult.revision) + 1 : 1) : Number(ult.revision);
   if (nueva) pub.publicacionAgregar({ recurso_id: e.id, tipo: HISTORIAL_TIPO, revision: revision, contenido: texto, huella_contenido: hc, publicado_en: ahora, publicado_por: ctx.user.correo });
   sysUpdate_(ctx, 'EQUIPOS', e.id, { historial_publicado_en: ahora }, 'Historial publicado (revisión ' + revision + ')');
-  return { data: { url: historialUrl_(ctx, codigo), revision: revision, nueva: nueva, trabajos: contenido.trabajos.length }, warnings: [] };
+  return { data: { url: historialUrl_(ctx, codigo), revision: revision, nueva: nueva, trabajos: contenido.trabajos.length }, warnings: portalRefrescar_(ctx, e.cliente_id) };
 }
 
 /** Revoca el enlace: deja de funcionar al tiro, se retira lo publicado y se quita la autorización (hay que registrarla de nuevo). */
@@ -2435,7 +2573,545 @@ function historialRevocar_(ctx, p) {
   pub.enlacesActivos(e.id, HISTORIAL_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
   pub.publicacionesRetirar(e.id, HISTORIAL_TIPO);
   updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_publicable: false }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
+  return { data: { revocados: n }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+}
+
+/* ───────── 1.10: Portal del cliente, presupuestos (A3), estado de cuenta (A2) y solicitudes web (A4) ─────────
+ * Mismas reglas que el historial (A1): lo publicado es una lista CERRADA de campos, se escribe en la planilla PUBLICO
+ * (otra cuenta) y el código del enlace queda en la BASE; en PUBLICO solo su huella. Nunca costos, márgenes ni notas internas.
+ * Lo que escribe el cliente (solicitudes y respuestas) queda en PUBLICO y no cambia la BASE por sí solo: lo confirma Víctor.
+ */
+var PORTAL_TIPO = 'P';
+var PRESUPUESTO_TIPO = 'A3';
+var PORTAL_FORMATO = 'EG-PORTAL-1';
+var PRESUPUESTO_FORMATO = 'EG-PRESUPUESTO-1';
+var CUENTA_FORMATO = 'EG-CUENTA-1';
+var PRESUPUESTO_CERRADOS = ['Autorizado', 'Rechazado', 'Retirado'];
+var TALLER_PUBLICO = { razon_social: 'Eisen Garage SpA', rut: '78.417.312-7', direccion: 'Gulutren 022, Peumo, Región de O\'Higgins', correo: 'eisengarage@gmail.com' };
+var SOLICITUD_ESTADOS = ['Nueva', 'Contactado', 'Convertida', 'Descartada'];
+
+/** Hora local HH:MM en la zona del contrato. */
+function localHM_(iso) {
+  var d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  if (typeof Utilities !== 'undefined' && Utilities.formatDate) return Utilities.formatDate(d, CONTRACT.timezone, 'HH:mm');
+  var parts = new Intl.DateTimeFormat('en-GB', { timeZone: CONTRACT.timezone, hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(d);
+  var o = {}; parts.forEach(function (p) { o[p.type] = p.value; });
+  return (o.hour === '24' ? '00' : o.hour) + ':' + o.minute;
+}
+function sumarDias_(fecha, n) {
+  var m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(fecha || ''));
+  if (!m) return '';
+  var d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) + Number(n) * 86400000);
+  return d.toISOString().slice(0, 10);
+}
+function cfgEntero_(ctx, clave, defecto, min, max) {
+  var v = Number((ctx.config || {})[clave]);
+  return (v >= min && v <= max) ? Math.floor(v) : defecto;
+}
+/** Dirección de una página del sitio para clientes, a partir de CONFIG.publico_url_base (…/historial/). */
+function enlaceSitio_(ctx, pagina) {
+  var base = String((ctx.config && ctx.config.publico_url_base) || '').trim().replace(/#.*$/, '');
+  if (!base) return '';
+  base = base.replace(/historial\/?$/, '');
+  if (!/\/$/.test(base)) base += '/';
+  return base + pagina + '/';
+}
+function enlaceUrl_(ctx, pagina, codigo) { var b = enlaceSitio_(ctx, pagina); return b && codigo ? b + '#k=' + codigo : ''; }
+
+/** Deja un solo enlace activo de ese recurso y tipo, con la huella de este código. */
+function enlaceAsegurar_(pub, recursoId, tipo, codigo, ahora) {
+  var huella = historialHuella_(codigo);
+  pub.enlacesActivos(recursoId, tipo).forEach(function (x) { if (x.huella !== huella) pub.enlaceRevocar(x.huella, ahora); });
+  if (!pub.enlaceActivo(huella)) pub.enlaceCrear({ huella: huella, tipo: tipo, recurso_id: recursoId, creado_en: ahora });
+}
+/** Publica un contenido; si es igual al último (sin contar "revision"), no crea otra revisión. */
+function contenidoPublicar_(ctx, pub, recursoId, tipo, contenido) {
+  var sinRev = clone_(contenido); delete sinRev.revision;
+  var hc = historialSha_(stableJson_(sinRev));
+  var ult = pub.publicacionUltima(recursoId, tipo);
+  var nueva = !ult || ult.retirada === true || ult.huella_contenido !== hc;
+  var revision = nueva ? (ult ? Number(ult.revision) + 1 : 1) : Number(ult.revision);
+  contenido.revision = revision;
+  if (nueva) pub.publicacionAgregar({ recurso_id: recursoId, tipo: tipo, revision: revision, contenido: JSON.stringify(contenido), huella_contenido: hc, publicado_en: now_(ctx), publicado_por: ctx.user.correo });
+  return { revision: revision, nueva: nueva };
+}
+
+/* ── Medios de cobro ── */
+/** Normaliza una lista de códigos CC-… (separados por coma): existen y están activos. */
+function cobroCodigos_(ctx, txt) {
+  if (isEmpty_(txt)) return '';
+  var todos = activeRows_(ctx, 'CUENTAS_COBRO');
+  var out = [];
+  String(txt).split(/[\s,;]+/).filter(Boolean).forEach(function (cod) {
+    var c = todos.filter(function (x) { return String(x.codigo).toUpperCase() === cod.toUpperCase() || x.id === cod; })[0];
+    if (!c) fail_('REFERENCIA', 'No existe el medio de cobro ' + cod + '.');
+    if (c.activo !== true) fail_('VALOR_INVALIDO', 'El medio de cobro ' + c.codigo + ' está inactivo.');
+    if (out.indexOf(c.codigo) < 0) out.push(c.codigo);
+  });
+  return out.join(',');
+}
+/** Lo que se publica de cada medio de cobro elegido (sin notas internas). */
+function cobroPublico_(ctx, txt) {
+  if (isEmpty_(txt)) return [];
+  var todos = activeRows_(ctx, 'CUENTAS_COBRO').filter(function (x) { return x.activo === true; });
+  return String(txt).split(',').map(function (cod) { return todos.filter(function (x) { return x.codigo === cod; })[0]; }).filter(Boolean).map(function (c) {
+    return { nombre: c.nombre, tipo: c.tipo, banco: c.banco || '', tipo_cuenta: c.tipo_cuenta || '', numero: c.numero || '', titular: c.titular || '', rut: c.rut || '', correo: c.correo || '', detalle: c.detalle || '' };
+  });
+}
+
+/* ── Presupuestos (A3) ── */
+function presupuestoItems_(ctx, ps) {
+  return activeRows_(ctx, 'PRESUPUESTO_ITEMS').filter(function (x) { return x.presupuesto_id === ps.id; }).sort(function (a, b) {
+    var oa = isEmpty_(a.orden) ? 9999 : Number(a.orden), ob = isEmpty_(b.orden) ? 9999 : Number(b.orden);
+    return oa !== ob ? oa - ob : (String(a.codigo) < String(b.codigo) ? -1 : 1);
+  });
+}
+function presupuestoTotales_(items, ivaPct, aceptados) {
+  var nec = 0, opc = 0, acept = 0;
+  items.forEach(function (x) {
+    var t = Number(x.total) || 0;
+    if (x.opcional === true) { opc += t; if (aceptados && aceptados.indexOf(x.id) >= 0) acept += t; } else nec += t;
+  });
+  var con = function (n) { return { neto: n, iva: Math.round(n * ivaPct / 100), total: n + Math.round(n * ivaPct / 100) }; };
+  return { necesario: con(nec), opcional: con(opc), aceptado: con(nec + acept) };
+}
+function vehiculoPublico_(e) {
+  if (!e) return null;
+  return { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: e.patente || '', nombre: e.nombre_corto || '' };
+}
+function presupuestoContenido_(ctx, ps) {
+  var items = presupuestoItems_(ctx, ps), iva = ivaPct_(ctx);
+  var cli = getRow_(ctx, 'CLIENTES', ps.cliente_id) || {};
+  return {
+    formato: PRESUPUESTO_FORMATO, codigo: ps.codigo, estado: ps.estado, fecha: localDate_(ps.publicado_en || now_(ctx)), vence: ps.vence_en || '',
+    cerrado: ps.cerrado_en ? localDate_(ps.cerrado_en) : '',
+    titulo: ps.titulo, diagnostico: ps.diagnostico || '', condiciones: ps.condiciones || '',
+    cliente: { nombre: cli.nombre || '' }, vehiculo: vehiculoPublico_(getRow_(ctx, 'EQUIPOS', ps.equipo_id)),
+    items: items.map(function (x) { return { id: x.id, tipo: x.tipo, descripcion: x.descripcion, cantidad: Number(x.cantidad) || 1, unidad: x.unidad || '', precio_unitario: Number(x.precio_unitario) || 0, total: Number(x.total) || 0, opcional: x.opcional === true }; }),
+    iva_pct: iva, totales: presupuestoTotales_(items, iva),
+    cobro: cobroPublico_(ctx, ps.cobro), taller: TALLER_PUBLICO
+  };
+}
+function presupuestoUno_(ctx, id) { requireAdmin_(ctx); return mustGet_(ctx, 'PRESUPUESTOS', id, 'Presupuesto'); }
+/** Respuestas del cliente guardadas en PUBLICO para este presupuesto (las más nuevas primero). */
+function presupuestoRespuestas_(ctx, ps) {
+  if (!ctx.publico) return [];
+  try {
+    return ctx.publico.respuestas().filter(function (r) { return r.recurso_id === ps.id; }).sort(function (a, b) { return a.recibido_en < b.recibido_en ? 1 : -1; });
+  } catch (e) { return []; }
+}
+/** Presupuestos (con ítems, totales, costo y margen interno) de un trabajo, de un cliente o uno solo. */
+function vistaPresupuestos_(ctx, p) {
+  requireAdmin_(ctx);
+  var iva = ivaPct_(ctx);
+  var lista = activeRows_(ctx, 'PRESUPUESTOS').filter(function (x) {
+    return (p.presupuesto_id ? x.id === p.presupuesto_id : true) && (p.trabajo_id ? x.trabajo_id === p.trabajo_id : true) && (p.cliente_id ? x.cliente_id === p.cliente_id : true);
+  }).sort(function (a, b) { return String(a.creado_en) < String(b.creado_en) ? 1 : -1; });
+  var catCod = {}; activeRows_(ctx, 'CATALOGO').forEach(function (c) { catCod[c.id] = c.codigo + ' · ' + c.descripcion; });
+  return { data: lista.map(function (ps) {
+    var items = presupuestoItems_(ctx, ps);
+    var costo = items.reduce(function (s, x) { return s + (isEmpty_(x.costo_unitario) ? 0 : Number(x.costo_unitario) * (Number(x.cantidad) || 1)); }, 0);
+    var tr = getRow_(ctx, 'TRABAJOS', ps.trabajo_id) || {};
+    return {
+      presupuesto: ps, trabajo: { id: tr.id, codigo: tr.codigo, descripcion: tr.descripcion, estado_comercial: tr.estado_comercial },
+      items: items.map(function (x) { var o = clone_(x); o.catalogo = catCod[x.catalogo_id] || ''; return o; }),
+      iva_pct: iva, totales: presupuestoTotales_(items, iva), costo_neto: Math.round(costo),
+      url: enlaceUrl_(ctx, 'presupuesto', ps.enlace_codigo), respuestas: presupuestoRespuestas_(ctx, ps)
+    };
+  }), warnings: [] };
+}
+/** Guarda encabezado e ítems en una sola operación (nuevos, cambiados y borrados). */
+function presupuestoGuardar_(ctx, p) {
+  requireAdmin_(ctx);
+  var h = p.presupuesto || {}, items = Array.isArray(p.items) ? p.items : [], warnings = [];
+  if (items.length > 80) fail_('VALOR_INVALIDO', 'Máximo 80 ítems por presupuesto.');
+  var campos = ['trabajo_id', 'titulo', 'diagnostico', 'condiciones', 'validez_dias', 'cobro', 'notas'];
+  var datos = {}; campos.forEach(function (k) { if (h[k] !== undefined) datos[k] = h[k]; });
+  var ps;
+  if (isEmpty_(h.id)) {
+    var r = insertRow_(ctx, 'PRESUPUESTOS', datos, { opId: p.op_id });
+    ps = r.row; warnings = warnings.concat(r.warnings);
+  } else {
+    var prev = mustGet_(ctx, 'PRESUPUESTOS', h.id, 'Presupuesto');
+    if (datos.trabajo_id && datos.trabajo_id !== prev.trabajo_id) fail_('VALOR_INVALIDO', 'Un presupuesto no se cambia de trabajo.');
+    var u = updateRow_(ctx, 'PRESUPUESTOS', h.id, h.version, datos, { opId: p.op_id, noRect: true });
+    ps = u.row; warnings = warnings.concat(u.warnings);
+  }
+  var itemCampos = ['orden', 'tipo', 'descripcion', 'cantidad', 'unidad', 'catalogo_id', 'costo_unitario', 'margen_pct', 'precio_unitario', 'opcional', 'notas'];
+  items.forEach(function (it, i) {
+    var d = {}; itemCampos.forEach(function (k) { if (it[k] !== undefined) d[k] = it[k]; });
+    if (isEmpty_(d.orden)) d.orden = i + 1;
+    if (isEmpty_(it.id)) {
+      d.presupuesto_id = ps.id;
+      var r = insertRow_(ctx, 'PRESUPUESTO_ITEMS', d, { opId: p.op_id + '#i' + i });
+      warnings = warnings.concat(r.warnings);
+    } else {
+      var x = mustGet_(ctx, 'PRESUPUESTO_ITEMS', it.id, 'Ítem');
+      if (x.presupuesto_id !== ps.id) fail_('VALOR_INVALIDO', 'El ítem ' + x.codigo + ' es de otro presupuesto.');
+      var u = updateRow_(ctx, 'PRESUPUESTO_ITEMS', it.id, it.version, d, { opId: p.op_id, noRect: true });
+      warnings = warnings.concat(u.warnings);
+    }
+  });
+  (Array.isArray(p.borrar) ? p.borrar : []).forEach(function (id) {
+    var x = mustGet_(ctx, 'PRESUPUESTO_ITEMS', id, 'Ítem');
+    if (x.presupuesto_id !== ps.id) fail_('VALOR_INVALIDO', 'El ítem ' + x.codigo + ' es de otro presupuesto.');
+    if (x.anulado !== true) anularRow_(ctx, 'PRESUPUESTO_ITEMS', id, x.version, 'Quitado del presupuesto', p.op_id, 'App · Presupuesto');
+  });
+  if (!presupuestoItems_(ctx, ps).length) warnings.push({ code: 'SIN_ITEMS', message: 'El presupuesto no tiene ítems todavía.' });
+  // Avisos repetidos (por ejemplo, el mismo "PUBLICADO" de cada ítem) se muestran una vez.
+  var vistos = {}; warnings = warnings.filter(function (w) { var k = w.code + '|' + w.message; if (vistos[k]) return false; vistos[k] = true; return true; });
+  return { data: vistaPresupuestos_(ctx, { presupuesto_id: ps.id }).data[0], warnings: warnings };
+}
+/** Publica (o actualiza) el presupuesto y devuelve el enlace. Reinicia la validez desde hoy. */
+function presupuestoPublicar_(ctx, p) {
+  var ps = presupuestoUno_(ctx, p.presupuesto_id);
+  if (ps.estado !== 'Borrador' && ps.estado !== 'Publicado') fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' está ' + ps.estado + '.');
+  if (!presupuestoItems_(ctx, ps).length) fail_('SIN_CONTENIDO', 'Agrega al menos un ítem antes de publicar.');
+  if (isEmpty_(ctx.config && ctx.config.publico_url_base)) fail_('CONFIG', 'Falta CONFIG.publico_url_base.');
+  var pub = historialPublico_(ctx), ahora = now_(ctx);
+  var validez = isEmpty_(ps.validez_dias) ? cfgEntero_(ctx, 'presupuesto_validez_dias', 15, 1, 365) : Number(ps.validez_dias);
+  var codigo = isEmpty_(ps.enlace_codigo) ? historialCodigoNuevo_() : ps.enlace_codigo;
+  ctx._presupuestoAccion = true;
+  try {
+    ps = sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, { estado: 'Publicado', enlace_codigo: codigo, vence_en: sumarDias_(today_(ctx), validez), publicado_en: ahora }, 'Presupuesto publicado');
+    enlaceAsegurar_(pub, ps.id, PRESUPUESTO_TIPO, codigo, ahora);
+    var r = contenidoPublicar_(ctx, pub, ps.id, PRESUPUESTO_TIPO, presupuestoContenido_(ctx, ps));
+    sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, { revision: r.revision }, 'Revisión publicada');
+  } finally { ctx._presupuestoAccion = false; }
+  var w = portalRefrescar_(ctx, ps.cliente_id);
+  return { data: { url: enlaceUrl_(ctx, 'presupuesto', codigo), revision: r.revision, nueva: r.nueva, vence: ps.vence_en }, warnings: w };
+}
+/**
+ * Víctor confirma: Autorizado (crea los cobros de lo necesario + los opcionales aceptados y deja el trabajo Autorizado)
+ * o Rechazado. Puede venir de una respuesta web (respuesta_id) o de una autorización por otro medio (WhatsApp, en persona).
+ */
+function presupuestoCerrar_(ctx, p) {
+  var ps = presupuestoUno_(ctx, p.presupuesto_id);
+  if (ps.estado !== 'Borrador' && ps.estado !== 'Publicado') fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' ya está ' + ps.estado + '.');
+  if (p.decision !== 'Autorizado' && p.decision !== 'Rechazado') fail_('VALOR_INVALIDO', 'Decisión: Autorizado o Rechazado.');
+  var items = presupuestoItems_(ctx, ps), iva = ivaPct_(ctx), ahora = now_(ctx);
+  var ops = Array.isArray(p.opcionales) ? p.opcionales : [];
+  ops.forEach(function (id) { if (!items.some(function (x) { return x.id === id && x.opcional === true; })) fail_('VALOR_INVALIDO', 'Un opcional aceptado no es de este presupuesto.'); });
+  var resp = null;
+  if (!isEmpty_(p.respuesta_id)) {
+    resp = presupuestoRespuestas_(ctx, ps).filter(function (r) { return r.id === p.respuesta_id; })[0];
+    if (!resp) fail_('NO_EXISTE', 'No se encontró esa respuesta del cliente.');
+  }
+  if (isEmpty_(p.detalle) && !resp) fail_('REQUERIDO', 'Indica cómo respondió el cliente (ej. "Autorizó por WhatsApp el 27-10").');
+  var detalle = (resp ? 'Web · ' + resp.respuesta + ' · ' + (resp.nombre || 'sin nombre') + ' · ' + resp.recibido_en + (resp.mensaje ? ' · "' + resp.mensaje + '"' : '') : String(p.detalle)) + ' · confirmado por ' + ctx.user.correo + ' ' + ahora;
+  var creados = [];
+  ctx._presupuestoAccion = true;
+  try {
+    if (p.decision === 'Autorizado') {
+      if (!items.length) fail_('SIN_CONTENIDO', 'El presupuesto no tiene ítems.');
+      var ok = items.filter(function (x) { return x.opcional !== true || ops.indexOf(x.id) >= 0; });
+      ok.forEach(function (x, i) {
+        var cant = Number(x.cantidad) || 1;
+        var desc = x.descripcion + (cant !== 1 ? ' × ' + String(cant).replace('.', ',') + (x.unidad ? ' ' + x.unidad : '') : '');
+        var con = insertRow_(ctx, 'CONCEPTOS', {
+          cliente_id: ps.cliente_id, trabajo_id: ps.trabajo_id, equipo_id: ps.equipo_id || '', tipo: x.tipo, descripcion: desc,
+          monto_cliente: Math.round((Number(x.total) || 0) * (1 + iva / 100)), iva: 'Incluido', aportante: 'Taller', etapa: 'Confirmado',
+          fuente: 'Presupuesto ' + ps.codigo + (ps.revision ? ' rev. ' + ps.revision : '')
+        }, { opId: p.op_id + '#c' + i }).row;
+        sysUpdate_(ctx, 'PRESUPUESTO_ITEMS', x.id, { concepto_id: con.id }, 'Cobro creado al autorizar');
+        creados.push(con.codigo);
+      });
+      var tr = getRow_(ctx, 'TRABAJOS', ps.trabajo_id);
+      if (tr && tr.estado_comercial !== 'Autorizado' && tr.estado_comercial !== 'Anulado') sysUpdate_(ctx, 'TRABAJOS', tr.id, { estado_comercial: 'Autorizado' }, 'Presupuesto ' + ps.codigo + ' autorizado');
+    }
+    ps = sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, {
+      estado: p.decision, cerrado_en: ahora, respuesta: resp ? resp.respuesta : (p.decision === 'Autorizado' ? 'Autorizo' : 'No autorizo'),
+      respuesta_detalle: detalle + (ops.length ? ' · opcionales aceptados: ' + items.filter(function (x) { return ops.indexOf(x.id) >= 0; }).map(function (x) { return x.codigo; }).join(', ') : '')
+    }, 'Presupuesto ' + p.decision.toLowerCase());
+    // Si estaba publicado, el cliente ve el resultado (y ya no puede responder).
+    if (!isEmpty_(ps.enlace_codigo) && ctx.publico) {
+      var r = contenidoPublicar_(ctx, ctx.publico, ps.id, PRESUPUESTO_TIPO, presupuestoContenido_(ctx, ps));
+      sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, { revision: r.revision }, 'Revisión publicada');
+    }
+  } finally { ctx._presupuestoAccion = false; }
+  var w = [];
+  if (resp && ctx.publico) { try { ctx.publico.respuestaGuardar(resp.id, { estado: 'Revisada', estado_en: ahora, estado_por: ctx.user.correo }); } catch (e) { w.push({ code: 'PUBLICO', message: 'No se pudo marcar la respuesta como revisada.' }); } }
+  w = w.concat(portalRefrescar_(ctx, ps.cliente_id));
+  return { data: { estado: ps.estado, cobros: creados }, warnings: w };
+}
+/** Retira el presupuesto: el enlace deja de funcionar y sale del portal. */
+function presupuestoRetirar_(ctx, p) {
+  var ps = presupuestoUno_(ctx, p.presupuesto_id);
+  if (ps.estado === 'Retirado') return { data: { estado: ps.estado }, warnings: [] };
+  if (isEmpty_(p.motivo)) fail_('REQUERIDO', 'Indica por qué se retira.');
+  var ahora = now_(ctx);
+  if (ctx.publico) {
+    ctx.publico.enlacesActivos(ps.id, PRESUPUESTO_TIPO).forEach(function (x) { ctx.publico.enlaceRevocar(x.huella, ahora); });
+    ctx.publico.publicacionesRetirar(ps.id, PRESUPUESTO_TIPO);
+  }
+  ctx._presupuestoAccion = true;
+  try {
+    ps = sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, { estado: PRESUPUESTO_CERRADOS.indexOf(ps.estado) >= 0 ? ps.estado : 'Retirado', enlace_codigo: '', cerrado_en: ps.cerrado_en || ahora, respuesta_detalle: (ps.respuesta_detalle ? ps.respuesta_detalle + ' · ' : '') + 'Retirado: ' + p.motivo }, 'Presupuesto retirado: ' + p.motivo);
+  } finally { ctx._presupuestoAccion = false; }
+  return { data: { estado: ps.estado }, warnings: portalRefrescar_(ctx, ps.cliente_id) };
+}
+
+/* ── Estado de cuenta (A2) ── */
+/** Problema que impide publicar el estado de cuenta (vacío = cuadra). */
+function cuentaProblema_(ctx, c) {
+  var ce = vistaControlEconomico_(ctx, { cliente_id: c.id }).data;
+  if (ce.estado === 'OK') return '';
+  if (ce.estado === 'INCOMPLETO') return 'Hay cobros confirmados sin monto (' + ce.totales.montos_desconocidos.join(', ') + ').';
+  return 'El control económico no cuadra: ' + ce.errores.slice(0, 3).join('; ') + (ce.errores.length > 3 ? '…' : '') + '.';
+}
+function cuentaContenido_(ctx, c, vence) {
+  var ce = vistaControlEconomico_(ctx, { cliente_id: c.id }).data;
+  var cons = activeRows_(ctx, 'CONCEPTOS').filter(function (x) { return x.cliente_id === c.id && x.aportante === 'Taller' && x.etapa === 'Confirmado'; });
+  var porTrabajo = {}, orden = [];
+  cons.forEach(function (x) {
+    var k = x.trabajo_id || '';
+    if (!porTrabajo[k]) { porTrabajo[k] = []; orden.push(k); }
+    porTrabajo[k].push(x);
+  });
+  var trabajos = orden.map(function (k) {
+    var t = k ? getRow_(ctx, 'TRABAJOS', k) : null, e = t ? getRow_(ctx, 'EQUIPOS', t.equipo_id) : null;
+    var cobros = porTrabajo[k].map(function (x) { return { descripcion: x.descripcion, monto: Number(x.monto_cliente) || 0 }; });
+    return { codigo: t ? t.codigo : '', fecha: t ? localDate_(t.fecha_fin || t.fecha_inicio || t.creado_en || '') : '', descripcion: t ? t.descripcion : 'Otros cobros', vehiculo: e ? [e.nombre_corto, e.patente].filter(Boolean).join(' · ') : '', cobros: cobros, total: sumBy_(cobros, 'monto') };
+  }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
+  var pagos = activeRows_(ctx, 'PAGOS').filter(function (x) { return x.cliente_id === c.id && x.confirmado === true; }).map(function (x) {
+    return { fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(x.fecha)) ? String(x.fecha) : localDate_(x.fecha), monto: Number(x.monto) || 0, medio: x.medio || '' };
+  }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+  var docs = activeRows_(ctx, 'DOC_VENTA').filter(function (x) { return x.cliente_id === c.id && x.estado === 'Emitido'; }).map(function (x) {
+    return { tipo: x.tipo, folio: x.folio || '', fecha: x.fecha || '', total: isEmpty_(x.total) ? null : Number(x.total) };
+  });
+  var cobrado = ce.totales.cobrado_confirmado || 0, pagado = ce.totales.pagado_confirmado || 0;
+  return {
+    formato: CUENTA_FORMATO, al: today_(ctx), vence: vence || '', trabajos: trabajos, pagos: pagos, documentos: docs,
+    totales: { cobrado: cobrado, pagado: pagado, saldo: cobrado - pagado },
+    cobro: cobroPublico_(ctx, c.portal_cobro)
+  };
+}
+
+/* ── Portal del cliente ── */
+function portalContenido_(ctx, c) {
+  var hoy = today_(ctx);
+  var eqs = activeRows_(ctx, 'EQUIPOS').filter(function (e) { return e.cliente_id === c.id; });
+  var hace30 = sumarDias_(hoy, -30);
+  var pss = activeRows_(ctx, 'PRESUPUESTOS').filter(function (x) {
+    return x.cliente_id === c.id && !isEmpty_(x.enlace_codigo) && (x.estado === 'Publicado' || (PRESUPUESTO_CERRADOS.indexOf(x.estado) >= 0 && localDate_(x.cerrado_en) >= hace30));
+  });
+  var cuentaOk = c.portal_cuenta === true && !isEmpty_(c.portal_cuenta_vence) && c.portal_cuenta_vence >= hoy && !cuentaProblema_(ctx, c);
+  return {
+    formato: PORTAL_FORMATO, cliente: { nombre: c.nombre },
+    equipos: eqs.map(function (e) { return { id: e.id, nombre: e.nombre_corto || '', patente: e.patente || '', tipo: e.tipo_vehiculo || '', marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio) }; }),
+    historial_ids: eqs.filter(function (e) { return e.historial_publicable === true && !isEmpty_(e.historial_codigo); }).map(function (e) { return e.id; }),
+    presupuesto_ids: pss.map(function (x) { return x.id; }),
+    solicitar: c.portal_solicitudes === true,
+    cuenta: cuentaOk ? cuentaContenido_(ctx, c, c.portal_cuenta_vence) : null,
+    taller: TALLER_PUBLICO
+  };
+}
+function portalCliente_(ctx, p) { requireAdmin_(ctx); return mustGet_(ctx, 'CLIENTES', p.cliente_id, 'Cliente'); }
+/** Publica (o actualiza) el portal con las opciones elegidas y devuelve el enlace. */
+function portalPublicar_(ctx, p) {
+  var c = portalCliente_(ctx, p);
+  if (isEmpty_(ctx.config && ctx.config.publico_url_base)) fail_('CONFIG', 'Falta CONFIG.publico_url_base.');
+  var pub = historialPublico_(ctx), ahora = now_(ctx), hoy = today_(ctx);
+  var cambios = { portal_solicitudes: p.solicitudes === true, portal_cuenta: p.cuenta === true };
+  if (p.cuenta === true) {
+    var dias = isEmpty_(p.cuenta_dias) ? cfgEntero_(ctx, 'cuenta_vence_dias', 30, 1, 365) : Number(p.cuenta_dias);
+    if (!(dias >= 1 && dias <= 365)) fail_('VALOR_INVALIDO', 'El estado de cuenta se puede mostrar entre 1 y 365 días.');
+    var prob = cuentaProblema_(ctx, c);
+    if (prob) fail_('CUENTA_NO_CUADRA', 'No se puede publicar el estado de cuenta: ' + prob + ' Revísalo en Control económico.');
+    cambios.portal_cuenta_vence = sumarDias_(hoy, Math.floor(dias));
+    cambios.portal_cobro = cobroCodigos_(ctx, p.cobro);
+  } else { cambios.portal_cuenta_vence = ''; }
+  var codigo = isEmpty_(c.portal_codigo) ? historialCodigoNuevo_() : c.portal_codigo;
+  cambios.portal_codigo = codigo; cambios.portal_publicado_en = ahora;
+  c = updateRow_(ctx, 'CLIENTES', c.id, null, cambios, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Portal del cliente publicado' }).row;
+  enlaceAsegurar_(pub, c.id, PORTAL_TIPO, codigo, ahora);
+  var r = contenidoPublicar_(ctx, pub, c.id, PORTAL_TIPO, portalContenido_(ctx, c));
+  return { data: { url: enlaceUrl_(ctx, 'portal', codigo), revision: r.revision, nueva: r.nueva, cuenta_vence: c.portal_cuenta_vence || '' }, warnings: [] };
+}
+/** Si el cliente tiene portal activo, lo vuelve a publicar con lo vigente. Nunca hace fallar la acción que lo llama. */
+function portalRefrescar_(ctx, clienteId) {
+  var c = getRow_(ctx, 'CLIENTES', clienteId);
+  if (!c || isEmpty_(c.portal_codigo) || !ctx.publico) return [];
+  try {
+    var cont = portalContenido_(ctx, c);
+    contenidoPublicar_(ctx, ctx.publico, c.id, PORTAL_TIPO, cont);
+    if (c.portal_cuenta === true && !cont.cuenta && c.portal_cuenta_vence >= today_(ctx)) return [{ code: 'CUENTA_OCULTA', message: 'El estado de cuenta de ' + c.nombre + ' se ocultó del portal porque el control económico no cuadra.' }];
+    return [];
+  } catch (e) { return [{ code: 'PORTAL', message: 'No se pudo actualizar el portal de ' + c.nombre + ': ' + (e && e.message) }]; }
+}
+function portalRevocar_(ctx, p) {
+  var c = portalCliente_(ctx, p);
+  if (isEmpty_(p.motivo)) fail_('REQUERIDO', 'Indica por qué se revoca.');
+  var pub = historialPublico_(ctx), ahora = now_(ctx), n = 0;
+  pub.enlacesActivos(c.id, PORTAL_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
+  pub.publicacionesRetirar(c.id, PORTAL_TIPO);
+  updateRow_(ctx, 'CLIENTES', c.id, null, { portal_codigo: '', portal_cuenta: false, portal_cuenta_vence: '' }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Portal revocado: ' + p.motivo, fuente: 'App · Portal' });
   return { data: { revocados: n }, warnings: [] };
+}
+/** Lo que verá el cliente (armado igual que el script público) y el estado del portal. No escribe nada. */
+function portalVistaPrevia_(ctx, p) {
+  var c = portalCliente_(ctx, p);
+  var cont = portalContenido_(ctx, c);
+  var hist = {};
+  cont.historial_ids.forEach(function (id) { var e = getRow_(ctx, 'EQUIPOS', id); var h = historialContenido_(ctx, e); if (h.trabajos.length) hist[id] = h; });
+  cont.historiales = hist;
+  cont.presupuestos = cont.presupuesto_ids.map(function (id) { return presupuestoContenido_(ctx, getRow_(ctx, 'PRESUPUESTOS', id)); });
+  var cobros = activeRows_(ctx, 'CUENTAS_COBRO').filter(function (x) { return x.activo === true; }).map(function (x) { return { codigo: x.codigo, nombre: x.nombre, tipo: x.tipo }; });
+  return { data: {
+    contenido: cont, enlace_activo: !isEmpty_(c.portal_codigo), url: enlaceUrl_(ctx, 'portal', c.portal_codigo), publicado_en: c.portal_publicado_en || '',
+    solicitudes: c.portal_solicitudes === true, cuenta: c.portal_cuenta === true, cuenta_vence: c.portal_cuenta_vence || '', cobro: c.portal_cobro || '',
+    cuenta_problema: cuentaProblema_(ctx, c), cuenta_dias_defecto: cfgEntero_(ctx, 'cuenta_vence_dias', 30, 1, 365), cobros_disponibles: cobros,
+    solicitud_general: enlaceSitio_(ctx, 'solicitud')
+  }, warnings: [] };
+}
+
+/* ── Solicitudes y respuestas web (bandeja "Web") ── */
+function webPublico_(ctx) { requireAdmin_(ctx); return historialPublico_(ctx); }
+function vistaWeb_(ctx, p) {
+  requireAdmin_(ctx);
+  var ajustes = ajustesWeb_(ctx);
+  if (!ctx.publico) return { data: { configurado: false, solicitudes: [], respuestas: [], ajustes: ajustes }, warnings: [] };
+  var pub = ctx.publico, hoy = today_(ctx), desde = sumarDias_(hoy, -30);
+  var clientes = {}; rows_(ctx, 'CLIENTES').forEach(function (c) { clientes[c.id] = c; });
+  var sols = pub.solicitudes().filter(function (s) { return s.estado === 'Nueva' || s.estado === 'Contactado' || localDate_(s.estado_en || s.recibido_en) >= desde; }).map(function (s) {
+    var o = clone_(s); delete o._fila;
+    try { o.equipos = s.equipos ? JSON.parse(s.equipos) : []; } catch (e) { o.equipos = []; }
+    var c = clientes[s.recurso_id];
+    o.cliente = c ? { id: c.id, codigo: c.codigo, nombre: c.nombre } : null;
+    return o;
+  }).sort(function (a, b) { return a.recibido_en < b.recibido_en ? 1 : -1; });
+  var pss = {}; rows_(ctx, 'PRESUPUESTOS').forEach(function (x) { pss[x.id] = x; });
+  var resps = pub.respuestas().filter(function (r) { return r.estado === 'Nueva' || localDate_(r.recibido_en) >= desde; }).map(function (r) {
+    var o = clone_(r); delete o._fila;
+    try { o.opcionales = r.opcionales ? JSON.parse(r.opcionales) : []; } catch (e) { o.opcionales = []; }
+    var ps = pss[r.recurso_id], c = ps ? clientes[ps.cliente_id] : null;
+    o.presupuesto = ps ? { id: ps.id, codigo: ps.codigo, titulo: ps.titulo, estado: ps.estado, revision: ps.revision, trabajo_id: ps.trabajo_id } : null;
+    o.cliente = c ? { id: c.id, codigo: c.codigo, nombre: c.nombre } : null;
+    o.vigente = !!ps && Number(r.revision) === Number(ps.revision) && ps.estado === 'Publicado';
+    return o;
+  }).sort(function (a, b) { return a.recibido_en < b.recibido_en ? 1 : -1; });
+  return { data: {
+    configurado: true, solicitudes: sols, respuestas: resps, ajustes: ajustes,
+    nuevas: sols.filter(function (s) { return s.estado === 'Nueva'; }).length + resps.filter(function (r) { return r.estado === 'Nueva'; }).length,
+    solicitud_general: enlaceSitio_(ctx, 'solicitud')
+  }, warnings: [] };
+}
+function solicitudEstado_(ctx, p) {
+  var pub = webPublico_(ctx);
+  if (SOLICITUD_ESTADOS.indexOf(p.estado) < 0) fail_('VALOR_INVALIDO', 'Estado: ' + SOLICITUD_ESTADOS.join(', ') + '.');
+  if (p.estado === 'Descartada' && isEmpty_(p.motivo)) fail_('REQUERIDO', 'Indica por qué se descarta.');
+  var s = pub.solicitudes().filter(function (x) { return x.id === p.id; })[0];
+  if (!s) fail_('NO_EXISTE', 'No se encontró la solicitud.');
+  if (s.estado === 'Borrada') fail_('VALOR_INVALIDO', 'Los datos de esta solicitud ya se borraron por plazo.');
+  var cambios = { estado: p.estado, estado_en: now_(ctx), estado_por: ctx.user.correo };
+  if (!isEmpty_(p.motivo)) cambios.motivo = String(p.motivo).slice(0, 500);
+  if (!isEmpty_(p.trabajo)) cambios.trabajo = String(p.trabajo).slice(0, 40);
+  pub.solicitudGuardar(s.id, cambios);
+  return { data: { id: s.id, estado: p.estado }, warnings: [] };
+}
+function respuestaEstado_(ctx, p) {
+  var pub = webPublico_(ctx);
+  if (['Nueva', 'Revisada'].indexOf(p.estado) < 0) fail_('VALOR_INVALIDO', 'Estado: Nueva o Revisada.');
+  var r = pub.respuestas().filter(function (x) { return x.id === p.id; })[0];
+  if (!r) fail_('NO_EXISTE', 'No se encontró la respuesta.');
+  pub.respuestaGuardar(r.id, { estado: p.estado, estado_en: now_(ctx), estado_por: ctx.user.correo });
+  return { data: { id: r.id, estado: p.estado }, warnings: [] };
+}
+
+/* ── Ajustes elegibles (avisos, plazos y vigencias) ── */
+var AJUSTES_WEB = ['avisos_modo', 'avisos_horarios', 'avisos_frecuencia_min', 'avisos_correo', 'solicitudes_borrar_meses', 'presupuesto_validez_dias', 'cuenta_vence_dias'];
+function ajustesWeb_(ctx) {
+  var c = ctx.config || {}, o = {};
+  var def = {}; CONTRACT.config.forEach(function (x) { def[x.clave] = x.valor; });
+  AJUSTES_WEB.forEach(function (k) { o[k] = isEmpty_(c[k]) ? def[k] : String(c[k]); });
+  return o;
+}
+/** Valida los ajustes y los deja en ctx.config. La API los escribe en CONFIG (hoja). Devuelve lo que cambia. */
+function ajustesGuardar_(ctx, p) {
+  requireAdmin_(ctx);
+  var a = p.ajustes || {}, cambios = {};
+  Object.keys(a).forEach(function (k) { if (AJUSTES_WEB.indexOf(k) < 0) fail_('VALOR_INVALIDO', 'Ajuste desconocido: ' + k); });
+  var ent = function (k, min, max, nombre) {
+    if (a[k] === undefined) return;
+    var v = Number(a[k]);
+    if (!(Math.floor(v) === v && v >= min && v <= max)) fail_('VALOR_INVALIDO', nombre + ' debe ser un número entero entre ' + min + ' y ' + max + '.');
+    cambios[k] = String(v);
+  };
+  if (a.avisos_modo !== undefined) {
+    if (['Horarios', 'Frecuencia', 'Desactivado'].indexOf(a.avisos_modo) < 0) fail_('VALOR_INVALIDO', 'Modo de aviso: Horarios, Frecuencia o Desactivado.');
+    cambios.avisos_modo = a.avisos_modo;
+  }
+  if (a.avisos_horarios !== undefined) {
+    var hs = String(a.avisos_horarios).split(/[\s,;]+/).filter(Boolean).map(function (h) {
+      var m = /^(\d{1,2})(?::(\d{2}))?$/.exec(h);
+      if (!m || +m[1] > 23 || (m[2] && +m[2] > 59)) fail_('VALOR_INVALIDO', 'Horario inválido: "' + h + '". Usa HH:MM (ej. 09:00).');
+      return ('0' + (+m[1])).slice(-2) + ':' + (m[2] || '00');
+    });
+    hs = hs.filter(function (h, i) { return hs.indexOf(h) === i; }).sort();
+    if ((cambios.avisos_modo || ajustesWeb_(ctx).avisos_modo) === 'Horarios' && !hs.length) fail_('REQUERIDO', 'Indica al menos un horario de aviso.');
+    if (hs.length > 12) fail_('VALOR_INVALIDO', 'Máximo 12 horarios al día.');
+    cambios.avisos_horarios = hs.join(',');
+  }
+  ent('avisos_frecuencia_min', 15, 1440, 'La frecuencia (minutos)');
+  if (a.avisos_correo !== undefined) {
+    var cs = String(a.avisos_correo).split(/[\s,;]+/).filter(Boolean).map(function (x) { return x.toLowerCase(); });
+    if (!cs.length || cs.some(function (x) { return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x); })) fail_('VALOR_INVALIDO', 'Correo de aviso inválido.');
+    cambios.avisos_correo = cs.join(',');
+  }
+  ent('solicitudes_borrar_meses', 1, 60, 'El plazo de borrado (meses)');
+  ent('presupuesto_validez_dias', 1, 365, 'La validez del presupuesto (días)');
+  ent('cuenta_vence_dias', 1, 365, 'La vigencia del estado de cuenta (días)');
+  ctx.config = ctx.config || {};
+  Object.keys(cambios).forEach(function (k) { ctx.config[k] = cambios[k]; });
+  return { data: { cambios: cambios, ajustes: ajustesWeb_(ctx) }, warnings: [] };
+}
+
+/* ── Avisos por correo y borrado por plazo (los ejecuta el activador avisosWeb de la API) ── */
+/** ¿Toca revisar y avisar ahora? Horarios: pasó una de las horas desde el último aviso. Frecuencia: pasaron N minutos. */
+function avisoToca_(cfg, ultimoIso, ahoraIso) {
+  var modo = cfg.avisos_modo || 'Horarios';
+  if (modo === 'Desactivado') return false;
+  if (!ultimoIso) return true;
+  if (modo === 'Frecuencia') {
+    var min = Number(cfg.avisos_frecuencia_min); if (!(min >= 15)) min = 60;
+    return (toMs_(ahoraIso) - toMs_(ultimoIso)) >= min * 60000 - 30000;
+  }
+  var hs = String(cfg.avisos_horarios || '09:00').split(',').filter(function (h) { return /^\d{2}:\d{2}$/.test(h); }).sort();
+  if (!hs.length) return false;
+  var hoy = localDate_(ahoraIso), ahoraHM = localHM_(ahoraIso);
+  var pasadas = hs.filter(function (h) { return h <= ahoraHM; });
+  var marca = pasadas.length ? hoy + ' ' + pasadas[pasadas.length - 1] : sumarDias_(hoy, -1) + ' ' + hs[hs.length - 1];
+  return (localDate_(ultimoIso) + ' ' + localHM_(ultimoIso)) < marca;
+}
+/** Correo con lo nuevo (o null si no hay nada). */
+function avisoCorreo_(solicitudes, respuestas, sitio) {
+  if (!solicitudes.length && !respuestas.length) return null;
+  var L = [];
+  if (solicitudes.length) {
+    L.push('SOLICITUDES NUEVAS (' + solicitudes.length + ')', '');
+    solicitudes.forEach(function (s) {
+      var eqs = []; try { eqs = s.equipos ? JSON.parse(s.equipos) : []; } catch (e) {}
+      L.push('• ' + s.tipo + ' · ' + (s.origen === 'Portal' ? 'portal' : 'formulario general') + ' · ' + s.recibido_en.slice(0, 16).replace('T', ' '));
+      L.push('  ' + [s.nombre, s.telefono, s.correo].filter(Boolean).join(' · '));
+      var veh = eqs.length ? eqs.map(function (e) { return [e.nombre, e.patente].filter(Boolean).join(' '); }).join('; ') : s.vehiculo;
+      if (veh) L.push('  Vehículo: ' + veh);
+      L.push('  ' + String(s.mensaje || '').slice(0, 300), '');
+    });
+  }
+  if (respuestas.length) {
+    L.push('RESPUESTAS A PRESUPUESTOS (' + respuestas.length + ')', '');
+    respuestas.forEach(function (r) { L.push('• ' + r.respuesta + ' · ' + (r.nombre || 'sin nombre') + ' · ' + r.recibido_en.slice(0, 16).replace('T', ' ') + (r.mensaje ? '\n  "' + String(r.mensaje).slice(0, 300) + '"' : ''), ''); });
+  }
+  L.push('Revísalas en la app EG Registro → pestaña Web. Nada cambia en el registro hasta que las confirmes.');
+  var n = solicitudes.length + respuestas.length;
+  return { asunto: 'Eisen Garage · ' + n + ' novedad' + (n === 1 ? '' : 'es') + ' web (' + [solicitudes.length ? solicitudes.length + ' solicitud' + (solicitudes.length === 1 ? '' : 'es') : '', respuestas.length ? respuestas.length + ' respuesta' + (respuestas.length === 1 ? '' : 's') : ''].filter(Boolean).join(', ') + ')', cuerpo: L.join('\n') };
+}
+/** Solicitudes y respuestas cuyos datos personales ya cumplieron el plazo (se borran, la fila queda como constancia). */
+function webVencidas_(filas, meses, ahoraIso) {
+  var d = new Date(toMs_(ahoraIso)); d.setUTCMonth(d.getUTCMonth() - Number(meses));
+  var limite = d.toISOString();
+  return filas.filter(function (x) { return x.recibido_en && x.recibido_en < limite && x.estado !== 'Borrada'; });
 }
 
 /**
@@ -2446,7 +3122,7 @@ function historialRevocar_(ctx, p) {
  * imputaciones y cobros por cubrir (montos al cliente), sin datos bancarios ni comprobantes.
  */
 var CONTEXTO_FORMATO = 'EG-CONTEXTO-3';
-var CONTEXTO_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'REFERENCIAS', 'TRABAJOS', 'DETALLE', 'PENDIENTES', 'PEDIDOS', 'RECEPCIONES', 'PAGOS', 'IMPUTACIONES', 'CONCEPTOS'];
+var CONTEXTO_TABLAS = ['CLIENTES', 'CONTACTOS', 'EQUIPOS', 'REFERENCIAS', 'TRABAJOS', 'DETALLE', 'PENDIENTES', 'PEDIDOS', 'RECEPCIONES', 'PAGOS', 'IMPUTACIONES', 'CONCEPTOS', 'PRESUPUESTOS', 'PRESUPUESTO_ITEMS'];
 var CONTEXTO_DETALLE_TIPOS = ['Procedimiento', 'Fluido', 'Medición', 'Repuesto', 'Diagnóstico', 'Hallazgo'];
 function contextoArchivo_(c) { return 'contexto-cliente-' + c.codigo + '.md'; }
 
@@ -2486,6 +3162,14 @@ function contextoTexto_(ctx, c) {
   if (abiertos.length) abiertos.forEach(function (t) { var e = eqs.filter(function (x) { return x.id === t.equipo_id; })[0]; L.push('- ' + t.codigo + ' · ' + (e ? e.codigo + ' ' + celda(e.nombre_corto) : '') + ' · ' + celda(t.descripcion, 120) + ' · ' + t.estado_ejecucion); });
   else L.push('(ninguno)');
   contextoPagos_(ctx, c, L, celda, miles);
+  var pss = activeRows_(ctx, 'PRESUPUESTOS').filter(function (x) { return x.cliente_id === c.id; });
+  if (pss.length) {
+    L.push(''); L.push('## Presupuestos');
+    pss.forEach(function (x) {
+      var tr = getRow_(ctx, 'TRABAJOS', x.trabajo_id), tot = presupuestoTotales_(presupuestoItems_(ctx, x), ivaPct_(ctx));
+      L.push('- ' + x.codigo + (tr ? ' (' + tr.codigo + ')' : '') + ' · ' + celda(x.titulo, 100) + ' · ' + x.estado + (x.vence_en && x.estado === 'Publicado' ? ' hasta ' + x.vence_en : '') + ' · necesario $' + miles(tot.necesario.total) + ' con IVA' + (tot.opcional.neto ? ' · opcional $' + miles(tot.opcional.total) : '') + (x.respuesta ? ' · respuesta: ' + x.respuesta : ''));
+    });
+  }
   L.push(''); L.push('## Vehículos y equipos');
   if (!eqs.length) L.push('(sin vehículos registrados)');
   else {
@@ -2843,12 +3527,13 @@ function revisarIntegridad_(ctx) {
 var PAQUETE_FORMATO = 'EG-PAQUETE-1';
 var PAQUETE_MAX_OPS = 200;
 var PAQUETE_MAX_TEXTO = 40000;
-var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES'];
+var PAQUETE_TABLAS_PROHIBIDAS = ['USUARIOS', 'TARIFAS', 'VALORES_TRABAJADOR', 'RECTIFICACIONES', 'PAQUETES', 'CUENTAS_COBRO'];
 var PAQUETE_ACCIONES = ['crear', 'sesion_posterior', 'editar'];
 /** Tablas que un paquete no corrige (tienen su propio flujo en la app). */
 var PAQUETE_EDITAR_PROHIBIDAS = ['SESIONES', 'IMPUTACIONES', 'RECEPCIONES', 'MOV_INVENTARIO', 'LISTAS'];
 /** Columnas que una IA nunca carga, aunque la tabla se pueda cargar: la autorización del dueño para publicar su historial la registra una persona en la app. */
-function paqueteColumnaProhibida_(tabla, k) { return tabla === 'EQUIPOS' && /^historial_/.test(String(k)); }
+function paqueteMotivoProhibida_(tabla) { return tabla === 'EQUIPOS' ? 'la autorización del historial se registra en la app' : tabla === 'CLIENTES' ? 'el portal del cliente se publica en la app' : 'el estado del presupuesto cambia con Publicar o Confirmar en la app'; }
+function paqueteColumnaProhibida_(tabla, k) { return (tabla === 'EQUIPOS' && /^historial_/.test(String(k))) || (tabla === 'CLIENTES' && /^portal_/.test(String(k))) || (tabla === 'PRESUPUESTOS' && k === 'estado'); }
 
 /** Revisa la forma del paquete antes de tocar datos. */
 function paqueteForma_(pq) {
@@ -2877,7 +3562,7 @@ function paqueteForma_(pq) {
       if (isEmpty_(o.motivo) || String(o.motivo).trim().length < 4) fail_('PAQUETE', n + ': "editar" necesita "motivo" (por qué se corrige).');
       var colsE = colMap_(o.tabla);
       Object.keys(o.cambios).forEach(function (k) {
-        if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se cambia desde un paquete (la autorización del historial se registra en la app).');
+        if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se cambia desde un paquete (' + paqueteMotivoProhibida_(o.tabla) + ').');
         if (!colsE[k]) fail_('PAQUETE', n + ': ' + o.tabla + ' no tiene la columna "' + k + '".');
         if (colsE[k].calc || CONTRACT.technicalColumns.some(function (t) { return t.k === k; })) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' lo llena el sistema; no se cambia desde un paquete.');
       });
@@ -2889,7 +3574,7 @@ function paqueteForma_(pq) {
     if (o.datos !== undefined && (typeof o.datos !== 'object' || Array.isArray(o.datos))) fail_('PAQUETE', n + ': "datos" debe ser un objeto.');
     if (!o.buscar && !o.datos && acc !== 'editar') fail_('PAQUETE', n + ': falta "datos".');
     [o.datos, o.buscar, o.esperado].forEach(function (obj) {
-      Object.keys(obj || {}).forEach(function (k) { if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se carga desde un paquete (la autorización del historial se registra en la app).'); });
+      Object.keys(obj || {}).forEach(function (k) { if (paqueteColumnaProhibida_(o.tabla, k)) fail_('PAQUETE', n + ': ' + o.tabla + '.' + k + ' no se carga desde un paquete (' + paqueteMotivoProhibida_(o.tabla) + ').'); });
     });
     if (!isEmpty_(o.ref)) {
       if (!/^[A-Za-z][A-Za-z0-9_]{0,40}$/.test(String(o.ref))) fail_('PAQUETE', n + ': ref "' + o.ref + '" no válida (letras, números y _).');
@@ -3220,7 +3905,7 @@ function paqueteAplicar_(ctx, p) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -3404,6 +4089,18 @@ function handleInner_(ctx, action, p) {
     case 'aporte_revisar': return aporteRevisar_(ctx, p);
     case 'aporte_revisar_lote': return aporteRevisarLote_(ctx, p);
     case 'aportes_por_revisar': return vistaAportesPorRevisar_(ctx, p);
+    case 'presupuestos': return vistaPresupuestos_(ctx, p);
+    case 'presupuesto_guardar': return presupuestoGuardar_(ctx, p);
+    case 'presupuesto_publicar': return presupuestoPublicar_(ctx, p);
+    case 'presupuesto_cerrar': return presupuestoCerrar_(ctx, p);
+    case 'presupuesto_retirar': return presupuestoRetirar_(ctx, p);
+    case 'portal_vista_previa': return portalVistaPrevia_(ctx, p);
+    case 'portal_publicar': return portalPublicar_(ctx, p);
+    case 'portal_revocar': return portalRevocar_(ctx, p);
+    case 'web': return vistaWeb_(ctx, p);
+    case 'solicitud_estado': return solicitudEstado_(ctx, p);
+    case 'respuesta_estado': return respuestaEstado_(ctx, p);
+    case 'ajustes_guardar': return ajustesGuardar_(ctx, p);
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -3469,7 +4166,11 @@ MemoryStore.prototype.journalFind = function (opId) {
 };
 
 // Planilla PUBLICO en memoria (pruebas y modo demo). Misma interfaz que PublicoSheet (Store.gs).
-function PublicoMemory() { this.ENLACES = []; this.PUBLICACIONES = []; }
+function PublicoMemory() { this.ENLACES = []; this.PUBLICACIONES = []; this.SOLICITUDES = []; this.RESPUESTAS = []; }
+PublicoMemory.prototype.solicitudes = function () { return JSON.parse(JSON.stringify(this.SOLICITUDES)); };
+PublicoMemory.prototype.respuestas = function () { return JSON.parse(JSON.stringify(this.RESPUESTAS)); };
+PublicoMemory.prototype.solicitudGuardar = function (id, cambios) { var x = this.SOLICITUDES.filter(function (r) { return r.id === id; })[0]; if (!x) fail_('NO_EXISTE', 'No existe ' + id); Object.assign(x, cambios); };
+PublicoMemory.prototype.respuestaGuardar = function (id, cambios) { var x = this.RESPUESTAS.filter(function (r) { return r.id === id; })[0]; if (!x) fail_('NO_EXISTE', 'No existe ' + id); Object.assign(x, cambios); };
 PublicoMemory.prototype.enlacesActivos = function (recursoId, tipo) {
   return this.ENLACES.filter(function (x) { return x.recurso_id === recursoId && x.tipo === tipo && !x.revocado_en; }).map(function (x) { return JSON.parse(JSON.stringify(x)); });
 };
@@ -3637,7 +4338,7 @@ function cargar(){
 
 function renderTabs(){
   var tabs = [['trabajos','Trabajos'],['vehiculos','Vehículos'],['horas','Horas']];
-  if (isAdmin()) { tabs.splice(2, 0, ['clientes','Clientes']); tabs.push(['cierre','Cierre']); tabs.push(['revisar','Revisar']); tabs.push(['datos','Datos']); }
+  if (isAdmin()) { tabs.splice(2, 0, ['clientes','Clientes']); tabs.push(['cierre','Cierre']); tabs.push(['revisar','Revisar']); tabs.push(['web','Web']); tabs.push(['datos','Datos']); }
   $('tabsIn').innerHTML = tabs.map(function(t){ return '<button type="button" data-act="tab" data-tab="' + t[0] + '"' + (S.tab === t[0] ? ' aria-current="page"' : '') + '>' + t[1] + '</button>'; }).join('');
   $('tabs').hidden = false;
   var act = document.querySelector('#tabsIn [aria-current="page"]'); if (act && act.scrollIntoView) try { act.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (e) {}
@@ -3650,6 +4351,7 @@ function render(){
   if (S.tab === 'horas') return renderHoras();
   if (S.tab === 'cierre') return renderCierre();
   if (S.tab === 'revisar') return renderRevisar();
+  if (S.tab === 'web') return renderWeb();
   if (S.tab === 'datos') return renderDatos();
 }
 
@@ -3717,6 +4419,7 @@ function abrirTrabajo(id){
         '<button class="btn big go" data-act="iniciar" data-id="' + esc(id) + '">Iniciar sesión</button>' +
         (abierta ? '<p class="s" style="color:var(--acero);margin:8px 0 0">Tu sesión en otro trabajo se pausará con el motivo "Otro trabajo".</p>' : '') + '</div>';
     }
+    if (isAdmin()) h += '<div class="block inline" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><span>Presupuesto para el cliente</span><button class="btn" type="button" data-act="ps-lista-tr" data-id="' + esc(id) + '">Presupuestos</button></div>';
     h += '<div class="block"><h3>Agregar al registro</h3>' +
       '<div class="row2"><label class="f"><span>Tipo</span><select class="i" id="dTipo">' + options(S.inicio.enums.tipo_detalle, 'Observación') + '</select></label>' +
       '<label class="f"><span>Componente</span><input class="i" id="dComp" placeholder="Ej. filtro de aceite"></label></div>' +
@@ -3894,7 +4597,9 @@ function abrirCliente(id){
       '<div class="s">' + esc(ultimaTxt(v)) + (v.ultima_descripcion ? ' · ' + esc(v.ultima_descripcion.slice(0, 70)) : '') + '</div>' +
       '<div class="chips"><span class="chip">' + v.trabajos + ' trabajo' + (v.trabajos === 1 ? '' : 's') + '</span>' + (v.en_curso ? '<span class="chip live">En curso</span>' : '') + (v.pendientes_vigentes ? '<span class="chip warn">' + v.pendientes_vigentes + ' pendiente' + (v.pendientes_vigentes > 1 ? 's' : '') + '</span>' : '') + '</div></div></button>';
   }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin vehículos registrados.</p>') + '</div>';
-  h += '<div style="display:grid;gap:8px"><button class="btn big ghost" type="button" data-act="cli-control" data-id="' + esc(c.cliente_id) + '">Control económico</button>' +
+  h += '<div style="display:grid;gap:8px"><button class="btn big go" type="button" data-act="po-abrir" data-id="' + esc(c.cliente_id) + '">Portal del cliente</button>' +
+    '<button class="btn big ghost" type="button" data-act="ps-lista-cli" data-id="' + esc(c.cliente_id) + '">Presupuestos</button>' +
+    '<button class="btn big ghost" type="button" data-act="cli-control" data-id="' + esc(c.cliente_id) + '">Control económico</button>' +
     '<button class="btn big ghost" type="button" data-act="cli-contexto" data-id="' + esc(c.cliente_id) + '">Contexto para IA</button></div>';
   abrirHoja(c.nombre, h);
 }
@@ -3968,6 +4673,7 @@ function abrirNuevoTrabajo(eq){
     '<label class="f"><span>Asignar a</span><select class="i" id="ntAsig"><option value="">Nadie por ahora</option></select></label>' +
     '<button class="btn big go" type="button" data-act="nt-crear">Crear trabajo</button></div>';
   abrirHoja('Nuevo trabajo', h);
+  if (S.ntPrefill) { $('ntDesc').value = S.ntPrefill.desc; S.nt.sol = S.ntPrefill.sol; S.ntPrefill = null; }
   call('listar', { tabla: 'USUARIOS' }).then(function(r){
     var sel = $('ntAsig'); if (!sel) return;
     r.data.filter(function(u){ return u.activo === true; }).forEach(function(u){ var o = document.createElement('option'); o.value = u.id; o.textContent = u.nombre + (u.rol === 'Tecnico' ? ' · técnico' : ''); sel.appendChild(o); });
@@ -3996,6 +4702,7 @@ function crearNuevoTrabajo(btn){
     var asignar = asig ? call('crear', { tabla: 'ASIGNACIONES', datos: { trabajo_id: tr.id, usuario_id: asig }, op_id: n.opAsig }).catch(function(){ toast('El trabajo se creó, pero no se pudo asignar. Asígnalo en Datos → Asignaciones.', 'err'); }) : Promise.resolve();
     return asignar.then(function(){
       toast('Trabajo ' + tr.codigo + ' creado.');
+      if (n.sol) cambiarSolicitud(n.sol, 'Convertida', { trabajo: tr.codigo }).catch(function(){ toast('El trabajo se creó, pero no se pudo marcar la solicitud como convertida.', 'err'); });
       S.nt = null; cerrarHoja(); S.tab = 'trabajos';
       return cargar().then(function(){ abrirTrabajo(tr.id); });
     });
@@ -4204,6 +4911,314 @@ function revocarHistorial(btn){
   call('historial_revocar', { equipo_id: id, motivo: mot, op_id: opId() }).then(function(){ toast('Enlace revocado.'); cerrarHoja(); abrirFicha(id); }).catch(function(){ btn.disabled = false; });
 }
 
+/* ───── 1.10: pestaña Web (solicitudes, respuestas y ajustes), Portal del cliente y Presupuestos ───── */
+var WEB = { data:null };
+function fechaHora(iso){ if (!iso) return ''; var d = new Date(iso); if (isNaN(d)) return ''; var z = function(n){ return (n < 10 ? '0' : '') + n; }; return fmtFecha(iso) + ' ' + z(d.getHours()) + ':' + z(d.getMinutes()); }
+function copiarTexto(t, ok){ if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function(){ toast(ok || 'Copiado.'); }, function(){ toast(t); }); else toast(t); }
+function contactoCliente(clienteId){
+  var c = (S.clientes || []).filter(function(x){ return x.cliente_id === clienteId; })[0];
+  var cs = c ? c.contactos.slice().sort(function(a, b){ return (b.rol_solicitante - a.rol_solicitante) || (b.rol_propietario - a.rol_propietario); }) : [];
+  return cs[0] || null;
+}
+/** Hoja "enlace listo": mensaje editable + WhatsApp + copiar. */
+function hojaEnlace(titulo, intro, texto, url, clienteId){
+  var c = contactoCliente(clienteId), num = waNumero(c && c.telefono);
+  S.enlaceUrl = url;
+  var h = '<p style="margin:0 0 8px">' + intro + '</p><label class="f"><span>Mensaje</span><textarea class="i" id="enTexto" rows="7">' + esc(texto) + '</textarea></label>' +
+    '<div style="display:grid;gap:8px"><a class="btn big go" id="enWa" target="_blank" rel="noopener" style="text-align:center;text-decoration:none" href="https://wa.me/' + num + '?text=' + encodeURIComponent(texto) + '">Enviar por WhatsApp' + (c ? ' a ' + esc(primerNombre(c.nombre)) : '') + '</a>' +
+    '<button class="btn big ghost" type="button" data-act="en-copiar">Copiar enlace</button></div>' +
+    '<p class="s" style="color:var(--acero);margin-top:10px">El enlace no cambia al actualizar: el cliente siempre ve lo último publicado.</p>';
+  abrirHoja(titulo, h);
+  $('enTexto').addEventListener('input', function(){ $('enWa').href = 'https://wa.me/' + num + '?text=' + encodeURIComponent(this.value); });
+}
+function asegurarClientes(){ return S.clientes ? Promise.resolve(S.clientes) : call('clientes', {}).then(function(r){ S.clientes = r.data; return r.data; }); }
+
+function renderWeb(){
+  $('main').innerHTML = '<h2 class="section-title">Web</h2><p style="margin:-6px 0 12px;color:var(--acero)">Lo que llega de los clientes por los enlaces: solicitudes de trabajo y respuestas a presupuestos. Nada cambia en el registro hasta que lo confirmes.</p><div id="webBody" class="empty">Cargando…</div>';
+  asegurarClientes().catch(function(){});
+  call('web', {}).then(function(r){ WEB.data = r.data; pintarWeb(); }).catch(function(){ $('webBody').textContent = 'No se pudo cargar.'; });
+}
+function chipEstadoSol(e){ return '<span class="chip' + (e === 'Nueva' ? ' warn' : e === 'Convertida' ? ' live' : '') + '">' + esc(e) + '</span>'; }
+function pintarWeb(){
+  var d = WEB.data, el = $('webBody'); if (!el || !d) return;
+  var h = '';
+  if (!d.configurado) h += '<div class="block">La planilla PUBLICO no está conectada: los enlaces para clientes aún no están instalados.</div>';
+  else {
+    h += '<div class="block"><h3>Solicitudes (' + d.solicitudes.filter(function(s){ return s.estado === 'Nueva' || s.estado === 'Contactado'; }).length + ' abiertas)</h3>' +
+      '<div class="inline" style="flex-wrap:wrap;margin-bottom:8px"><button class="btn ghost" type="button" data-act="web-general">Copiar enlace del formulario general</button></div>';
+    h += d.solicitudes.length ? '<div class="list">' + d.solicitudes.map(function(s){
+      var veh = s.equipos.length ? s.equipos.map(function(e){ return [e.nombre, e.patente].filter(Boolean).join(' · '); }).join('; ') : s.vehiculo;
+      var abierta = s.estado === 'Nueva' || s.estado === 'Contactado';
+      return '<div class="item" style="display:block;cursor:default"><div class="t">' + esc(s.tipo) + ' · ' + (s.cliente ? esc(s.cliente.nombre) + ' <span style="font-weight:400;color:var(--acero)">' + esc(s.cliente.codigo) + '</span>' : esc(s.nombre || 'Sin nombre')) + '</div>' +
+        '<div class="s">' + esc(fechaHora(s.recibido_en)) + ' · ' + (s.origen === 'Portal' ? 'portal' : 'formulario general') + (s.telefono ? ' · <a href="https://wa.me/' + waNumero(s.telefono) + '" target="_blank" rel="noopener">' + esc(s.telefono) + '</a>' : '') + (s.correo ? ' · ' + esc(s.correo) : '') + (s.contacto ? ' · prefiere ' + esc(s.contacto) : '') + '</div>' +
+        (veh ? '<div class="s">Vehículo: ' + esc(veh) + '</div>' : '') +
+        '<p style="margin:6px 0;white-space:pre-wrap">' + esc(s.mensaje) + '</p>' +
+        '<div class="chips">' + chipEstadoSol(s.estado) + (s.trabajo ? '<span class="chip">' + esc(s.trabajo) + '</span>' : '') + (s.motivo ? '<span class="chip">' + esc(s.motivo) + '</span>' : '') + '</div>' +
+        (abierta ? '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn go" type="button" data-act="sol-convertir" data-id="' + esc(s.id) + '">Convertir en trabajo</button>' +
+          (s.estado === 'Nueva' ? '<button class="btn" type="button" data-act="sol-estado" data-id="' + esc(s.id) + '" data-e="Contactado">Contactado</button>' : '') +
+          '<button class="btn ghost" type="button" data-act="sol-ia" data-id="' + esc(s.id) + '">Llevar a IA</button>' +
+          '<button class="btn ghost" type="button" data-act="sol-descartar" data-id="' + esc(s.id) + '">Descartar</button></div>' : '') + '</div>';
+    }).join('') + '</div>' : '<div class="empty">No hay solicitudes.</div>';
+    h += '</div><div class="block"><h3>Respuestas a presupuestos</h3>';
+    h += d.respuestas.length ? '<div class="list">' + d.respuestas.map(function(r){
+      return '<div class="item" style="display:block;cursor:default"><div class="t">' + esc(r.respuesta) + ' · ' + esc(r.nombre || 'Sin nombre') + '</div>' +
+        '<div class="s">' + esc(fechaHora(r.recibido_en)) + (r.presupuesto ? ' · ' + esc(r.presupuesto.codigo) + ' ' + esc(r.presupuesto.titulo) : '') + (r.cliente ? ' · ' + esc(r.cliente.nombre) : '') + ' · vía ' + esc(r.via) + '</div>' +
+        (r.mensaje ? '<p style="margin:6px 0;white-space:pre-wrap">' + esc(r.mensaje) + '</p>' : '') +
+        '<div class="chips"><span class="chip' + (r.estado === 'Nueva' ? ' warn' : '') + '">' + esc(r.estado) + '</span>' + (r.opcionales.length ? '<span class="chip">' + r.opcionales.length + ' opcional' + (r.opcionales.length > 1 ? 'es' : '') + '</span>' : '') + (r.vigente ? '' : '<span class="chip">' + (r.presupuesto ? 'presupuesto ' + esc(r.presupuesto.estado) + (r.presupuesto.estado === 'Publicado' ? ', revisión distinta' : '') : 'sin presupuesto') + '</span>') + '</div>' +
+        '<div class="inline" style="flex-wrap:wrap;margin-top:8px">' + (r.presupuesto ? '<button class="btn go" type="button" data-act="ps-abrir" data-id="' + esc(r.presupuesto.id) + '">Abrir presupuesto</button>' : '') +
+        (r.estado === 'Nueva' ? '<button class="btn ghost" type="button" data-act="res-revisada" data-id="' + esc(r.id) + '">Marcar revisada</button>' : '') + '</div></div>';
+    }).join('') + '</div>' : '<div class="empty">No hay respuestas.</div>';
+    h += '</div>';
+  }
+  var a = d.ajustes;
+  h += '<div class="block"><h3>Ajustes</h3>' +
+    '<div class="row2"><label class="f"><span>Correo de aviso</span><select class="i" id="ajModo">' + options(['Horarios', 'Frecuencia', 'Desactivado'], a.avisos_modo) + '</select></label>' +
+    '<label class="f"><span>Enviar a</span><input class="i" id="ajCorreo" value="' + esc(a.avisos_correo) + '"></label></div>' +
+    '<label class="f" id="ajHorF"><span>Horarios (HH:MM, separados por coma)</span><input class="i" id="ajHor" value="' + esc(a.avisos_horarios) + '" placeholder="09:00, 14:00, 19:00"></label>' +
+    '<label class="f" id="ajFreF"><span>Cada cuántos minutos (15 a 1440)</span><input class="i" id="ajFre" inputmode="numeric" value="' + esc(a.avisos_frecuencia_min) + '"></label>' +
+    '<p class="s" style="color:var(--acero);margin:0 0 8px">Solo se envía si hay algo nuevo. Se revisa cada 15 minutos.</p>' +
+    '<div class="row2"><label class="f"><span>Borrar datos de solicitudes después de (meses)</span><input class="i" id="ajBor" inputmode="numeric" value="' + esc(a.solicitudes_borrar_meses) + '"></label>' +
+    '<label class="f"><span>Validez del presupuesto (días)</span><input class="i" id="ajVal" inputmode="numeric" value="' + esc(a.presupuesto_validez_dias) + '"></label></div>' +
+    '<label class="f"><span>El estado de cuenta se ve por (días)</span><input class="i" id="ajCta" inputmode="numeric" value="' + esc(a.cuenta_vence_dias) + '"></label>' +
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn go" type="button" data-act="aj-guardar">Guardar ajustes</button><button class="btn ghost" type="button" data-act="web-cobros">Medios de cobro</button></div></div>';
+  el.className = ''; el.innerHTML = h;
+  var modo = function(){ var m = $('ajModo').value; $('ajHorF').style.display = m === 'Horarios' ? '' : 'none'; $('ajFreF').style.display = m === 'Frecuencia' ? '' : 'none'; };
+  $('ajModo').addEventListener('change', modo); modo();
+}
+function guardarAjustes(btn){
+  var aj = { avisos_modo: $('ajModo').value, avisos_correo: $('ajCorreo').value.trim(), avisos_frecuencia_min: Number($('ajFre').value), solicitudes_borrar_meses: Number($('ajBor').value), presupuesto_validez_dias: Number($('ajVal').value), cuenta_vence_dias: Number($('ajCta').value) };
+  if (aj.avisos_modo === 'Horarios' || $('ajHor').value.trim()) aj.avisos_horarios = $('ajHor').value.trim();
+  btn.disabled = true;
+  call('ajustes_guardar', { ajustes: aj, op_id: opId() }).then(function(r){ toast('Ajustes guardados.'); WEB.data.ajustes = r.data.ajustes; btn.disabled = false; }).catch(function(){ btn.disabled = false; });
+}
+function solicitudDe(id){ return ((WEB.data && WEB.data.solicitudes) || []).filter(function(s){ return s.id === id; })[0]; }
+function textoSolicitud(s){
+  var veh = s.equipos.length ? s.equipos.map(function(e){ return [e.nombre, e.patente].filter(Boolean).join(' '); }).join('; ') : s.vehiculo;
+  return 'Solicitud web (' + s.origen + ', ' + fechaHora(s.recibido_en) + ')\nTipo: ' + s.tipo + (s.cliente ? '\nCliente: ' + s.cliente.nombre + ' (' + s.cliente.codigo + ')' : '\nNombre: ' + (s.nombre || '') + '\nTeléfono: ' + (s.telefono || '') + (s.correo ? '\nCorreo: ' + s.correo : '')) + (veh ? '\nVehículo: ' + veh : '') + '\nMensaje: ' + s.mensaje;
+}
+function cambiarSolicitud(id, estado, extra){
+  return call('solicitud_estado', Object.assign({ id: id, estado: estado, op_id: opId() }, extra || {})).then(function(){
+    var s = solicitudDe(id); if (s) { s.estado = estado; if (extra && extra.trabajo) s.trabajo = extra.trabajo; if (extra && extra.motivo) s.motivo = extra.motivo; }
+    if (S.tab === 'web') pintarWeb();
+  });
+}
+function convertirSolicitud(id){
+  var s = solicitudDe(id); if (!s) return;
+  S.ntPrefill = { desc: s.tipo + ': ' + s.mensaje, sol: s.id };
+  var eq = s.equipos.length === 1 ? (S.inicio.resumen || []).filter(function(v){ return v.equipo_id === s.equipos[0].id; })[0] : null;
+  if (eq) abrirNuevoTrabajo({ id: eq.equipo_id, nombre_corto: eq.nombre_corto, patente: eq.patente, cliente_id: eq.cliente_id, cliente: eq.cliente });
+  else { elegirVehiculoNT(); toast(s.origen === 'General' ? 'Elige el vehículo. Si es un cliente nuevo, primero créalo (Datos o paquete IA "alta de cliente").' : 'Elige el vehículo del trabajo.'); }
+}
+function abrirDescartar(id){
+  abrirHoja('Descartar solicitud', '<label class="f"><span>Motivo *</span><input class="i" id="sdMotivo" placeholder="Ej. duplicada, spam, no es de nuestro rubro"></label><button class="btn big danger" type="button" data-act="sol-descartar-ok" data-id="' + esc(id) + '">Descartar</button>');
+}
+
+/* ── Portal del cliente ── */
+function abrirPortal(clienteId){
+  var c = (S.clientes || []).filter(function(x){ return x.cliente_id === clienteId; })[0];
+  call('portal_vista_previa', { cliente_id: clienteId }).then(function(r){
+    var d = r.data, cont = d.contenido; S.portal = { cliente_id: clienteId, d: d, nombre: c ? c.nombre : cont.cliente.nombre };
+    var cobro = (d.cobro || '').split(',');
+    var h = '<div class="block"><p style="margin:0 0 6px">' + (d.enlace_activo ? '<b>Enlace activo</b>' + (d.publicado_en ? ' · publicado ' + esc(fmtFecha(d.publicado_en)) : '') : 'Sin enlace todavía.') + '</p>' +
+      '<p class="s" style="margin:0;color:var(--acero)">Un solo enlace para el cliente: sus vehículos con el historial autorizado, sus presupuestos y, si lo eliges, pedir trabajos y ver su estado de cuenta. Sin costos ni notas internas.</p></div>' +
+      '<div class="block"><h3>Qué incluye</h3><ul style="margin:0 0 8px;padding-left:18px"><li>' + cont.equipos.length + ' vehículo' + (cont.equipos.length === 1 ? '' : 's') + ' · ' + Object.keys(cont.historiales).length + ' con historial publicado</li><li>' + cont.presupuestos.length + ' presupuesto' + (cont.presupuestos.length === 1 ? '' : 's') + ' publicado' + (cont.presupuestos.length === 1 ? '' : 's') + '</li></ul>' +
+      '<label class="f inline" style="gap:8px"><input type="checkbox" id="poSol"' + (d.solicitudes ? ' checked' : '') + '> Puede pedir trabajos desde el enlace</label>' +
+      '<label class="f inline" style="gap:8px"><input type="checkbox" id="poCta"' + (d.cuenta ? ' checked' : '') + '> Mostrar su estado de cuenta</label>' +
+      '<div id="poCtaOp"><label class="f"><span>Visible por (días)</span><input class="i" id="poDias" inputmode="numeric" value="' + esc(d.cuenta_dias_defecto) + '"></label>' +
+      (d.cuenta_vence ? '<p class="s" style="margin:0 0 8px;color:var(--acero)">Hoy visible hasta el ' + esc(fmtFecha(d.cuenta_vence)) + '.</p>' : '') +
+      (d.cuenta_problema ? '<p class="s" style="margin:0 0 8px"><span class="chip warn">No cuadra</span> ' + esc(d.cuenta_problema) + '</p>' : '') +
+      '<div class="f"><span>Medios de pago a mostrar</span>' + (d.cobros_disponibles.length ? d.cobros_disponibles.map(function(x){ return '<label class="inline" style="gap:8px;padding:4px 0"><input type="checkbox" class="poCobro" value="' + esc(x.codigo) + '"' + (cobro.indexOf(x.codigo) >= 0 ? ' checked' : '') + '> ' + esc(x.nombre) + '</label>'; }).join('') : '<p class="s" style="margin:0">No hay medios de cobro. Agrégalos en Web → Medios de cobro.</p>') + '</div></div></div>' +
+      '<div style="display:grid;gap:8px"><button class="btn big go" type="button" data-act="po-publicar">' + (d.enlace_activo ? 'Actualizar y enviar' : 'Publicar y enviar') + '</button>' +
+      '<button class="btn big ghost" type="button" data-act="ps-lista-cli" data-id="' + esc(clienteId) + '">Presupuestos del cliente</button>' +
+      (d.enlace_activo ? '<button class="btn big danger" type="button" data-act="po-revocar">Revocar enlace</button>' : '') + '</div>';
+    abrirHoja('Portal · ' + S.portal.nombre, h);
+    var t = function(){ $('poCtaOp').style.display = $('poCta').checked ? '' : 'none'; }; $('poCta').addEventListener('change', t); t();
+  }).catch(function(){});
+}
+function publicarPortal(btn){
+  var P = S.portal; if (!P) return;
+  var cobro = Array.prototype.map.call(document.querySelectorAll('.poCobro:checked'), function(c){ return c.value; }).join(',');
+  btn.disabled = true;
+  call('portal_publicar', { cliente_id: P.cliente_id, solicitudes: $('poSol').checked, cuenta: $('poCta').checked, cuenta_dias: $('poCta').checked ? Number($('poDias').value) : '', cobro: cobro, op_id: opId() }).then(function(r){
+    var c = contactoCliente(P.cliente_id);
+    var txt = 'Hola ' + (primerNombre(c && c.nombre) || '') + ', le compartimos su portal de Eisen Garage: ahí puede ver sus vehículos' + ($('poCta').checked ? ', su estado de cuenta' : '') + ' y presupuestos' + ($('poSol').checked ? ', y pedirnos trabajos' : '') + '. Guarde este enlace, es solo para usted:\n' + r.data.url + '\n\n' + FIRMA_EG;
+    hojaEnlace('Portal publicado', r.data.nueva ? 'Publicado (versión ' + r.data.revision + ').' : 'Sin cambios desde la última publicación.', txt.replace('Hola , ', 'Hola, '), r.data.url, P.cliente_id);
+  }).catch(function(){ btn.disabled = false; });
+}
+function abrirRevocarPortal(){
+  abrirHoja('Revocar portal', '<p style="margin:0 0 10px">El enlace deja de funcionar al tiro. Para volver a compartir se crea un enlace distinto.</p><label class="f"><span>Motivo *</span><input class="i" id="prMotivo" placeholder="Ej. lo pidió el cliente"></label><button class="btn big danger" type="button" data-act="po-revocar-ok">Revocar</button>');
+}
+
+/* ── Presupuestos ── */
+var PSU = { lista:null, filtro:null, cat:null, cobros:null };
+function chipPs(e){ return '<span class="chip' + (e === 'Publicado' ? ' warn' : e === 'Autorizado' ? ' live' : '') + '">' + esc(e) + '</span>'; }
+function abrirPresupuestos(filtro){
+  PSU.filtro = filtro;
+  call('presupuestos', filtro).then(function(r){
+    PSU.lista = r.data;
+    var h = (filtro.trabajo_id ? '<button class="btn big go" type="button" data-act="ps-nuevo" style="width:100%;margin-bottom:12px">Nuevo presupuesto</button>' : '<p class="s" style="color:var(--acero)">Para un presupuesto nuevo, ábrelo desde el trabajo (pestaña Trabajos).</p>') +
+      (r.data.length ? '<div class="list">' + r.data.map(function(x){
+        var p = x.presupuesto, m = x.totales.necesario.neto ? Math.round((1 - x.costo_neto / (x.totales.necesario.neto + x.totales.opcional.neto)) * 100) : null;
+        return '<button class="item" type="button" data-act="ps-abrir" data-id="' + esc(p.id) + '"><div class="body"><div class="t">' + esc(p.codigo) + ' · ' + esc(p.titulo) + '</div>' +
+          '<div class="s">' + esc(x.trabajo.codigo || '') + ' · ' + pesos(x.totales.necesario.total) + ' con IVA' + (x.totales.opcional.neto ? ' + opcional ' + pesos(x.totales.opcional.total) : '') + (x.costo_neto && m !== null ? ' · margen aprox. ' + m + ' %' : '') + '</div>' +
+          '<div class="chips">' + chipPs(p.estado) + (p.vence_en && p.estado === 'Publicado' ? '<span class="chip">hasta ' + esc(fmtFecha(p.vence_en)) + '</span>' : '') + (x.respuestas.filter(function(z){ return z.estado === 'Nueva'; }).length ? '<span class="chip warn">respuesta nueva</span>' : '') + '</div></div></button>';
+      }).join('') + '</div>' : '<div class="empty">Sin presupuestos.</div>');
+    abrirHoja('Presupuestos', h);
+  }).catch(function(){});
+}
+function cargarApoyoPs(){
+  var a = PSU.cat ? Promise.resolve() : call('catalogo', {}).then(function(r){ PSU.cat = r.data.items; }).catch(function(){ PSU.cat = []; });
+  var b = PSU.cobros ? Promise.resolve() : call('listar', { tabla: 'CUENTAS_COBRO' }).then(function(r){ PSU.cobros = r.data.filter(function(x){ return x.activo === true; }); }).catch(function(){ PSU.cobros = []; });
+  return Promise.all([a, b]);
+}
+function abrirPresupuesto(id){
+  cargarApoyoPs().then(function(){ return call('presupuestos', { presupuesto_id: id }); }).then(function(r){ var x = r.data[0]; if (x) editorPresupuesto(x); }).catch(function(){});
+}
+function nuevoPresupuesto(){
+  var tid = PSU.filtro && PSU.filtro.trabajo_id; if (!tid) return;
+  cargarApoyoPs().then(function(){ editorPresupuesto({ presupuesto: { trabajo_id: tid, titulo: '', estado: 'Borrador', cobro: '' }, items: [], respuestas: [], totales: null, iva_pct: 19 }); });
+}
+function precioVisible(it){
+  if (it.precio_unitario == null || it.precio_unitario === '') return '';
+  var tiene = it.costo_unitario !== '' && it.costo_unitario != null && it.margen_pct !== '' && it.margen_pct != null && Number(it.margen_pct) < 100;
+  return tiene && Number(it.precio_unitario) === Math.round(Number(it.costo_unitario) / (1 - Number(it.margen_pct) / 100)) ? '' : it.precio_unitario;
+}
+function filaItemPs(it, i){
+  var L = S.inicio.listas || {}, E = S.inicio.enums || {};
+  var catOpts = '<option value="">— sin catálogo —</option>' + (PSU.cat || []).map(function(c){ return '<option value="' + esc(c.id) + '"' + (c.id === it.catalogo_id ? ' selected' : '') + '>' + esc(c.codigo + ' · ' + c.descripcion + (c.ultimo ? ' · costo ' + pesos(c.ultimo.costo_neto) : '')) + '</option>'; }).join('');
+  return '<div class="block psItem" data-i="' + i + '" data-id="' + esc(it.id || '') + '" data-v="' + esc(it.version || '') + '" style="padding:10px">' +
+    '<div class="row2"><label class="f"><span>Tipo</span><select class="i piTipo">' + options(E.tipo_concepto, it.tipo || 'Repuesto') + '</select></label><label class="f"><span>Cantidad</span><input class="i piCant" inputmode="decimal" value="' + esc(it.cantidad == null ? 1 : it.cantidad) + '"></label></div>' +
+    '<label class="f"><span>Descripción para el cliente *</span><input class="i piDesc" value="' + esc(it.descripcion || '') + '"></label>' +
+    '<label class="f"><span>Repuesto del catálogo (opcional)</span><select class="i piCat">' + catOpts + '</select></label>' +
+    '<div class="row2"><label class="f"><span>Costo neto (interno)</span><input class="i piCosto" inputmode="numeric" value="' + esc(it.costo_unitario == null ? '' : it.costo_unitario) + '"></label><label class="f"><span>Margen %</span><input class="i piMargen" inputmode="decimal" value="' + esc(it.margen_pct == null ? '' : it.margen_pct) + '"></label></div>' +
+    '<label class="f"><span>Precio neto unitario al cliente (vacío = costo y margen)</span><input class="i piPrecio" inputmode="numeric" value="' + esc(precioVisible(it)) + '"></label>' +
+    '<div class="inline" style="justify-content:space-between;flex-wrap:wrap"><label class="inline" style="gap:8px"><input type="checkbox" class="piOpc"' + (it.opcional === true ? ' checked' : '') + '> Opcional (recomendado)</label><span class="s piCalc" style="color:var(--acero)"></span><button class="btn ghost" type="button" data-act="ps-quitar">Quitar</button></div></div>';
+}
+function editorPresupuesto(x){
+  var p = x.presupuesto, cerrado = ['Autorizado', 'Rechazado', 'Retirado'].indexOf(p.estado) >= 0;
+  PSU.actual = x; PSU.borrar = []; PSU.items = x.items.map(function(it){ return Object.assign({}, it); });
+  var cobro = String(p.cobro || '').split(',');
+  var h = '<div class="block"><div class="chips" style="margin:0 0 6px">' + chipPs(p.estado) + (p.codigo ? '<span class="chip">' + esc(p.codigo) + '</span>' : '') + (x.trabajo ? '<span class="chip">' + esc(x.trabajo.codigo || '') + '</span>' : '') + (p.vence_en && p.estado === 'Publicado' ? '<span class="chip">válido hasta ' + esc(fmtFecha(p.vence_en)) + '</span>' : '') + '</div>' +
+    (p.respuesta_detalle ? '<p class="s" style="margin:0">' + esc(p.respuesta_detalle) + '</p>' : '') + '</div>';
+  if (x.respuestas && x.respuestas.length) {
+    h += '<div class="block"><h3>Respuestas del cliente</h3>' + x.respuestas.map(function(r){
+      var vig = Number(r.revision) === Number(p.revision) && p.estado === 'Publicado';
+      return '<div style="border-top:1px solid var(--linea);padding:6px 0"><b>' + esc(r.respuesta) + '</b> · ' + esc(r.nombre) + ' · ' + esc(fechaHora(r.recibido_en)) + ' · revisión ' + esc(r.revision) + (r.mensaje ? '<div style="white-space:pre-wrap">' + esc(r.mensaje) + '</div>' : '') +
+        (vig && r.respuesta !== 'Consulta' ? '<button class="btn go" type="button" data-act="ps-confirmar-resp" data-id="' + esc(r.id) + '" style="margin-top:6px">Confirmar: ' + (r.respuesta === 'Autorizo' ? 'autorizado' : 'rechazado') + '</button>' : '') + '</div>';
+    }).join('') + '</div>';
+  }
+  h += '<fieldset ' + (cerrado ? 'disabled ' : '') + 'style="border:0;padding:0;margin:0">' +
+    '<div class="block"><label class="f"><span>Título *</span><input class="i" id="psTit" value="' + esc(p.titulo || '') + '" placeholder="Ej. Reparación fuga de refrigerante"></label>' +
+    '<label class="f"><span>Diagnóstico y propuesta (para el cliente)</span><textarea class="i" id="psDiag" rows="4">' + esc(p.diagnostico || '') + '</textarea></label>' +
+    '<label class="f"><span>Condiciones (garantía, plazo, abono)</span><textarea class="i" id="psCond" rows="3">' + esc(p.condiciones || '') + '</textarea></label>' +
+    '<label class="f"><span>Validez (días; vacío = la de Ajustes)</span><input class="i" id="psVal" inputmode="numeric" value="' + esc(p.validez_dias == null ? '' : p.validez_dias) + '"></label>' +
+    '<div class="f"><span>Medios de pago a mostrar</span>' + ((PSU.cobros || []).length ? PSU.cobros.map(function(c){ return '<label class="inline" style="gap:8px;padding:4px 0"><input type="checkbox" class="psCobro" value="' + esc(c.codigo) + '"' + (cobro.indexOf(c.codigo) >= 0 ? ' checked' : '') + '> ' + esc(c.nombre) + '</label>'; }).join('') : '<p class="s" style="margin:0">No hay medios de cobro. Agrégalos en Web → Medios de cobro.</p>') + '</div>' +
+    '<label class="f"><span>Notas internas (no se publican)</span><textarea class="i" id="psNotas" rows="2">' + esc(p.notas || '') + '</textarea></label></div>' +
+    '<h3 style="margin:14px 0 6px">Ítems</h3><div id="psItems"></div>' +
+    '<button class="btn" type="button" data-act="ps-item" style="margin-bottom:10px">+ Agregar ítem</button>' +
+    '<div class="block" id="psTot"></div></fieldset>';
+  h += '<div style="display:grid;gap:8px">' + (!cerrado ? '<button class="btn big" type="button" data-act="ps-guardar">Guardar</button>' : '') +
+    (p.id && !cerrado ? '<button class="btn big go" type="button" data-act="ps-publicar">' + (p.estado === 'Publicado' ? 'Actualizar y enviar' : 'Publicar y enviar') + '</button>' : '') +
+    (p.id && !cerrado ? '<button class="btn big ghost" type="button" data-act="ps-confirmar">Registrar respuesta por otro medio</button>' : '') +
+    (p.id && p.enlace_codigo ? '<button class="btn big ghost" type="button" data-act="ps-copiar">Copiar enlace</button><button class="btn big danger" type="button" data-act="ps-retirar">Retirar del cliente</button>' : '') + '</div>';
+  abrirHoja(p.codigo ? 'Presupuesto ' + p.codigo : 'Nuevo presupuesto', h);
+  pintarItemsPs();
+}
+function leerItemsPs(){
+  Array.prototype.forEach.call(document.querySelectorAll('.psItem'), function(el){
+    var it = PSU.items[+el.getAttribute('data-i')]; if (!it) return;
+    var num = function(sel){ var v = el.querySelector(sel).value.trim().replace(/\./g, '').replace(',', '.'); return v === '' ? '' : Number(v); };
+    it.tipo = el.querySelector('.piTipo').value; it.descripcion = el.querySelector('.piDesc').value.trim();
+    it.cantidad = num('.piCant'); it.catalogo_id = el.querySelector('.piCat').value;
+    it.costo_unitario = num('.piCosto'); it.margen_pct = num('.piMargen'); it.precio_unitario = num('.piPrecio');
+    it.opcional = el.querySelector('.piOpc').checked;
+  });
+}
+function calcItemPs(it){
+  var costo = it.costo_unitario;
+  if (costo === '' && it.catalogo_id) { var c = (PSU.cat || []).filter(function(z){ return z.id === it.catalogo_id; })[0]; if (c && c.ultimo) costo = c.ultimo.costo_neto; }
+  var precio = it.precio_unitario !== '' ? it.precio_unitario : (costo !== '' && it.margen_pct !== '' && it.margen_pct < 100 ? Math.round(costo / (1 - it.margen_pct / 100)) : null);
+  var cant = it.cantidad === '' ? 1 : it.cantidad;
+  return { costo: costo === '' ? null : costo, precio: precio, total: precio == null ? null : Math.round(cant * precio), cant: cant };
+}
+function pintarItemsPs(){
+  var box = $('psItems'); if (!box) return;
+  box.innerHTML = PSU.items.map(filaItemPs).join('') || '<div class="empty">Sin ítems.</div>';
+  Array.prototype.forEach.call(box.querySelectorAll('input,select'), function(i){ i.addEventListener('input', totalesPs); i.addEventListener('change', totalesPs); });
+  totalesPs();
+}
+function totalesPs(){
+  leerItemsPs();
+  var iva = (PSU.actual && PSU.actual.iva_pct) || 19, nec = 0, opc = 0, costo = 0, ventaC = 0;
+  Array.prototype.forEach.call(document.querySelectorAll('.psItem'), function(el){
+    var it = PSU.items[+el.getAttribute('data-i')], c = calcItemPs(it);
+    el.querySelector('.piCalc').textContent = c.total == null ? 'Falta precio' : pesos(c.precio) + ' c/u · total ' + pesos(c.total) + ' neto';
+    if (c.total != null) { if (it.opcional) opc += c.total; else nec += c.total; }
+    if (c.costo != null) { costo += c.costo * c.cant; if (c.total != null) ventaC += c.total; }
+  });
+  var ci = function(n){ return n + Math.round(n * iva / 100); };
+  var t = $('psTot'); if (!t) return;
+  t.innerHTML = '<dl class="kv"><dt>Necesario neto</dt><dd>' + pesos(nec) + '</dd><dt>IVA ' + iva + ' %</dt><dd>' + pesos(Math.round(nec * iva / 100)) + '</dd><dt><b>Total</b></dt><dd><b>' + pesos(ci(nec)) + '</b></dd>' +
+    (opc ? '<dt>Opcional</dt><dd>' + pesos(ci(opc)) + ' con IVA</dd>' : '') +
+    (costo ? '<dt>Costo (interno)</dt><dd>' + pesos(costo) + (ventaC ? ' · margen ' + Math.round((1 - costo / ventaC) * 100) + ' % en ítems con costo' : '') + '</dd>' : '') + '</dl>';
+}
+function guardarPresupuesto(btn, luego){
+  leerItemsPs();
+  var p = PSU.actual.presupuesto;
+  if (!$('psTit').value.trim()) { toast('Escribe el título.', 'err'); return Promise.reject(); }
+  if (PSU.items.some(function(it){ return !it.descripcion; })) { toast('Cada ítem necesita descripción.', 'err'); return Promise.reject(); }
+  var cab = { trabajo_id: p.trabajo_id, titulo: $('psTit').value.trim(), diagnostico: $('psDiag').value.trim(), condiciones: $('psCond').value.trim(), validez_dias: $('psVal').value.trim() === '' ? '' : Number($('psVal').value), notas: $('psNotas').value.trim(),
+    cobro: Array.prototype.map.call(document.querySelectorAll('.psCobro:checked'), function(c){ return c.value; }).join(',') };
+  if (p.id) { cab.id = p.id; cab.version = p.version; delete cab.trabajo_id; }
+  var items = PSU.items.map(function(it, i){
+    var o = { orden: i + 1, tipo: it.tipo, descripcion: it.descripcion, cantidad: it.cantidad, catalogo_id: it.catalogo_id, costo_unitario: it.costo_unitario, margen_pct: it.margen_pct, precio_unitario: it.precio_unitario, opcional: it.opcional };
+    if (it.id) { o.id = it.id; o.version = it.version; }
+    return o;
+  });
+  if (btn) btn.disabled = true;
+  return call('presupuesto_guardar', { presupuesto: cab, items: items, borrar: PSU.borrar, op_id: opId() }).then(function(r){
+    if (btn) btn.disabled = false;
+    if (!luego) toast('Presupuesto ' + r.data.presupuesto.codigo + ' guardado.');
+    editorPresupuesto(r.data);
+    return r.data;
+  }, function(e){ if (btn) btn.disabled = false; throw e; });
+}
+function publicarPresupuesto(btn){
+  var p = PSU.actual.presupuesto;
+  guardarPresupuesto(btn, true).then(function(x){
+    return call('presupuesto_publicar', { presupuesto_id: x.presupuesto.id, op_id: opId() }).then(function(r){
+      var c = contactoCliente(x.presupuesto.cliente_id);
+      var txt = 'Hola ' + (primerNombre(c && c.nombre) || '') + ', le enviamos el presupuesto ' + x.presupuesto.codigo + ' (' + x.presupuesto.titulo + ') de Eisen Garage. Puede revisarlo y respondernos desde este enlace (válido hasta el ' + fmtFecha(r.data.vence) + '):\n' + r.data.url + '\n\n' + FIRMA_EG;
+      hojaEnlace('Presupuesto publicado', r.data.nueva ? 'Publicado (versión ' + r.data.revision + ').' : 'Sin cambios desde la última publicación.', txt.replace('Hola , ', 'Hola, '), r.data.url, x.presupuesto.cliente_id);
+    });
+  }).catch(function(){});
+}
+function abrirConfirmarPs(respId){
+  var x = PSU.actual, p = x.presupuesto, r = respId ? x.respuestas.filter(function(z){ return z.id === respId; })[0] : null;
+  var opsResp = []; try { opsResp = r && r.opcionales ? JSON.parse(r.opcionales) : []; } catch (e) {}
+  var opc = x.items.filter(function(it){ return it.opcional === true; });
+  var dec = r ? (r.respuesta === 'Autorizo' ? 'Autorizado' : 'Rechazado') : 'Autorizado';
+  var h = (r ? '<p style="margin:0 0 8px">Respuesta web de <b>' + esc(r.nombre) + '</b> (' + esc(fechaHora(r.recibido_en)) + '): <b>' + esc(r.respuesta) + '</b>.</p>' : '<label class="f"><span>¿Cómo respondió? *</span><input class="i" id="pcDet" placeholder="Ej. Autorizó por WhatsApp el 27-10"></label>') +
+    '<label class="f"><span>Resultado</span><select class="i" id="pcDec">' + options(['Autorizado', 'Rechazado'], dec) + '</select></label>' +
+    (opc.length ? '<div class="f" id="pcOpcF"><span>Opcionales aceptados</span>' + opc.map(function(it){ return '<label class="inline" style="gap:8px;padding:4px 0"><input type="checkbox" class="pcOpc" value="' + esc(it.id) + '"' + (opsResp.indexOf(it.id) >= 0 ? ' checked' : '') + '> ' + esc(it.descripcion) + ' · ' + pesos(it.total) + ' neto</label>'; }).join('') + '</div>' : '') +
+    '<p class="s" style="color:var(--acero)">Autorizado crea los cobros (con IVA incluido) de lo necesario y de los opcionales marcados, y deja el trabajo Autorizado.</p>' +
+    '<button class="btn big go" type="button" data-act="ps-confirmar-ok" data-id="' + esc(respId || '') + '">Confirmar</button>';
+  abrirHoja('Confirmar ' + p.codigo, h);
+}
+function confirmarPresupuesto(btn){
+  var x = PSU.actual, respId = btn.getAttribute('data-id');
+  var body = { presupuesto_id: x.presupuesto.id, decision: $('pcDec').value, opcionales: $('pcDec').value === 'Autorizado' ? Array.prototype.map.call(document.querySelectorAll('.pcOpc:checked'), function(c){ return c.value; }) : [], op_id: opId() };
+  if (respId) body.respuesta_id = respId; else body.detalle = ($('pcDet').value || '').trim();
+  btn.disabled = true;
+  call('presupuesto_cerrar', body).then(function(r){
+    toast('Presupuesto ' + r.data.estado.toLowerCase() + (r.data.cobros.length ? ': ' + r.data.cobros.length + ' cobro' + (r.data.cobros.length > 1 ? 's' : '') + ' creado' + (r.data.cobros.length > 1 ? 's' : '') : '') + '.');
+    abrirPresupuesto(x.presupuesto.id);
+  }).catch(function(){ btn.disabled = false; });
+}
+function abrirRetirarPs(){
+  abrirHoja('Retirar presupuesto', '<p style="margin:0 0 10px">El enlace deja de funcionar y sale del portal. Lo ya autorizado o rechazado no cambia.</p><label class="f"><span>Motivo *</span><input class="i" id="psrMotivo" placeholder="Ej. se reemplaza por otro, trabajo terminado"></label><button class="btn big danger" type="button" data-act="ps-retirar-ok">Retirar</button>');
+}
+
 /* ───── pestaña Horas ───── */
 function renderHoras(){
   var hoy = new Date(), desde = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
@@ -4326,8 +5341,8 @@ function revisarLote(btn){
 
 
 /* ───── pestaña Datos (administración): formularios generados desde el contrato ───── */
-var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
-var NOMBRES = { CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
+var TABLAS_DATOS = ['CLIENTES','CONTACTOS','EQUIPOS','TRABAJOS','ASIGNACIONES','REFERENCIAS','DETALLE','PENDIENTES','CONCEPTOS','PAGOS','IMPUTACIONES','DOC_VENTA','DOC_CONCEPTOS','PEDIDOS','RECEPCIONES','PROVEEDORES','CATALOGO','PRECIOS','CUENTAS_COBRO','PRESUPUESTOS','PRESUPUESTO_ITEMS','SESIONES','TARIFAS','USUARIOS','LISTAS','INVENTARIO','MOV_INVENTARIO','HERRAMIENTAS','BIBLIOTECA','VALORES_TRABAJADOR','RECTIFICACIONES','PAQUETES'];
+var NOMBRES = { CUENTAS_COBRO:'Medios de cobro', PRESUPUESTOS:'Presupuestos', PRESUPUESTO_ITEMS:'Ítems de presupuesto', CLIENTES:'Clientes', CONTACTOS:'Contactos', EQUIPOS:'Vehículos y equipos', TRABAJOS:'Trabajos', ASIGNACIONES:'Asignaciones', REFERENCIAS:'Datos técnicos por equipo', DETALLE:'Detalle técnico', PENDIENTES:'Pendientes', CONCEPTOS:'Cobros', PAGOS:'Pagos recibidos', IMPUTACIONES:'Imputaciones de pagos', DOC_VENTA:'Documentos de venta', DOC_CONCEPTOS:'Cobros por documento', PEDIDOS:'Pedidos', RECEPCIONES:'Recepciones', PROVEEDORES:'Proveedores', CATALOGO:'Catálogo de repuestos', PRECIOS:'Precios de repuestos', SESIONES:'Sesiones de tiempo', TARIFAS:'Tarifas de cobro', USUARIOS:'Usuarios', LISTAS:'Listas', INVENTARIO:'Inventario', MOV_INVENTARIO:'Movimientos de inventario', HERRAMIENTAS:'Herramientas', BIBLIOTECA:'Biblioteca técnica', VALORES_TRABAJADOR:'Pago a trabajadores (valores)', RECTIFICACIONES:'Rectificaciones', PAQUETES:'Paquetes cargados desde IA' };
 var D = { tabla:'TRABAJOS', cliente:'', contrato:{}, filas:[], refs:{} };
 function etiqueta(r){ return (r.codigo ? r.codigo + ' · ' : '') + String(r.nombre || r.nombre_corto || r.descripcion || r.articulo || r.titulo || (r.lista ? r.lista + ': ' + r.valor : '') || r.campo || r.fecha || '').slice(0, 60); }
 function contratoDe(t){ return D.contrato[t] ? Promise.resolve(D.contrato[t]) : call('contrato', { tabla: t }).then(function(r){ D.contrato[t] = r.data.tablas[t]; return D.contrato[t]; }); }
@@ -4645,6 +5660,34 @@ document.addEventListener('click', function(ev){
   else if (a === 'ficha') abrirFicha(id);
   else if (a === 'cliente') abrirCliente(id);
   else if (a === 'rev-lote') revisarLote(el);
+  else if (a === 'en-copiar') copiarTexto(S.enlaceUrl, 'Enlace copiado.');
+  else if (a === 'web-general') { var ug = WEB.data && WEB.data.solicitud_general; if (ug) copiarTexto(ug, 'Enlace del formulario copiado.'); }
+  else if (a === 'web-cobros') { D.tabla = 'CUENTAS_COBRO'; S.tab = 'datos'; renderTabs(); render(); }
+  else if (a === 'aj-guardar') guardarAjustes(el);
+  else if (a === 'sol-estado') cambiarSolicitud(id, el.getAttribute('data-e')).then(function(){ toast('Solicitud actualizada.'); }).catch(function(){});
+  else if (a === 'sol-convertir') convertirSolicitud(id);
+  else if (a === 'sol-ia') { var sx = solicitudDe(id); if (sx) copiarTexto(textoSolicitud(sx) + '\n\nArma el paquete (si es cliente nuevo, primero el de alta de cliente).', 'Copiado: pégalo en tu proyecto de IA.'); }
+  else if (a === 'sol-descartar') abrirDescartar(id);
+  else if (a === 'sol-descartar-ok') { var mot = $('sdMotivo').value.trim(); if (!mot) { toast('Indica el motivo.', 'err'); return; } el.disabled = true; cambiarSolicitud(id, 'Descartada', { motivo: mot }).then(function(){ cerrarHoja(); toast('Solicitud descartada.'); }).catch(function(){ el.disabled = false; }); }
+  else if (a === 'res-revisada') call('respuesta_estado', { id: id, estado: 'Revisada', op_id: opId() }).then(function(){ renderWeb(); }).catch(function(){});
+  else if (a === 'po-abrir') asegurarClientes().then(function(){ abrirPortal(id); }).catch(function(){});
+  else if (a === 'po-publicar') publicarPortal(el);
+  else if (a === 'po-revocar') abrirRevocarPortal();
+  else if (a === 'po-revocar-ok') { var pm = $('prMotivo').value.trim(); if (!pm) { toast('Indica el motivo.', 'err'); return; } el.disabled = true; call('portal_revocar', { cliente_id: S.portal.cliente_id, motivo: pm, op_id: opId() }).then(function(){ toast('Portal revocado.'); abrirPortal(S.portal.cliente_id); }).catch(function(){ el.disabled = false; }); }
+  else if (a === 'ps-lista-tr') asegurarClientes().then(function(){ abrirPresupuestos({ trabajo_id: id }); }).catch(function(){ abrirPresupuestos({ trabajo_id: id }); });
+  else if (a === 'ps-lista-cli') abrirPresupuestos({ cliente_id: id });
+  else if (a === 'ps-abrir') asegurarClientes().then(function(){ abrirPresupuesto(id); }).catch(function(){ abrirPresupuesto(id); });
+  else if (a === 'ps-nuevo') nuevoPresupuesto();
+  else if (a === 'ps-item') { leerItemsPs(); PSU.items.push({ tipo: 'Repuesto', cantidad: 1, opcional: false }); pintarItemsPs(); }
+  else if (a === 'ps-quitar') { leerItemsPs(); var bi = +el.closest('.psItem').getAttribute('data-i'), q = PSU.items[bi]; if (q && q.id) PSU.borrar.push(q.id); PSU.items.splice(bi, 1); pintarItemsPs(); }
+  else if (a === 'ps-guardar') guardarPresupuesto(el).catch(function(){});
+  else if (a === 'ps-publicar') publicarPresupuesto(el);
+  else if (a === 'ps-confirmar') abrirConfirmarPs(null);
+  else if (a === 'ps-confirmar-resp') abrirConfirmarPs(id);
+  else if (a === 'ps-confirmar-ok') confirmarPresupuesto(el);
+  else if (a === 'ps-copiar') { var pu = PSU.actual && PSU.actual.presupuesto; call('presupuestos', { presupuesto_id: pu.id }).then(function(r){ copiarTexto(r.data[0].url, 'Enlace copiado.'); }).catch(function(){}); }
+  else if (a === 'ps-retirar') abrirRetirarPs();
+  else if (a === 'ps-retirar-ok') { var rm = $('psrMotivo').value.trim(); if (!rm) { toast('Indica el motivo.', 'err'); return; } el.disabled = true; call('presupuesto_retirar', { presupuesto_id: PSU.actual.presupuesto.id, motivo: rm, op_id: opId() }).then(function(){ toast('Presupuesto retirado.'); abrirPresupuesto(PSU.actual.presupuesto.id); }).catch(function(){ el.disabled = false; }); }
   else if (a === 'cli-toggle'){ S.cliAbiertos = S.cliAbiertos || {}; if (S.cliAbiertos[id]) delete S.cliAbiertos[id]; else S.cliAbiertos[id] = true; pintarClientes(); }
   else if (a === 'nt-elegir') elegirVehiculoNT();
   else if (a === 'nt-vehiculo'){ var v = (S.inicio.resumen || []).filter(function(x){ return x.equipo_id === id; })[0]; if (v) abrirNuevoTrabajo({ id: v.equipo_id, nombre_corto: v.nombre_corto, patente: v.patente, cliente_id: v.cliente_id, cliente: v.cliente }); }
@@ -4730,6 +5773,7 @@ $('who').addEventListener('click', function(){ if (DEMO){ S.inicio = null; rende
 
 /* ───── modo demostración: misma lógica de negocio que el servidor, datos ficticios en memoria ───── */
 var demoPublico = typeof PublicoMemory === 'function' ? new PublicoMemory() : null;
+var demoCfg = { administracion_ve_pago_trabajadores: 'No', publico_url_base: 'https://eisengarage-clientes.github.io/historial/', iva_pct: '19' };
 var DemoApi = (function(){
   if (!DEMO || typeof handle_ !== 'function') return { call: function(){ return { ok:false, error:{ code:'DEMO', message:'Modo demo no disponible.' } }; }, login: function(){} };
   var store = new MemoryStore();
@@ -4756,6 +5800,12 @@ var DemoApi = (function(){
   var t1 = H(vic, 'crear', { tabla:'TRABAJOS', datos:{ cliente_id:c1.id, equipo_id:e1.id, tipo_trabajo:'Reparación', descripcion:'Revisar fuga de refrigerante en bomba de agua y cambiar correa auxiliar.', estado_comercial:'Autorizado' } });
   var t2 = H(vic, 'crear', { tabla:'TRABAJOS', datos:{ cliente_id:c1.id, equipo_id:e2.id, tipo_trabajo:'Mantención', descripcion:'Mantención 160.000 km.', estado_comercial:'Autorizado', prog_desde:'2026-10-23T12:00:00Z' } });
   H(vic, 'crear', { tabla:'ASIGNACIONES', datos:{ trabajo_id:t1.id, usuario_id:juan.id } });
+  H(vic, 'crear', { tabla:'CUENTAS_COBRO', datos:{ nombre:'BancoEstado Cuenta Emprendedor', tipo:'Transferencia', banco:'BancoEstado', tipo_cuenta:'Cuenta Vista', numero:'(número de ejemplo)', titular:'Eisen Garage SpA', rut:'78.417.312-7', correo:'eisengarage@gmail.com', activo:true, orden:1 } });
+  H(vic, 'crear', { tabla:'CUENTAS_COBRO', datos:{ nombre:'Efectivo o tarjeta en el taller', tipo:'Efectivo', detalle:'Gulutren 022, Peumo', activo:true, orden:2 } });
+  if (demoPublico) {
+    demoPublico.SOLICITUDES.push({ id:'demo-s1', origen:'General', recurso_id:'', nombre:'Pedro Pérez', telefono:'+56911112222', correo:'', vehiculo:'Toyota Yaris 2015 JJKL22', equipos:'', tipo:'Mantención', mensaje:'Necesito la mantención de los 100.000 km. ¿Tienen hora esta semana?', contacto:'WhatsApp', aviso_version:'AV-demo', recibido_en:new Date(Date.now() - 3600000).toISOString(), clave:'d1', estado:'Nueva', estado_en:'', estado_por:'', trabajo:'', motivo:'' });
+    demoPublico.SOLICITUDES.push({ id:'demo-s2', origen:'Portal', recurso_id:c1.id, nombre:'Jefe de taller', telefono:'', correo:'', vehiculo:'', equipos:JSON.stringify([{ id:e2.id, nombre:'Camión Isuzu NPR', patente:'KXRZ-28' }]), tipo:'Falla', mensaje:'Pierde aire en el circuito de frenos.', contacto:'', aviso_version:'AV-demo', recibido_en:new Date(Date.now() - 1800000).toISOString(), clave:'d2', estado:'Nueva', estado_en:'', estado_por:'', trabajo:'', motivo:'' });
+  }
   H(vic, 'crear', { tabla:'ASIGNACIONES', datos:{ trabajo_id:t2.id, usuario_id:juan.id } });
   H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Aceite motor', componente:'Cárter', especificacion:'10W-40 VDS-4', cantidad:36, unidad:'L', tipo_cantidad:'Capacidad', visible_tecnico:true } });
   H(vic, 'crear', { tabla:'REFERENCIAS', datos:{ equipo_id:e1.id, tipo:'Torque', componente:'Tapón de cárter', torque:'60 Nm', visible_tecnico:true } });
@@ -4784,7 +5834,7 @@ var DemoApi = (function(){
     call: function(action, p){
       try {
         if (action === 'subir_foto') return { ok:true, data:{ url:'(foto de demostración, no se sube)' }, warnings:[] };
-        var r = handle_({ store: store, user: user, config: { administracion_ve_pago_trabajadores: 'No', publico_url_base: 'https://eisengarage-clientes.github.io/historial/' }, publico: demoPublico }, action, p);
+        var r = handle_({ store: store, user: user, config: demoCfg, publico: demoPublico }, action, p);
         return { ok:true, data: JSON.parse(JSON.stringify(r.data)), warnings: r.warnings || [], duplicate: !!r.duplicate };
       } catch (e) { return { ok:false, error:{ code: e.code || 'INTERNO', message: e.message } }; }
     }
