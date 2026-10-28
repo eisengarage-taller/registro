@@ -1440,6 +1440,16 @@ function tarifaVigente_(ctx, usuarioId, tipoTrabajo, fecha) {
 var RULES_ = {
   EQUIPOS: {
     before: function (ctx, row, prev, w) {
+      // P-1: si el vehículo pasa a otro cliente, la autorización del historial y su enlace quedan anulados
+      // (los dio el dueño anterior). El nuevo dueño debe autorizar de nuevo.
+      if (prev && prev.cliente_id !== row.cliente_id) {
+        if (prev.historial_publicable === true || !isEmpty_(prev.historial_codigo) || !isEmpty_(prev.historial_autoriza)) {
+          row.historial_publicable = false; row.historial_autoriza = ''; row.historial_autoriza_fecha = ''; row.historial_codigo = '';
+          w.push({ code: 'HISTORIAL_ANULADO', message: 'El vehículo cambió de cliente: se anuló la autorización y el enlace del historial. El nuevo dueño debe autorizar de nuevo.' });
+        }
+        var abiertos = activeRows_(ctx, 'PRESUPUESTOS').filter(function (x) { return x.equipo_id === row.id && (x.estado === 'Borrador' || x.estado === 'Publicado'); });
+        if (abiertos.length) w.push({ code: 'PRESUPUESTOS_ABIERTOS', message: 'El vehículo tiene presupuestos abiertos del cliente anterior (' + abiertos.map(function (x) { return x.codigo; }).join(', ') + '): retíralos.' });
+      }
       row.patente_busqueda = normPlate_(row.patente);
       var vin = normPlate_(row.vin);
       activeRows_(ctx, 'EQUIPOS').forEach(function (e) {
@@ -1448,6 +1458,14 @@ var RULES_ = {
           w.push({ code: 'DUPLICADO_POSIBLE', message: 'Posible duplicado de ' + e.codigo + ' (' + e.nombre_corto + '). Revisa antes de seguir.' });
         }
       });
+    },
+    after: function (ctx, row, prev, w) {
+      if (!prev || prev.cliente_id === row.cliente_id || !ctx.publico) return;
+      // Se retira lo publicado del historial y se actualizan los portales de ambos clientes.
+      var ahora = now_(ctx);
+      ctx.publico.enlacesActivos(row.id, HISTORIAL_TIPO).forEach(function (x) { ctx.publico.enlaceRevocar(x.huella, ahora); });
+      if (ctx.publico.publicacionUltima(row.id, HISTORIAL_TIPO)) ctx.publico.publicacionesRetirar(row.id, HISTORIAL_TIPO);
+      if (ctx._clientesPortal) { ctx._clientesPortal[prev.cliente_id] = true; ctx._clientesPortal[row.cliente_id] = true; }
     }
   },
 
@@ -1815,8 +1833,11 @@ var RULES_ = {
         }
       }
       var tr = mustGet_(ctx, 'TRABAJOS', row.trabajo_id, 'Trabajo');
-      if (isEmpty_(row.cliente_id)) row.cliente_id = tr.cliente_id;
-      if (isEmpty_(row.equipo_id) && !isEmpty_(tr.equipo_id)) row.equipo_id = tr.equipo_id;
+      // P-14: el cliente y el vehículo son los del trabajo (no se aceptan vínculos contradictorios por ninguna vía).
+      if (!isEmpty_(row.cliente_id) && row.cliente_id !== tr.cliente_id) fail_('VALOR_INVALIDO', 'El cliente del presupuesto debe ser el del trabajo ' + tr.codigo + '.');
+      if (!isEmpty_(row.equipo_id) && !isEmpty_(tr.equipo_id) && row.equipo_id !== tr.equipo_id && !(prev && prev.equipo_id === row.equipo_id && ctx._presupuestoAccion === true)) fail_('VALOR_INVALIDO', 'El vehículo del presupuesto debe ser el del trabajo ' + tr.codigo + '.');
+      row.cliente_id = tr.cliente_id;
+      if (!isEmpty_(tr.equipo_id)) row.equipo_id = tr.equipo_id;
       if (!isEmpty_(row.validez_dias) && !(Number(row.validez_dias) >= 1 && Number(row.validez_dias) <= 365)) fail_('VALOR_INVALIDO', 'La validez debe estar entre 1 y 365 días.');
       row.cobro = cobroCodigos_(ctx, row.cobro);
       if (prev && prev.estado === 'Publicado' && !accion) w.push({ code: 'PUBLICADO', message: 'El cliente sigue viendo lo publicado hasta que vuelvas a publicar.' });
@@ -1841,6 +1862,15 @@ var RULES_ = {
         }
       }
       if (!isEmpty_(row.margen_pct) && !(Number(row.margen_pct) >= 0 && Number(row.margen_pct) < 100)) fail_('VALOR_INVALIDO', 'El margen debe estar entre 0 y 99 %.');
+      // P-11: si cambia el costo o el margen y el precio no se tocó, se recalcula cuando el precio anterior era el calculado.
+      // Si el precio anterior se había escrito a mano, se conserva y se avisa.
+      if (prev && !isEmpty_(row.precio_unitario) && String(row.precio_unitario) === String(prev.precio_unitario) &&
+          (String(row.costo_unitario) !== String(prev.costo_unitario) || String(row.margen_pct) !== String(prev.margen_pct))) {
+        var eraCalc = !isEmpty_(prev.costo_unitario) && !isEmpty_(prev.margen_pct) && Number(prev.margen_pct) < 100 &&
+          Number(prev.precio_unitario) === precioCliente_(prev.costo_unitario, prev.margen_pct, ivaPct_(ctx)).neto;
+        if (eraCalc) row.precio_unitario = '';
+        else w.push({ code: 'PRECIO_MANUAL', message: 'Ítem "' + row.descripcion + '": cambió el costo o el margen, pero el precio ($' + row.precio_unitario + ') se había escrito a mano y se mantiene. Para recalcularlo, deja el precio vacío.' });
+      }
       if (isEmpty_(row.precio_unitario)) {
         if (isEmpty_(row.costo_unitario) || isEmpty_(row.margen_pct)) fail_('REQUERIDO', 'Ítem "' + row.descripcion + '": indica el precio al cliente, o el costo y el margen.');
         row.precio_unitario = precioCliente_(row.costo_unitario, row.margen_pct, ivaPct_(ctx)).neto;
@@ -2680,18 +2710,47 @@ function vehiculoPublico_(e) {
   if (!e) return null;
   return { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: e.patente || '', nombre: e.nombre_corto || '' };
 }
+/** Opcionales aceptados de un presupuesto autorizado: los que tienen su cobro creado. */
+function presupuestoAceptados_(ps, items) {
+  if (ps.estado !== 'Autorizado') return null;
+  return items.filter(function (x) { return x.opcional === true && !isEmpty_(x.concepto_id); }).map(function (x) { return x.id; });
+}
 function presupuestoContenido_(ctx, ps) {
   var items = presupuestoItems_(ctx, ps), iva = ivaPct_(ctx);
   var cli = getRow_(ctx, 'CLIENTES', ps.cliente_id) || {};
+  var acept = presupuestoAceptados_(ps, items);
   return {
     formato: PRESUPUESTO_FORMATO, codigo: ps.codigo, estado: ps.estado, fecha: localDate_(ps.publicado_en || now_(ctx)), vence: ps.vence_en || '',
     cerrado: ps.cerrado_en ? localDate_(ps.cerrado_en) : '',
     titulo: ps.titulo, diagnostico: ps.diagnostico || '', condiciones: ps.condiciones || '',
     cliente: { nombre: cli.nombre || '' }, vehiculo: vehiculoPublico_(getRow_(ctx, 'EQUIPOS', ps.equipo_id)),
-    items: items.map(function (x) { return { id: x.id, tipo: x.tipo, descripcion: x.descripcion, cantidad: Number(x.cantidad) || 1, unidad: x.unidad || '', precio_unitario: Number(x.precio_unitario) || 0, total: Number(x.total) || 0, opcional: x.opcional === true }; }),
-    iva_pct: iva, totales: presupuestoTotales_(items, iva),
+    items: items.map(function (x) {
+      var o = { id: x.id, tipo: x.tipo, descripcion: x.descripcion, cantidad: Number(x.cantidad) || 1, unidad: x.unidad || '', precio_unitario: Number(x.precio_unitario) || 0, total: Number(x.total) || 0, opcional: x.opcional === true };
+      if (acept && o.opcional) o.aceptado = acept.indexOf(x.id) >= 0;
+      return o;
+    }),
+    iva_pct: iva, totales: presupuestoTotales_(items, iva, acept || undefined),
     cobro: cobroPublico_(ctx, ps.cobro), taller: TALLER_PUBLICO
   };
+}
+/** Lo que el cliente aceptaría (sin fechas ni estado): sirve para saber si la BASE cambió después de publicar. */
+function presupuestoHuellaCliente_(c) {
+  return historialSha_(stableJson_({ titulo: c.titulo, diagnostico: c.diagnostico, condiciones: c.condiciones, vehiculo: c.vehiculo, cobro: c.cobro,
+    items: (c.items || []).map(function (x) { return [x.id, x.tipo, x.descripcion, x.cantidad, x.unidad, x.precio_unitario, x.total, x.opcional === true]; }) }));
+}
+/** Último contenido publicado del presupuesto (o null). */
+function presupuestoPublicado_(ctx, ps) {
+  if (!ctx.publico) return null;
+  var u = ctx.publico.publicacionUltima(ps.id, PRESUPUESTO_TIPO);
+  if (!u || u.retirada === true || !u.contenido) return null;
+  try { return JSON.parse(u.contenido); } catch (e) { return null; }
+}
+/** true si la BASE tiene cambios que el cliente todavía no ve (el presupuesto está publicado). */
+function presupuestoSinPublicar_(ctx, ps) {
+  if (ps.estado !== 'Publicado') return false;
+  var pubC = presupuestoPublicado_(ctx, ps);
+  if (!pubC) return false;
+  return presupuestoHuellaCliente_(pubC) !== presupuestoHuellaCliente_(presupuestoContenido_(ctx, ps));
 }
 function presupuestoUno_(ctx, id) { requireAdmin_(ctx); return mustGet_(ctx, 'PRESUPUESTOS', id, 'Presupuesto'); }
 /** Respuestas del cliente guardadas en PUBLICO para este presupuesto (las más nuevas primero). */
@@ -2717,7 +2776,8 @@ function vistaPresupuestos_(ctx, p) {
       presupuesto: ps, trabajo: { id: tr.id, codigo: tr.codigo, descripcion: tr.descripcion, estado_comercial: tr.estado_comercial },
       items: items.map(function (x) { var o = clone_(x); o.catalogo = catCod[x.catalogo_id] || ''; return o; }),
       iva_pct: iva, totales: presupuestoTotales_(items, iva), costo_neto: Math.round(costo),
-      url: enlaceUrl_(ctx, 'presupuesto', ps.enlace_codigo), respuestas: presupuestoRespuestas_(ctx, ps)
+      url: enlaceUrl_(ctx, 'presupuesto', ps.enlace_codigo), respuestas: presupuestoRespuestas_(ctx, ps),
+      sin_publicar: (function () { try { return presupuestoSinPublicar_(ctx, ps); } catch (e) { return false; } })()
     };
   }), warnings: [] };
 }
@@ -2766,6 +2826,8 @@ function presupuestoGuardar_(ctx, p) {
 /** Publica (o actualiza) el presupuesto y devuelve el enlace. Reinicia la validez desde hoy. */
 function presupuestoPublicar_(ctx, p) {
   var ps = presupuestoUno_(ctx, p.presupuesto_id);
+  // P-15: reintento de una publicación ya hecha (se perdió la respuesta): devuelve lo publicado sin reiniciar la validez.
+  if (ctx._opRepetida && ps.estado === 'Publicado' && !isEmpty_(ps.enlace_codigo)) return { data: { url: enlaceUrl_(ctx, 'presupuesto', ps.enlace_codigo), revision: Number(ps.revision) || 1, nueva: false, vence: ps.vence_en }, warnings: [], duplicate: true };
   if (ps.estado !== 'Borrador' && ps.estado !== 'Publicado') fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' está ' + ps.estado + '.');
   if (!presupuestoItems_(ctx, ps).length) fail_('SIN_CONTENIDO', 'Agrega al menos un ítem antes de publicar.');
   if (isEmpty_(ctx.config && ctx.config.publico_url_base)) fail_('CONFIG', 'Falta CONFIG.publico_url_base.');
@@ -2788,15 +2850,30 @@ function presupuestoPublicar_(ctx, p) {
  */
 function presupuestoCerrar_(ctx, p) {
   var ps = presupuestoUno_(ctx, p.presupuesto_id);
+  var items = presupuestoItems_(ctx, ps), iva = ivaPct_(ctx), ahora = now_(ctx);
+  // P-15: el mismo cierre repetido (se perdió la respuesta) devuelve el resultado ya guardado, sin error ni otro cobro.
+  if (ctx._opRepetida && (ps.estado === 'Autorizado' || ps.estado === 'Rechazado')) {
+    return { data: { estado: ps.estado, cobros: items.filter(function (x) { return !isEmpty_(x.concepto_id); }).map(function (x) { return (getRow_(ctx, 'CONCEPTOS', x.concepto_id) || {}).codigo; }).filter(Boolean) }, warnings: [], duplicate: true };
+  }
   if (ps.estado !== 'Borrador' && ps.estado !== 'Publicado') fail_('PRESUPUESTO_CERRADO', 'El presupuesto ' + ps.codigo + ' ya está ' + ps.estado + '.');
   if (p.decision !== 'Autorizado' && p.decision !== 'Rechazado') fail_('VALOR_INVALIDO', 'Decisión: Autorizado o Rechazado.');
-  var items = presupuestoItems_(ctx, ps), iva = ivaPct_(ctx), ahora = now_(ctx);
   var ops = Array.isArray(p.opcionales) ? p.opcionales : [];
   ops.forEach(function (id) { if (!items.some(function (x) { return x.id === id && x.opcional === true; })) fail_('VALOR_INVALIDO', 'Un opcional aceptado no es de este presupuesto.'); });
-  var resp = null;
+  var resp = null, avisos = [];
   if (!isEmpty_(p.respuesta_id)) {
     resp = presupuestoRespuestas_(ctx, ps).filter(function (r) { return r.id === p.respuesta_id; })[0];
     if (!resp) fail_('NO_EXISTE', 'No se encontró esa respuesta del cliente.');
+    // P-2: la respuesta web confirma exactamente lo que el cliente vio y eligió.
+    var otroMedio = ' Si el cliente aceptó algo distinto, confirma "por otro medio" indicando cómo respondió.';
+    if (resp.respuesta === 'Consulta') fail_('VALOR_INVALIDO', 'Una consulta no autoriza ni rechaza: respóndela y espera su respuesta.');
+    var esperada = resp.respuesta === 'Autorizo' ? 'Autorizado' : 'Rechazado';
+    if (p.decision !== esperada) fail_('RESPUESTA_DISTINTA', 'El cliente respondió "' + resp.respuesta + '": no se puede confirmar como ' + p.decision + '.' + otroMedio);
+    if (ps.estado !== 'Publicado' || Number(resp.revision) !== Number(ps.revision)) fail_('RESPUESTA_ANTIGUA', 'Esa respuesta es de la versión ' + resp.revision + ' y lo publicado ahora es la versión ' + (ps.revision || '—') + '.' + otroMedio);
+    if (presupuestoSinPublicar_(ctx, ps)) fail_('CAMBIO_SIN_PUBLICAR', 'El presupuesto cambió después de publicarlo: el cliente respondió a otro contenido. Publica de nuevo y pide una nueva respuesta.' + otroMedio);
+    var opsResp = []; try { opsResp = resp.opcionales ? JSON.parse(resp.opcionales) : []; } catch (e) { opsResp = []; }
+    if (p.decision === 'Autorizado' && stableJson_(ops.slice().sort()) !== stableJson_(opsResp.map(String).sort())) fail_('RESPUESTA_DISTINTA', 'Los opcionales no coinciden con los que eligió el cliente.' + otroMedio);
+  } else if (presupuestoSinPublicar_(ctx, ps)) {
+    avisos.push({ code: 'CAMBIO_SIN_PUBLICAR', message: 'Se confirmó lo que está en la app, que tiene cambios que el cliente no vio publicados. Quedó anotado.' });
   }
   if (isEmpty_(p.detalle) && !resp) fail_('REQUERIDO', 'Indica cómo respondió el cliente (ej. "Autorizó por WhatsApp el 27-10").');
   var detalle = (resp ? 'Web · ' + resp.respuesta + ' · ' + (resp.nombre || 'sin nombre') + ' · ' + resp.recibido_en + (resp.mensaje ? ' · "' + resp.mensaje + '"' : '') : String(p.detalle)) + ' · confirmado por ' + ctx.user.correo + ' ' + ahora;
@@ -2806,12 +2883,17 @@ function presupuestoCerrar_(ctx, p) {
     if (p.decision === 'Autorizado') {
       if (!items.length) fail_('SIN_CONTENIDO', 'El presupuesto no tiene ítems.');
       var ok = items.filter(function (x) { return x.opcional !== true || ops.indexOf(x.id) >= 0; });
+      // P-8: el IVA se calcula sobre el total (igual que lo publicado) y se reparte entre los cobros;
+      // la diferencia de redondeo va al último, así los cobros suman exactamente el total autorizado.
+      var totalCon = presupuestoTotales_(items, iva, ops).aceptado.total;
+      var montos = ok.map(function (x) { return Math.round((Number(x.total) || 0) * (1 + iva / 100)); });
+      if (montos.length) montos[montos.length - 1] += totalCon - montos.reduce(function (s, m) { return s + m; }, 0);
       ok.forEach(function (x, i) {
         var cant = Number(x.cantidad) || 1;
         var desc = x.descripcion + (cant !== 1 ? ' × ' + String(cant).replace('.', ',') + (x.unidad ? ' ' + x.unidad : '') : '');
         var con = insertRow_(ctx, 'CONCEPTOS', {
           cliente_id: ps.cliente_id, trabajo_id: ps.trabajo_id, equipo_id: ps.equipo_id || '', tipo: x.tipo, descripcion: desc,
-          monto_cliente: Math.round((Number(x.total) || 0) * (1 + iva / 100)), iva: 'Incluido', aportante: 'Taller', etapa: 'Confirmado',
+          monto_cliente: montos[i], iva: 'Incluido', aportante: 'Taller', etapa: 'Confirmado',
           fuente: 'Presupuesto ' + ps.codigo + (ps.revision ? ' rev. ' + ps.revision : '')
         }, { opId: p.op_id + '#c' + i }).row;
         sysUpdate_(ctx, 'PRESUPUESTO_ITEMS', x.id, { concepto_id: con.id }, 'Cobro creado al autorizar');
@@ -2830,7 +2912,7 @@ function presupuestoCerrar_(ctx, p) {
       sysUpdate_(ctx, 'PRESUPUESTOS', ps.id, { revision: r.revision }, 'Revisión publicada');
     }
   } finally { ctx._presupuestoAccion = false; }
-  var w = [];
+  var w = avisos;
   if (resp && ctx.publico) { try { ctx.publico.respuestaGuardar(resp.id, { estado: 'Revisada', estado_en: ahora, estado_por: ctx.user.correo }); } catch (e) { w.push({ code: 'PUBLICO', message: 'No se pudo marcar la respuesta como revisada.' }); } }
   w = w.concat(portalRefrescar_(ctx, ps.cliente_id));
   return { data: { estado: ps.estado, cobros: creados }, warnings: w };
@@ -3638,7 +3720,9 @@ function paqueteMismoValor_(tabla, c, k, a, b) {
   if (tabla === 'EQUIPOS' && (k === 'patente' || k === 'vin')) return normPlate_(a) === normPlate_(b);
   if (c && (c.t === 'int' || c.t === 'num' || c.t === 'money')) return Number(a) === Number(b);
   if (c && c.t === 'bool') return String(a) === String(b);
-  if (c && (c.t === 'date' || c.t === 'datetime')) return String(a).slice(0, 10) === String(b).slice(0, 10);
+  // P-9: un campo con hora se compara por el instante completo; uno solo de fecha, por el día.
+  if (c && c.t === 'datetime') { var ma = toMs_(a), mb = toMs_(b); return ma === null || mb === null ? String(a) === String(b) : ma === mb; }
+  if (c && c.t === 'date') return String(a).slice(0, 10) === String(b).slice(0, 10);
   return normTxt_(a) === normTxt_(b);
 }
 
@@ -3951,14 +4035,32 @@ TxStore.prototype.commit = function (meta) {
   var self = this;
   var cambios = orden.map(function (e) { return { tabla: e.table, id: e.id, nuevo: !!nuevos[e.table + '|' + e.id], fila: self.get(e.table, e.id) }; });
   this.log = [];
-  if (!cambios.length) return [];
-  var asiento = (meta && this.base.journalBegin) ? this.base.journalBegin({ op_id: meta.op_id, huella: meta.huella, usuario: meta.usuario, accion: meta.accion, cambios: cambios }) : null;
+  var pub = meta && meta.publico;
+  if (!cambios.length) {
+    // Solo PUBLICO (estado de una solicitud o respuesta): no hay nada en la BASE que proteger.
+    if (pub) publicoAplicar_(pub.real, pub.ops);
+    return [];
+  }
+  var asiento = (meta && this.base.journalBegin) ? this.base.journalBegin({ op_id: meta.op_id, huella: meta.huella, usuario: meta.usuario, accion: meta.accion, cambios: cambios, publico: pub ? pub.ops : null }) : null;
   try {
     aplicarCambios_(this.base, cambios, false);
-    if (asiento) this.base.journalEnd(asiento);
   } catch (err) {
     if (!asiento) throw err;
     fail_('GUARDADO_INTERRUMPIDO', 'El guardado se cortó a mitad de camino. Quedó anotado y se completa automáticamente en la próxima solicitud (la pantalla recarga sola). Revisa antes de repetir.', { causa: String(err && err.message || err) });
+  }
+  // La BASE ya quedó guardada. Recién ahora se escribe lo publicado para clientes (P-3).
+  if (pub && asiento) {
+    try {
+      if (pub.bloqueado) throw new Error('hay publicaciones anteriores pendientes');
+      publicoAplicar_(pub.real, pub.ops);
+      this.base.journalEnd(asiento);
+    } catch (e2) {
+      this.base.journalPublicoPendiente(asiento);
+      this.publicoAviso = { code: 'PUBLICO_PENDIENTE', message: 'El cambio se guardó, pero no se pudo actualizar lo publicado para clientes (' + (e2 && e2.message) + '). Se reintenta solo en el próximo cambio.' };
+    }
+  } else {
+    if (pub) publicoAplicar_(pub.real, pub.ops);
+    if (asiento) this.base.journalEnd(asiento);
   }
   return cambios.map(function (c) { return { tabla: c.tabla, id: c.id, version: c.fila.version }; });
 };
@@ -3982,11 +4084,16 @@ function aplicarCambios_(base, cambios, reanudar) {
 }
 
 /** Termina las operaciones que quedaron a medias (guardado interrumpido). Se llama antes de cada escritura. */
-function recuperarDiario_(base) {
+function recuperarDiario_(base, publico) {
   if (!base.journalPending) return 0;
   var pendientes = base.journalPending();
   pendientes.forEach(function (a) {
     aplicarCambios_(base, a.cambios, true);
+    // Lo publicado para clientes va después de la BASE: si no se puede escribir ahora, queda pendiente aparte.
+    if (a.publico && a.publico.length) {
+      if (!publico) { base.journalPublicoPendiente(a); return; }
+      try { publicoAplicar_(publico, a.publico); } catch (e) { base.journalPublicoPendiente(a); return; }
+    }
     base.journalEnd(a);
   });
   return pendientes.length;
@@ -4005,6 +4112,67 @@ function usuarioVigente_(ctx) {
   return u;
 }
 
+/**
+ * 1.10.1 (P-3): la planilla PUBLICO se escribe DESPUÉS de guardar la BASE. Durante la operación, las lecturas van a
+ * PUBLICO y las escrituras se anotan (con sus efectos visibles para las lecturas siguientes de la misma operación).
+ * Al guardar, se anotan en el mismo asiento del DIARIO que los cambios de la BASE; recién después se escriben.
+ */
+function PublicoDiferido(real) { this.real = real; this.ops = []; }
+PublicoDiferido.prototype.anotar_ = function (m, args) { this.ops.push({ m: m, a: clone_(args) }); };
+PublicoDiferido.prototype.solicitudes = function () { return this.real.solicitudes(); };
+PublicoDiferido.prototype.respuestas = function () { return this.real.respuestas(); };
+PublicoDiferido.prototype.enlacesActivos = function (recursoId, tipo) {
+  var l = this.real.enlacesActivos(recursoId, tipo);
+  this.ops.forEach(function (o) {
+    if (o.m === 'enlaceRevocar') l = l.filter(function (x) { return x.huella !== o.a[0]; });
+    if (o.m === 'enlaceCrear' && o.a[0].recurso_id === recursoId && o.a[0].tipo === tipo) l.push(clone_(o.a[0]));
+  });
+  return l;
+};
+PublicoDiferido.prototype.enlaceActivo = function (huella) {
+  var x = this.real.enlaceActivo(huella);
+  this.ops.forEach(function (o) {
+    if (o.m === 'enlaceRevocar' && o.a[0] === huella) x = null;
+    if (o.m === 'enlaceCrear' && o.a[0].huella === huella) x = clone_(o.a[0]);
+  });
+  return x;
+};
+PublicoDiferido.prototype.publicacionUltima = function (recursoId, tipo) {
+  var x = this.real.publicacionUltima(recursoId, tipo);
+  this.ops.forEach(function (o) {
+    if (o.m === 'publicacionAgregar' && o.a[0].recurso_id === recursoId && o.a[0].tipo === tipo) x = Object.assign({ retirada: false }, clone_(o.a[0]));
+    if (o.m === 'publicacionesRetirar' && o.a[0] === recursoId && o.a[1] === tipo && x) { x = clone_(x); x.contenido = ''; x.huella_contenido = ''; x.retirada = true; }
+  });
+  return x;
+};
+['enlaceCrear', 'enlaceRevocar', 'publicacionAgregar', 'publicacionesRetirar', 'solicitudGuardar', 'respuestaGuardar'].forEach(function (m) {
+  PublicoDiferido.prototype[m] = function () { this.anotar_(m, Array.prototype.slice.call(arguments)); };
+});
+
+/** Escribe en PUBLICO lo anotado. Se puede repetir sin duplicar (recuperación): cada paso revisa si ya está hecho. */
+function publicoAplicar_(pub, ops) {
+  (ops || []).forEach(function (o) {
+    var a = o.a;
+    if (o.m === 'enlaceCrear') { if (!pub.enlaceActivo(a[0].huella)) pub.enlaceCrear(a[0]); }
+    else if (o.m === 'publicacionAgregar') {
+      var u = pub.publicacionUltima(a[0].recurso_id, a[0].tipo);
+      if (!(u && Number(u.revision) >= Number(a[0].revision))) pub.publicacionAgregar(a[0]);
+    }
+    else pub[o.m].apply(pub, a);
+  });
+}
+
+/** Publicaciones que quedaron sin escribir (PUBLICO no respondió): se reintentan antes de cada escritura. */
+function publicoReintentar_(ctx) {
+  if (!ctx.publico || !ctx.store.journalPublicoPendientes) return [];
+  var pend = ctx.store.journalPublicoPendientes();
+  for (var i = 0; i < pend.length; i++) {
+    try { publicoAplicar_(ctx.publico, pend[i].publico); ctx.store.journalEnd(pend[i]); }
+    catch (e) { return [{ code: 'PUBLICO_PENDIENTE', message: 'Sigue pendiente actualizar lo publicado para clientes (' + (e && e.message) + '). Se reintenta en el próximo cambio.' }]; }
+  }
+  return [];
+}
+
 function handle_(ctx, action, p) {
   p = p || {};
   if (ctx._tx) return handleInner_(ctx, action, p);
@@ -4012,7 +4180,8 @@ function handle_(ctx, action, p) {
   if (escritura && isEmpty_(p.op_id)) fail_('REQUERIDO', 'Falta op_id: cada escritura necesita un identificador de operación.');
   // 1. Si una operación anterior quedó a medias, se termina antes de leer o escribir.
   //    En Apps Script lo hace la API bajo bloqueo (recuperacionEnApi); aquí, en escrituras (que van bajo bloqueo) y en memoria.
-  if (escritura || !ctx.recuperacionEnApi) recuperarDiario_(ctx.store);
+  if (escritura || !ctx.recuperacionEnApi) recuperarDiario_(ctx.store, ctx.publico);
+  var avisosPublico = escritura ? publicoReintentar_(ctx) : [];
   // 2. Permisos con el usuario vigente: un cambio de rol o una desactivación recuperados rigen desde ya.
   var vigente = usuarioVigente_(ctx);
   if (vigente !== ctx.user) {
@@ -4036,14 +4205,33 @@ function handle_(ctx, action, p) {
   c.store = tx;
   c._tx = tx;
   c._opHash = huella;
+  // P-15: el mismo op_id con el mismo contenido ya se aplicó (se perdió la respuesta): las acciones de flujo lo reconocen.
+  c._opRepetida = !!(previo && previo.huella === huella);
+  var diferido = ctx.publico ? new PublicoDiferido(ctx.publico) : null;
+  if (diferido) c.publico = diferido;
+  c._clientesPortal = {};
   var res = handleInner_(c, action, p);
+  // P-7: un cambio en cobros, pagos, imputaciones o documentos refresca el portal del cliente (estado de cuenta).
+  if (ctx.publico) {
+    var porTabla = { CONCEPTOS: 1, PAGOS: 1, IMPUTACIONES: 1, DOC_VENTA: 1 };
+    tx.log.forEach(function (e) {
+      if (!porTabla[e.table]) return;
+      var f = tx.get(e.table, e.id);
+      var cid = f && (f.cliente_id || (e.table === 'IMPUTACIONES' && f.pago_id && (tx.get('PAGOS', f.pago_id) || {}).cliente_id));
+      if (cid) c._clientesPortal[cid] = true;
+    });
+    Object.keys(c._clientesPortal).forEach(function (cid) { (res.warnings = res.warnings || []).push.apply(res.warnings, portalRefrescar_(c, cid)); });
+  }
   // Se devuelve la fila tal como queda guardada (versión final), y solo si quien pregunta puede verla.
   var tabla = TABLA_DE_ACCION[action] || p.tabla;
   if (res && res.data && res.data.id && tabla && CONTRACT.tables[tabla]) {
     var fin = tx.get(tabla, res.data.id);
     if (fin) res.data = rowVisible_(c, tabla, fin) ? project_(c, tabla, fin) : { id: fin.id };
   }
-  res.escritos = tx.commit({ op_id: p.op_id, huella: huella, usuario: ctx.user && ctx.user.correo, accion: action });
+  res.escritos = tx.commit({ op_id: p.op_id, huella: huella, usuario: ctx.user && ctx.user.correo, accion: action,
+    publico: diferido && diferido.ops.length ? { real: ctx.publico, ops: diferido.ops, bloqueado: avisosPublico.length > 0 } : null });
+  var w = avisosPublico.concat(tx.publicoAviso ? [tx.publicoAviso] : []);
+  if (w.length) res.warnings = (res.warnings || []).concat(w);
   return res;
 }
 
@@ -4153,12 +4341,16 @@ MemoryStore.prototype.dump = function () { return JSON.parse(JSON.stringify(this
 // Diario de operaciones (ver TxStore.commit): una entrada por escritura confirmada; Pendiente mientras se aplica.
 MemoryStore.prototype.diario_ = function () { return this.diario || (this.diario = []); };
 MemoryStore.prototype.journalBegin = function (a) {
-  var e = { op_id: a.op_id, huella: a.huella, usuario: a.usuario, accion: a.accion, fecha: new Date().toISOString(), estado: 'Pendiente', cambios: JSON.parse(JSON.stringify(a.cambios)) };
+  var e = { op_id: a.op_id, huella: a.huella, usuario: a.usuario, accion: a.accion, fecha: new Date().toISOString(), estado: 'Pendiente', cambios: JSON.parse(JSON.stringify(a.cambios)), publico: a.publico ? JSON.parse(JSON.stringify(a.publico)) : null };
+  if (this.fallarDiario) throw new Error(this.fallarDiario);
   this.diario_().push(e);
   return e;
 };
-MemoryStore.prototype.journalEnd = function (e) { e.estado = 'Completa'; e.cambios = null; };
+MemoryStore.prototype.journalEnd = function (e) { e.estado = 'Completa'; e.cambios = null; e.publico = null; };
 MemoryStore.prototype.journalPending = function () { return this.diario_().filter(function (e) { return e.estado === 'Pendiente'; }); };
+// 1.10.1: la BASE quedó guardada pero falta escribir lo publicado para clientes.
+MemoryStore.prototype.journalPublicoPendiente = function (e) { e.estado = 'Publico'; e.cambios = null; };
+MemoryStore.prototype.journalPublicoPendientes = function () { return this.diario_().filter(function (e) { return e.estado === 'Publico'; }); };
 MemoryStore.prototype.journalFind = function (opId) {
   var d = this.diario_();
   for (var i = d.length - 1; i >= 0; i--) if (d[i].op_id === opId) return d[i];
@@ -5078,6 +5270,16 @@ function nuevoPresupuesto(){
   var tid = PSU.filtro && PSU.filtro.trabajo_id; if (!tid) return;
   cargarApoyoPs().then(function(){ editorPresupuesto({ presupuesto: { trabajo_id: tid, titulo: '', estado: 'Borrador', cobro: '' }, items: [], respuestas: [], totales: null, iva_pct: 19 }); });
 }
+/* P-4 (1.10.1): números en el editor. Se muestran con coma decimal y sin separador de miles; al leer se acepta
+   "1,5", "1.5", "12.500" (miles) y "1.234,5". */
+function numEditor(v){ return v == null || v === '' ? '' : String(v).replace('.', ','); }
+function leerNumEditor(v){
+  v = String(v == null ? '' : v).trim().replace(/\s/g, '');
+  if (v === '') return '';
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(v)) return Number(v.replace(/\./g, '').replace(',', '.'));
+  if (v.indexOf(',') >= 0) return Number(v.replace(/\./g, '').replace(',', '.'));
+  return Number(v);
+}
 function precioVisible(it){
   if (it.precio_unitario == null || it.precio_unitario === '') return '';
   var tiene = it.costo_unitario !== '' && it.costo_unitario != null && it.margen_pct !== '' && it.margen_pct != null && Number(it.margen_pct) < 100;
@@ -5087,24 +5289,25 @@ function filaItemPs(it, i){
   var L = S.inicio.listas || {}, E = S.inicio.enums || {};
   var catOpts = '<option value="">— sin catálogo —</option>' + (PSU.cat || []).map(function(c){ return '<option value="' + esc(c.id) + '"' + (c.id === it.catalogo_id ? ' selected' : '') + '>' + esc(c.codigo + ' · ' + c.descripcion + (c.ultimo ? ' · costo ' + pesos(c.ultimo.costo_neto) : '')) + '</option>'; }).join('');
   return '<div class="block psItem" data-i="' + i + '" data-id="' + esc(it.id || '') + '" data-v="' + esc(it.version || '') + '" style="padding:10px">' +
-    '<div class="row2"><label class="f"><span>Tipo</span><select class="i piTipo">' + options(E.tipo_concepto, it.tipo || 'Repuesto') + '</select></label><label class="f"><span>Cantidad</span><input class="i piCant" inputmode="decimal" value="' + esc(it.cantidad == null ? 1 : it.cantidad) + '"></label></div>' +
+    '<div class="row2"><label class="f"><span>Tipo</span><select class="i piTipo">' + options(E.tipo_concepto, it.tipo || 'Repuesto') + '</select></label><label class="f"><span>Cantidad</span><input class="i piCant" inputmode="decimal" value="' + esc(numEditor(it.cantidad == null ? 1 : it.cantidad)) + '"></label></div>' +
     '<label class="f"><span>Descripción para el cliente *</span><input class="i piDesc" value="' + esc(it.descripcion || '') + '"></label>' +
     '<label class="f"><span>Repuesto del catálogo (opcional)</span><select class="i piCat">' + catOpts + '</select></label>' +
-    '<div class="row2"><label class="f"><span>Costo neto (interno)</span><input class="i piCosto" inputmode="numeric" value="' + esc(it.costo_unitario == null ? '' : it.costo_unitario) + '"></label><label class="f"><span>Margen %</span><input class="i piMargen" inputmode="decimal" value="' + esc(it.margen_pct == null ? '' : it.margen_pct) + '"></label></div>' +
-    '<label class="f"><span>Precio neto unitario al cliente (vacío = costo y margen)</span><input class="i piPrecio" inputmode="numeric" value="' + esc(precioVisible(it)) + '"></label>' +
+    '<div class="row2"><label class="f"><span>Costo neto (interno)</span><input class="i piCosto" inputmode="numeric" value="' + esc(numEditor(it.costo_unitario)) + '"></label><label class="f"><span>Margen %</span><input class="i piMargen" inputmode="decimal" value="' + esc(numEditor(it.margen_pct)) + '"></label></div>' +
+    '<label class="f"><span>Precio neto unitario al cliente (vacío = costo y margen)</span><input class="i piPrecio" inputmode="numeric" value="' + esc(numEditor(precioVisible(it))) + '"></label>' +
     '<div class="inline" style="justify-content:space-between;flex-wrap:wrap"><label class="inline" style="gap:8px"><input type="checkbox" class="piOpc"' + (it.opcional === true ? ' checked' : '') + '> Opcional (recomendado)</label><span class="s piCalc" style="color:var(--acero)"></span><button class="btn ghost" type="button" data-act="ps-quitar">Quitar</button></div></div>';
 }
 function editorPresupuesto(x){
   var p = x.presupuesto, cerrado = ['Autorizado', 'Rechazado', 'Retirado'].indexOf(p.estado) >= 0;
   PSU.actual = x; PSU.borrar = []; PSU.items = x.items.map(function(it){ return Object.assign({}, it); });
   var cobro = String(p.cobro || '').split(',');
-  var h = '<div class="block"><div class="chips" style="margin:0 0 6px">' + chipPs(p.estado) + (p.codigo ? '<span class="chip">' + esc(p.codigo) + '</span>' : '') + (x.trabajo ? '<span class="chip">' + esc(x.trabajo.codigo || '') + '</span>' : '') + (p.vence_en && p.estado === 'Publicado' ? '<span class="chip">válido hasta ' + esc(fmtFecha(p.vence_en)) + '</span>' : '') + '</div>' +
+  var h = '<div class="block"><div class="chips" style="margin:0 0 6px">' + chipPs(p.estado) + (p.codigo ? '<span class="chip">' + esc(p.codigo) + '</span>' : '') + (x.trabajo ? '<span class="chip">' + esc(x.trabajo.codigo || '') + '</span>' : '') + (p.vence_en && p.estado === 'Publicado' ? '<span class="chip">válido hasta ' + esc(fmtFecha(p.vence_en)) + '</span>' : '') + (x.sin_publicar ? '<span class="chip" style="border-color:var(--senal)">cambios sin publicar</span>' : '') + '</div>' +
     (p.respuesta_detalle ? '<p class="s" style="margin:0">' + esc(p.respuesta_detalle) + '</p>' : '') + '</div>';
   if (x.respuestas && x.respuestas.length) {
     h += '<div class="block"><h3>Respuestas del cliente</h3>' + x.respuestas.map(function(r){
-      var vig = Number(r.revision) === Number(p.revision) && p.estado === 'Publicado';
+      var vig = Number(r.revision) === Number(p.revision) && p.estado === 'Publicado' && !x.sin_publicar;
       return '<div style="border-top:1px solid var(--linea);padding:6px 0"><b>' + esc(r.respuesta) + '</b> · ' + esc(r.nombre) + ' · ' + esc(fechaHora(r.recibido_en)) + ' · revisión ' + esc(r.revision) + (r.mensaje ? '<div style="white-space:pre-wrap">' + esc(r.mensaje) + '</div>' : '') +
-        (vig && r.respuesta !== 'Consulta' ? '<button class="btn go" type="button" data-act="ps-confirmar-resp" data-id="' + esc(r.id) + '" style="margin-top:6px">Confirmar: ' + (r.respuesta === 'Autorizo' ? 'autorizado' : 'rechazado') + '</button>' : '') + '</div>';
+        (vig && r.respuesta !== 'Consulta' ? '<button class="btn go" type="button" data-act="ps-confirmar-resp" data-id="' + esc(r.id) + '" style="margin-top:6px">Confirmar: ' + (r.respuesta === 'Autorizo' ? 'autorizado' : 'rechazado') + '</button>' : '') +
+        (x.sin_publicar && r.respuesta !== 'Consulta' && Number(r.revision) === Number(p.revision) ? '<div class="s" style="color:var(--acero)">El presupuesto cambió después de que el cliente respondió: publícalo de nuevo, o registra su respuesta por otro medio.</div>' : '') + '</div>';
     }).join('') + '</div>';
   }
   h += '<fieldset ' + (cerrado ? 'disabled ' : '') + 'style="border:0;padding:0;margin:0">' +
@@ -5127,7 +5330,7 @@ function editorPresupuesto(x){
 function leerItemsPs(){
   Array.prototype.forEach.call(document.querySelectorAll('.psItem'), function(el){
     var it = PSU.items[+el.getAttribute('data-i')]; if (!it) return;
-    var num = function(sel){ var v = el.querySelector(sel).value.trim().replace(/\./g, '').replace(',', '.'); return v === '' ? '' : Number(v); };
+    var num = function(sel){ return leerNumEditor(el.querySelector(sel).value); };
     it.tipo = el.querySelector('.piTipo').value; it.descripcion = el.querySelector('.piDesc').value.trim();
     it.cantidad = num('.piCant'); it.catalogo_id = el.querySelector('.piCat').value;
     it.costo_unitario = num('.piCosto'); it.margen_pct = num('.piMargen'); it.precio_unitario = num('.piPrecio');
@@ -5199,8 +5402,9 @@ function abrirConfirmarPs(respId){
   var opc = x.items.filter(function(it){ return it.opcional === true; });
   var dec = r ? (r.respuesta === 'Autorizo' ? 'Autorizado' : 'Rechazado') : 'Autorizado';
   var h = (r ? '<p style="margin:0 0 8px">Respuesta web de <b>' + esc(r.nombre) + '</b> (' + esc(fechaHora(r.recibido_en)) + '): <b>' + esc(r.respuesta) + '</b>.</p>' : '<label class="f"><span>¿Cómo respondió? *</span><input class="i" id="pcDet" placeholder="Ej. Autorizó por WhatsApp el 27-10"></label>') +
-    '<label class="f"><span>Resultado</span><select class="i" id="pcDec">' + options(['Autorizado', 'Rechazado'], dec) + '</select></label>' +
-    (opc.length ? '<div class="f" id="pcOpcF"><span>Opcionales aceptados</span>' + opc.map(function(it){ return '<label class="inline" style="gap:8px;padding:4px 0"><input type="checkbox" class="pcOpc" value="' + esc(it.id) + '"' + (opsResp.indexOf(it.id) >= 0 ? ' checked' : '') + '> ' + esc(it.descripcion) + ' · ' + pesos(it.total) + ' neto</label>'; }).join('') + '</div>' : '') +
+    '<label class="f"><span>Resultado</span><select class="i" id="pcDec"' + (r ? ' disabled' : '') + '>' + options(['Autorizado', 'Rechazado'], dec) + '</select></label>' +
+    (opc.length ? '<div class="f" id="pcOpcF"><span>Opcionales aceptados</span>' + opc.map(function(it){ return '<label class="inline" style="gap:8px;padding:4px 0"><input type="checkbox" class="pcOpc" value="' + esc(it.id) + '"' + (opsResp.indexOf(it.id) >= 0 ? ' checked' : '') + (r ? ' disabled' : '') + '> ' + esc(it.descripcion) + ' · ' + pesos(it.total) + ' neto</label>'; }).join('') + '</div>' : '') +
+    (r ? '<p class="s" style="color:var(--acero)">Se confirma exactamente lo que el cliente eligió en la web. Si aceptó otra cosa, cierra esta hoja y usa "Registrar respuesta por otro medio" con el detalle.</p>' : '') +
     '<p class="s" style="color:var(--acero)">Autorizado crea los cobros (con IVA incluido) de lo necesario y de los opcionales marcados, y deja el trabajo Autorizado.</p>' +
     '<button class="btn big go" type="button" data-act="ps-confirmar-ok" data-id="' + esc(respId || '') + '">Confirmar</button>';
   abrirHoja('Confirmar ' + p.codigo, h);
