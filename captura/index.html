@@ -84,12 +84,26 @@ var ACCESO_KEY = 'eg_registro_acceso';
 var TROZO = 8 * 1024 * 1024; // múltiplo de 256 KB (exigencia de Drive)
 var MAX_BYTES = 300 * 1024 * 1024;
 var $ = function (id) { return document.getElementById(id); };
-var F = { archivos: [], tipo: 'Nota', origen: 'App' }; // formulario en curso
-var grabador = null, trozosAudio = [], subiendo = false;
+function formNuevo() { return { id: uid(), archivos: [], tipo: 'Nota', origen: 'App', compartidos: [] }; }
+var F = null; // formulario en curso (id fijo hasta guardarlo: un doble toque no duplica)
+var grabador = null, trozosAudio = [], subiendo = false, guardando = false;
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
 function uid() { return (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)); }
-function llave() { try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
+F = formNuevo();
+function llave_() { try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
+/* 1.14 (Q-5): la cola y la lista de clientes quedan ligadas al usuario de la sesión (se comprueba con "yo"). */
+function llave() { return llave_(); }
+function usuarioGuardado() { try { var u = JSON.parse(localStorage.getItem('eg_captura_usuario') || 'null'); return u && u.llave === (llave() || '').slice(0, 16) ? u : null; } catch (e) { return null; } }
+function esAdmin(u) { return !!u && (u.rol === 'Administrador' || u.rol === 'Administracion'); }
+function verificarUsuario() {
+  if (!navigator.onLine || !llave()) return Promise.resolve(usuarioGuardado());
+  return api('yo', {}).then(function (d) {
+    var u = { id: d.usuario.id, nombre: d.usuario.nombre, rol: d.rol, llave: llave().slice(0, 16) };
+    try { localStorage.setItem('eg_captura_usuario', JSON.stringify(u)); } catch (e) {}
+    return u;
+  });
+}
 function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
 var tt;
 function toast(m, err) { var t = $('toast'); t.textContent = m; t.className = 'toast on' + (err ? ' err' : ''); clearTimeout(tt); tt = setTimeout(function () { t.className = 'toast'; }, err ? 6000 : 3000); }
@@ -155,7 +169,14 @@ function subirArchivo(item, a, alAvanzar) {
 function procesar() {
   if (subiendo || !navigator.onLine || !llave()) return Promise.resolve();
   subiendo = true; pintarEstado();
-  return cola.todos().then(function (items) {
+  var yo = null;
+  return verificarUsuario().then(function (u) {
+    yo = u;
+    if (!esAdmin(yo)) { var e = new Error('EG Captura es solo para administración (tu cuenta: ' + ((yo && yo.rol) || 'sin rol') + ').'); e.code = 'NO_AUTORIZADO'; throw e; }
+    return cola.todos();
+  }).then(function (items) {
+    // Lo guardado con otra cuenta en este navegador no se envía con la tuya.
+    items = items.filter(function (it) { return !it.usuario || it.usuario === yo.id; });
     items.sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
     return items.reduce(function (p, item) {
       return p.then(function () { return procesarItem(item); }).catch(function (e) {
@@ -229,7 +250,7 @@ function pintar() {
     (F.mostrarUrl || F.url ? '<label for="cUrl">Enlace</label><input type="url" id="cUrl" value="' + esc(F.url || '') + '" placeholder="https://">' : '') +
     formDestino() +
     (F.archivos.length ? '<ul class="files">' + F.archivos.map(function (a, i) { return '<li><span>' + esc(a.nombre) + ' · ' + mb(a.blob.size) + '</span><button data-a="quitar" data-i="' + i + '">Quitar</button></li>'; }).join('') + '</ul>' : '') +
-    '<div class="row"><button class="btn go" data-a="guardar">Guardar captura</button>' + (tiene ? '<button class="btn ghost" data-a="limpiar">Limpiar</button>' : '') + '</div></div>';
+    '<div class="row"><button class="btn go" data-a="guardar"' + (guardando ? ' disabled' : '') + '>' + (guardando ? 'Guardando…' : 'Guardar captura') + '</button>' + (tiene ? '<button class="btn ghost" data-a="limpiar">Limpiar</button>' : '') + '</div></div>';
   h += '<div id="listas"></div>';
   $('main').innerHTML = h;
   pintarListas();
@@ -237,12 +258,16 @@ function pintar() {
 
 /* 1.13: para qué es (Taller, Cliente, Personal = cuentas con mamá) y montos. Todo opcional. */
 var DESTINOS = ['Taller', 'Cliente', 'Personal', 'Por definir'];
-function clientesGuardados() { try { return JSON.parse(localStorage.getItem('eg_captura_clientes') || '[]'); } catch (e) { return []; } }
+function clientesGuardados() {
+  var u = usuarioGuardado(); if (!esAdmin(u)) return [];
+  try { var x = JSON.parse(localStorage.getItem('eg_captura_clientes') || '{}'); return x && x.usuario === u.id && Array.isArray(x.lista) ? x.lista : []; } catch (e) { return []; }
+}
 function cargarClientes() {
   if (!navigator.onLine || !llave()) return;
   api('listar', { tabla: 'CLIENTES' }).then(function (l) {
     var c = l.filter(function (x) { return x.estado !== 'Inactivo'; }).map(function (x) { return { id: x.id, nombre: x.nombre, codigo: x.codigo }; }).sort(function (a, b) { return a.nombre < b.nombre ? -1 : 1; });
-    try { localStorage.setItem('eg_captura_clientes', JSON.stringify(c)); } catch (e) {}
+    var u = usuarioGuardado();
+    try { if (u) localStorage.setItem('eg_captura_clientes', JSON.stringify({ usuario: u.id, lista: c })); } catch (e) {}
     if (F.destino === 'Cliente') pintar();
   }).catch(function () {});
 }
@@ -257,11 +282,17 @@ function formDestino() {
     h += montoInput('cMonto', 'Monto total (gasto del taller)', F.monto);
   } else if (F.destino === 'Personal') {
     h += '<label>¿Quién pagó? <span style="font-size:13px">(desde la cuenta de mamá = Mamá)</span></label><div class="seg">' + ['Yo', 'Mamá'].map(function (x) { return '<button type="button" data-a="pago" data-v="' + x + '" class="' + (F.pago_por === x ? 'on' : '') + '">' + x + '</button>'; }).join('') + '</div>';
-    h += '<div class="dos">' + montoInput('cMio', 'Lo mío', F.monto_mio) + montoInput('cMama', 'Lo de mamá', F.monto_mama) + '</div>';
+    h += '<div class="dos">' + montoInput('cMio', 'Lo mío', F.monto_mio) + montoInput('cMama', 'Lo de mamá', F.monto_mama) + '</div><div class="s" style="font-size:13px">Escribe las dos partes (0 si no tiene).</div>';
   }
   return h;
 }
-function numero(v) { var s = String(v || '').replace(/[^\d]/g, ''); return s ? Number(s) : ''; }
+// 1.14 (Q-18): pesos enteros: 15000, 15.000 o $15.000. Cualquier otra cosa (signo, decimales, letras) es un error, no otro monto.
+function numero(v) {
+  var s = String(v == null ? '' : v).trim().replace(/^\$\s*/, '');
+  if (!s) return '';
+  if (/^\d+$/.test(s) || /^\d{1,3}(\.\d{3})+$/.test(s)) return Number(s.replace(/\./g, ''));
+  return null;
+}
 
 function pintarListas() {
   Promise.all([cola.todos(), cola.todos('hechas')]).then(function (r) {
@@ -297,16 +328,25 @@ function agregarArchivos(lista, origen) {
 }
 
 function guardar() {
+  if (guardando) return; // 1.14 (Q-4): un doble toque no guarda dos veces
   leerForm();
   if (!F.archivos.length && !F.texto && !F.url) { toast('Escribe una nota, un enlace o adjunta un archivo.', true); return; }
+  if ([F.monto, F.monto_mio, F.monto_mama].some(function (x) { return x === null; })) { toast('Monto no válido: usa solo pesos enteros (ej. 15000 o 15.000), sin signo ni decimales.', true); return; }
+  if (F.destino === 'Personal' && !F.pago_por && (F.monto_mio !== '' || F.monto_mama !== '')) { toast('Indica quién pagó (Yo o Mamá).', true); return; }
   var tipo = F.archivos.length ? tipoDe(F.archivos[0].mime) : (F.url && !F.texto ? 'Enlace' : 'Nota');
-  var item = { id: uid(), creado: new Date().toISOString(), fecha: new Date().toISOString(), tipo: tipo, origen: F.origen || 'App', titulo: F.titulo || '', texto: F.texto || '', url: F.url || '', archivos: F.archivos, extra: extraDestino() };
-  if (F.destino === 'Personal' && !F.pago_por && (F.monto_mio || F.monto_mama)) { toast('Indica quién pagó (Yo o Mamá).', true); return; }
+  var u = usuarioGuardado();
+  // El id del formulario se mantiene: si se repite, cola.poner reemplaza la misma entrada (y el servidor la reconoce por op_id).
+  var item = { id: F.id, creado: new Date().toISOString(), fecha: new Date().toISOString(), tipo: tipo, origen: F.origen || 'App', titulo: F.titulo || '', texto: F.texto || '', url: F.url || '', archivos: F.archivos, extra: extraDestino(), usuario: u ? u.id : '' };
+  var compartidos = F.compartidos || [];
+  guardando = true; pintar();
   cola.poner(item).then(function () {
-    F = { archivos: [], tipo: 'Nota', origen: 'App' };
+    // 1.14 (Q-3): lo compartido desde otra app se borra recién cuando ya quedó en la cola.
+    return Promise.all(compartidos.map(function (id) { return cola.sacar(id, 'compartido'); }));
+  }).then(function () {
+    F = formNuevo();
     toast(navigator.onLine ? 'Guardada. Subiendo…' : 'Guardada en el celular. Se sube cuando haya señal.');
-    pintar(); procesar();
-  }).catch(function (e) { toast('No se pudo guardar en el celular: ' + e.message, true); });
+  }).catch(function (e) { toast('No se pudo guardar en el celular: ' + e.message, true); })
+    .then(function () { guardando = false; pintar(); procesar(); });
 }
 
 /** Campos de destino que van al servidor (solo los que corresponden). */
@@ -315,7 +355,7 @@ function extraDestino() {
   x.destino = F.destino;
   if (F.destino === 'Cliente') { if (F.cliente_id) x.cliente_id = F.cliente_id; if (F.monto !== '' && F.monto != null) x.monto = F.monto; if (F.monto_tipo) x.monto_tipo = F.monto_tipo; }
   if (F.destino === 'Taller' && F.monto !== '' && F.monto != null) x.monto = F.monto;
-  if (F.destino === 'Personal') { if (F.pago_por) x.pago_por = F.pago_por; if (F.monto_mio) x.monto_mio = F.monto_mio; if (F.monto_mama) x.monto_mama = F.monto_mama; }
+  if (F.destino === 'Personal') { if (F.pago_por) x.pago_por = F.pago_por; if (F.monto_mio !== '' && F.monto_mio != null) x.monto_mio = F.monto_mio; if (F.monto_mama !== '' && F.monto_mama != null) x.monto_mama = F.monto_mama; }
   return x;
 }
 
@@ -349,7 +389,7 @@ document.addEventListener('click', function (ev) {
   else if (a === 'audio') grabar();
   else if (a === 'enlace') { F.mostrarUrl = true; pintar(); if ($('cUrl')) $('cUrl').focus(); }
   else if (a === 'quitar') { leerForm(); F.archivos.splice(Number(el.getAttribute('data-i')), 1); pintar(); }
-  else if (a === 'limpiar') { F = { archivos: [], tipo: 'Nota', origen: 'App' }; pintar(); }
+  else if (a === 'limpiar') { var cs = F.compartidos || []; F = formNuevo(); cs.forEach(function (id) { cola.sacar(id, 'compartido'); }); pintar(); }
   else if (a === 'guardar') guardar();
   else if (a === 'destino') { var v = el.getAttribute('data-v'); F.destino = F.destino === v ? '' : v; if (F.destino === 'Cliente' && !clientesGuardados().length) cargarClientes(); pintar(); }
   else if (a === 'pago') { F.pago_por = el.getAttribute('data-v'); pintar(); }
@@ -363,15 +403,16 @@ document.addEventListener('visibilitychange', function () { if (document.visibil
 
 /** Lo que llega desde "Compartir" de otra app (lo guarda el service worker): se carga al formulario para revisar y guardar. */
 function cargarCompartido() {
-  if (!/compartido=1/.test(location.search)) return Promise.resolve();
-  history.replaceState(null, '', location.pathname);
+  if (/compartido=/.test(location.search)) history.replaceState(null, '', location.pathname);
+  // 1.14 (Q-3): se carga todo lo compartido que siga en el celular (aunque se haya cerrado la app) y se borra solo al guardar.
   return cola.todos('compartido').then(function (l) {
+    l = l.filter(function (c) { return F.compartidos.indexOf(c.id) < 0; });
     l.forEach(function (c) {
       F.titulo = F.titulo || c.titulo || ''; F.texto = [F.texto, c.texto].filter(Boolean).join('\n');
       if (c.url) { F.url = c.url; F.mostrarUrl = true; }
       (c.archivos || []).forEach(function (a) { F.archivos.push({ nombre: a.nombre, mime: a.mime, blob: a.blob }); });
       F.origen = 'Compartir';
-      cola.sacar(c.id, 'compartido');
+      F.compartidos.push(c.id);
     });
     // Un enlace compartido llega a veces dentro del texto.
     if (!F.url && /^https?:\/\/\S+$/.test((F.texto || '').trim())) { F.url = F.texto.trim(); F.texto = ''; F.mostrarUrl = true; }
