@@ -1578,8 +1578,11 @@ var RULES_ = {
 
   SESIONES: {
     before: function (ctx, row, prev, w) {
-      if (prev && !isEmpty_(prev.concepto_id) && row.concepto_id !== prev.concepto_id) fail_('DOBLE_COBRO', 'Esta sesión ya respalda el cobro ' + prev.concepto_id + '. No se puede asignar a otro.');
-      if (prev && !isEmpty_(prev.concepto_id) && (row.min_facturables !== prev.min_facturables || row.tarifa_valor !== prev.tarifa_valor)) fail_('DOBLE_COBRO', 'La sesión ya está cobrada: corrige el cobro, no la sesión.');
+      // 1.16 (R-10): si el cobro que respaldaba quedó Anulado, la sesión se puede soltar (concepto_id vacío) para volver a cobrarla.
+      var cobroPrev = prev && !isEmpty_(prev.concepto_id) ? getRow_(ctx, 'CONCEPTOS', prev.concepto_id) : null;
+      var libera = !!prev && !isEmpty_(prev.concepto_id) && isEmpty_(row.concepto_id) && (!cobroPrev || cobroPrev.etapa === 'Anulado' || cobroPrev.anulado === true);
+      if (prev && !isEmpty_(prev.concepto_id) && row.concepto_id !== prev.concepto_id && !libera) fail_('DOBLE_COBRO', 'Esta sesión ya respalda el cobro ' + prev.concepto_id + '. No se puede asignar a otro.');
+      if (prev && !isEmpty_(prev.concepto_id) && !libera && (row.min_facturables !== prev.min_facturables || row.tarifa_valor !== prev.tarifa_valor)) fail_('DOBLE_COBRO', 'La sesión ya está cobrada: corrige el cobro, no la sesión.');
       if (row.estado === 'Anulada') return;
       var trabajo = mustGet_(ctx, 'TRABAJOS', row.trabajo_id, 'Trabajo');
       if (row.estado === 'Abierta') {
@@ -1861,6 +1864,11 @@ var RULES_ = {
       if (isEmpty_(row.estado)) row.estado = 'Nueva';
       if (row.destino !== 'Personal' && (!isEmpty_(row.pago_por) || !isEmpty_(row.monto_mio) || !isEmpty_(row.monto_mama))) fail_('VALOR_INVALIDO', 'Pagó, monto mío y monto de mamá son solo para destino Personal.');
       if (row.destino === 'Personal' && (!isEmpty_(row.cliente_id) || !isEmpty_(row.trabajo_id))) fail_('VALOR_INVALIDO', 'Lo personal no se asigna a un cliente ni a un trabajo.');
+      // 1.16 (R-8): si un gasto ya usa esta captura, su cliente no puede quedar distinto al del gasto.
+      if (prev && (prev.cliente_id !== row.cliente_id || prev.trabajo_id !== row.trabajo_id) && !isEmpty_(row.cliente_id)) {
+        var gaC = activeRows_(ctx, 'GASTOS').filter(function (g) { return g.captura_id === row.id && !isEmpty_(g.cliente_id) && g.cliente_id !== row.cliente_id; })[0];
+        if (gaC) fail_('CLIENTE_DISTINTO', 'Esta captura está en el gasto ' + gaC.codigo + ' de otro cliente: corrige ese gasto antes.');
+      }
       if (!isEmpty_(row.trabajo_id)) {
         var trC = getRow_(ctx, 'TRABAJOS', row.trabajo_id);
         if (trC && isEmpty_(row.cliente_id)) row.cliente_id = trC.cliente_id;
@@ -1877,7 +1885,7 @@ var RULES_ = {
           if (resto < 0) fail_('VALOR_INVALIDO', 'La parte informada supera el total ($' + row.monto + ').');
           if (hayMio) row.monto_mama = resto; else row.monto_mio = resto;
           if (w) w.push({ code: 'PARTE_CALCULADA', message: 'La otra parte se calculó con el total: $' + resto + '.' });
-        } else if (hayTotal && hayMio && hayMama && Math.abs(Number(row.monto_mio) + Number(row.monto_mama) - Number(row.monto)) > 1) fail_('VALOR_INVALIDO', 'Lo mío ($' + row.monto_mio + ') + lo de mamá ($' + row.monto_mama + ') no suma el total ($' + row.monto + ').');
+        } else if (hayTotal && hayMio && hayMama && Number(row.monto_mio) + Number(row.monto_mama) !== Number(row.monto)) fail_('VALOR_INVALIDO', 'Lo mío ($' + row.monto_mio + ') + lo de mamá ($' + row.monto_mama + ') no suma el total ($' + row.monto + ').');
         // 1.14 (Q-13): una captura que ya está en un gasto del taller no pasa a Personal.
         if (prev && prev.destino !== 'Personal') {
           var ga = activeRows_(ctx, 'GASTOS').filter(function (g) { return g.captura_id === row.id; })[0];
@@ -4217,7 +4225,10 @@ function conceptoAnularPagado_(ctx, p) {
   });
   var actual = getRow_(ctx, 'CONCEPTOS', con.id);
   var u = updateRow_(ctx, 'CONCEPTOS', con.id, actual.version, { etapa: 'Anulado' }, { opId: p.op_id, motivo: motivo, fuente: fuente });
-  if (activeRows_(ctx, 'SESIONES').some(function (s) { return s.concepto_id === con.id; })) w.push({ code: 'SESIONES_LIGADAS', message: 'Hay sesiones de tiempo ligadas a este cobro: si corresponde, desvincúlalas.' });
+  // 1.16 (R-10): las sesiones de tiempo de este cobro quedan libres (se pueden volver a cobrar o anular). El historial guarda el vínculo anterior.
+  var sesLib = activeRows_(ctx, 'SESIONES').filter(function (s) { return s.concepto_id === con.id; });
+  sesLib.forEach(function (s) { sysUpdate_(ctx, 'SESIONES', s.id, { concepto_id: '' }, 'Liberada: su cobro ' + con.codigo + ' se anuló'); });
+  if (sesLib.length) w.push({ code: 'SESIONES_LIBERADAS', message: sesLib.length + ' sesión(es) de tiempo quedaron libres para volver a cobrarlas (o anularlas) si corresponde.' });
   if (liberado > 0) w.push({ code: 'SALDO_A_FAVOR', message: '$' + liberado + ' quedan a favor del cliente (pago sin imputar). Puedes imputarlos a otro cobro o registrar la devolución.' });
   return { data: { concepto: u.row, liberado: liberado, imputaciones: imps.length, documentos: porEmitir.map(function (x) { return x.doc.codigo; }) }, warnings: w };
 }
@@ -4802,8 +4813,8 @@ var S = { token:null, acceso:null, inicio:null, tab:'trabajos', tickTimer:null, 
 /* Llave de acceso de este equipo (1.5.3): se entra con Google una vez y la llave dura 30 días sin uso. */
 var ACCESO_KEY = 'eg_registro_acceso';
 function leerAcceso(){ try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
-function guardarAcceso(v){ S.acceso = v; try { localStorage.setItem(ACCESO_KEY, v); } catch (e) {} }
-function borrarAcceso(){ memoBorrar(); S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
+function guardarAcceso(v){ GEN.s++; memoBorrar(); S.acceso = v; try { localStorage.setItem(ACCESO_KEY, v); } catch (e) {} }
+function borrarAcceso(){ GEN.s++; memoBorrar(); syncCopia(null); S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
 function nombreEquipo(){ var u = navigator.userAgent || ''; return /iPhone|iPad/.test(u) ? 'iPhone/iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Mac/.test(u) ? 'Mac' : 'Navegador'; }
 if (!DEMO) S.acceso = leerAcceso();
 
@@ -4870,12 +4881,16 @@ function anotarTiempo(accion, total, servidor, intentos){
 var LECTURAS = { inicio:1, ficha:1, clientes:1, listar:1 };
 var MEMO = {};               // lecturas de esta sesión (se borran al guardar cualquier cosa)
 var MEMO_PERSISTE = { inicio:1, clientes:1 }; // estas quedan guardadas en el equipo para abrir la app al tiro
+var MEMO_TTL = 12 * 3600000; // 1.16 (R-9): ninguna copia sirve después de 12 horas (ni en memoria ni en el equipo)
+// 1.16 (R-2, R-5): "generaciones". GEN.s sube al cambiar de sesión; GEN.d sube con cada cambio guardado.
+// Una respuesta pedida en otra generación se descarta: no pinta ni se guarda. SEQ: la respuesta más nueva por clave gana.
+var GEN = { s: 0, d: 0 }, SEQ = {};
 function memoClave(action, payload){ return 'egc:' + String(S.acceso || '').slice(0, 12) + ':' + action + ':' + JSON.stringify(payload || {}); }
 function memoLeer(k, action){
-  if (MEMO[k]) return MEMO[k];
-  if (!MEMO_PERSISTE[action]) return null;
-  try { var x = JSON.parse(localStorage.getItem(k) || 'null'); if (x && Date.now() - x.f < 12 * 3600000) { MEMO[k] = x; return x; } } catch (e) {}
-  return null;
+  var x = MEMO[k];
+  if (!x && MEMO_PERSISTE[action]) try { x = JSON.parse(localStorage.getItem(k) || 'null'); } catch (e) { x = null; }
+  if (!x || Date.now() - x.f >= MEMO_TTL) { delete MEMO[k]; return null; }
+  MEMO[k] = x; return x;
 }
 function memoGuardar(k, action, r){
   var x = { r: r, f: Date.now(), j: JSON.stringify(r.data) };
@@ -4883,28 +4898,50 @@ function memoGuardar(k, action, r){
   if (MEMO_PERSISTE[action]) try { localStorage.setItem(k, JSON.stringify(x)); } catch (e) {}
 }
 function memoBorrar(){
-  MEMO = {};
+  MEMO = {}; SEQ = {};
   try { Object.keys(localStorage).forEach(function(k){ if (k.indexOf('egc:') === 0) localStorage.removeItem(k); }); } catch (e) {}
 }
-var syncN = 0;
-function syncVer(d){ syncN = Math.max(0, syncN + d); var el = $('sync'); if (el) el.hidden = syncN === 0; }
+var syncN = 0, syncViejo = null;
+function syncPintar(){
+  var el = $('sync'); if (!el) return;
+  if (syncN > 0) { el.textContent = 'actualizando…'; el.hidden = false; el.style.background = '#1F2A30'; }
+  else if (syncViejo) { el.textContent = 'copia de las ' + syncViejo + ' · sin actualizar'; el.hidden = false; el.style.background = '#8a5a00'; }
+  else el.hidden = true;
+}
+function syncVer(d){ syncN = Math.max(0, syncN + d); syncPintar(); }
+function syncCopia(f){ syncViejo = f ? new Date(f).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false }) : null; syncPintar(); }
+function esAccesoPerdido(e){ return e && (e.code === 'NO_AUTENTICADO' || e.code === 'NO_AUTORIZADO'); }
 /**
- * Lectura rápida: si hay una copia, se muestra al tiro (render(r, true)) y se pide la versión nueva por detrás;
- * si cambió, se vuelve a mostrar (render(r, false)). Sin copia, espera la respuesta como siempre.
+ * Lectura rápida: si hay una copia vigente, se muestra al tiro (render(r, true)) y se pide la versión nueva por detrás;
+ * si cambió, se vuelve a mostrar (render(r, false, true)). Sin copia, espera la respuesta como siempre.
+ * Si la actualización falla, la copia queda marcada "sin actualizar"; si se perdió el acceso, se borra todo (lo hace call).
  */
 function leer(action, payload, render, onError){
   if (DEMO) return call(action, payload).then(function(r){ render(r, false); }).catch(onError || function(){});
   var k = memoClave(action, payload), m = memoLeer(k, action);
+  var g = { s: GEN.s, d: GEN.d, q: (SEQ[k] = (SEQ[k] || 0) + 1) };
+  var vigente = function(){ return g.s === GEN.s && g.q === SEQ[k]; };
+  var fallo = function(e){
+    if (!vigente()) return;
+    if (esAccesoPerdido(e)) return; // call ya cerró la sesión y borró lo guardado
+    if (m) syncCopia(m.f);
+    if (onError) onError(e);
+  };
+  var traer = function(){
+    return call(action, payload).then(function(r){
+      if (!vigente()) return;                       // otra sesión o una respuesta más nueva: se ignora
+      if (g.d !== GEN.d) { g.d = GEN.d; return traer(); } // se guardó algo mientras tanto: se pide de nuevo
+      var nuevo = !m || JSON.stringify(r.data) !== m.j;
+      memoGuardar(k, action, r); syncCopia(null);
+      if (!m) render(r, false); else if (nuevo) render(r, false, true);
+    });
+  };
   if (m) {
     try { render(m.r, true); } catch (e) { console.error(e); }
     syncVer(1);
-    return call(action, payload).then(function(r){
-      var nuevo = JSON.stringify(r.data) !== m.j;
-      memoGuardar(k, action, r);
-      if (nuevo) render(r, false, true); // true = es la actualización de algo ya mostrado
-    }).catch(function(){}).then(function(){ syncVer(-1); });
+    return traer().catch(fallo).then(function(){ syncVer(-1); });
   }
-  return call(action, payload).then(function(r){ memoGuardar(k, action, r); render(r, false); }).catch(onError || function(){});
+  return traer().catch(fallo);
 }
 function mostrarTiempos(){
   var l = []; try { l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]'); } catch (e) {}
@@ -4921,10 +4958,12 @@ function mostrarTiempos(){
 function call(action, payload){
   return api(action, payload).then(function(r){
     // Cualquier cambio guardado deja viejas las lecturas guardadas: la próxima se pide de nuevo.
-    if (r && r.ok && !LECTURAS[action]) memoBorrar();
+    // 1.16 (R-11): lo decide el servidor (w = fue un cambio); con un servidor anterior, se usa la lista local.
+    if (r && r.ok && (r.w === true || (r.w === undefined && !LECTURAS[action]))) { GEN.d++; memoBorrar(); }
     if (!r.ok){
       var e = r.error || {};
-      if (e.code === 'NO_AUTENTICADO') { S.token = null; borrarAcceso(); S.inicio = null; cerrarHoja(); renderLogin(); }
+      // 1.16 (R-4): sesión vencida o cuenta dada de baja: se borra todo lo guardado y se vuelve al inicio de sesión.
+      if (e.code === 'NO_AUTENTICADO' || (e.code === 'NO_AUTORIZADO' && action !== 'acceso_abrir')) { S.token = null; borrarAcceso(); S.inicio = null; cerrarHoja(); renderLogin(); }
       toast(e.message || 'Error', 'err');
       // Guardado cortado o no verificado: se recarga para no repetir sobre datos viejos.
       if (e.code === 'GUARDADO_INTERRUMPIDO' || e.code === 'NO_VERIFICADO') { cerrarHoja(); setTimeout(function(){ cargar(); }, 1500); }
@@ -5064,14 +5103,14 @@ function renderTrabajos(){
   $('main').innerHTML = h;
 }
 
-function abrirHoja(titulo, html){
-  HOJA_ID = null;
+function abrirHoja(titulo, html, id){
+  HOJA_ID = id || null; HOJA_PEDIDA = id || null;
   $('sheetTitle').textContent = titulo; $('sheetBody').innerHTML = html;
   $('sheet').className = 'sheet on'; $('sheetBack').className = 'sheet-back on';
   var f = $('sheetBody').querySelector('button, input, select, textarea'); if (f) f.focus();
 }
-var HOJA_ID = null;
-function cerrarHoja(){ HOJA_ID = null; $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
+var HOJA_ID = null, HOJA_PEDIDA = null;
+function cerrarHoja(){ HOJA_ID = null; HOJA_PEDIDA = null; $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
 
 function abrirTrabajo(id){
   var x = (S.inicio.trabajos || []).filter(function(y){ return y.trabajo.id === id; })[0];
@@ -5471,8 +5510,10 @@ function guardarResumen(btn){
 }
 
 function abrirFicha(equipoId){
+  // 1.16 (R-6): la ficha se pinta solo si sigue siendo lo último que se pidió abrir (vale para la primera respuesta y las actualizaciones).
+  HOJA_PEDIDA = 'ficha:' + equipoId;
   leer('ficha', { equipo_id: equipoId }, function(r, copia, actualiza){
-    if (actualiza && HOJA_ID !== 'ficha:' + equipoId) return; // ya la cerró o abrió otra cosa: no se vuelve a abrir
+    if (HOJA_PEDIDA !== 'ficha:' + equipoId) return; // ya la cerró o abrió otra cosa: no se vuelve a abrir
     var f = r.data, e = f.equipo;
     S.ficha = f;
     var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + plate(e.patente, true) + '<dl class="kv">' +
@@ -5491,7 +5532,7 @@ function abrirFicha(equipoId){
         (isAdmin() && f.cliente && t.estado_ejecucion === 'Ejecutado' ? '<button class="btn ghost" type="button" data-act="msg-cliente" data-id="' + esc(t.id) + '" style="margin-top:8px">Mensaje al cliente' + (t.resumen_cliente ? ' ✓' : '') + '</button>' + (t.publicable === true && t.resumen_cliente ? ' <span class="chip ok">En historial</span>' : '') : '') + '</div>';
     }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin trabajos registrados.</p>') + '</div>';
     if (f.pendientes_historicos.length) h += '<div class="block"><h3>Pendientes cerrados</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_historicos.map(function(p){ return '<li>' + esc(p.descripcion) + ' <span class="chip ok">' + esc(p.estado) + '</span></li>'; }).join('') + '</ul></div>';
-    abrirHoja(e.nombre_corto, h); HOJA_ID = 'ficha:' + equipoId;
+    abrirHoja(e.nombre_corto, h, 'ficha:' + equipoId);
   });
 }
 
