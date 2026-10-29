@@ -135,6 +135,7 @@ table.h td.n,table.h th.n{text-align:right;font-variant-numeric:tabular-nums;whi
   <div class="content" id="sheetBody"></div>
 </section>
 <div class="toast" id="toast" role="status"></div>
+<div id="sync" hidden style="position:fixed;right:10px;bottom:10px;z-index:60;background:#1F2A30;color:#fff;font:600 12px Barlow,sans-serif;padding:4px 10px;border-radius:12px;opacity:.85">actualizando…</div>
 
 <script>
 /* ═════════ CONFIGURACIÓN DE PRODUCCIÓN ═════════
@@ -4363,7 +4364,7 @@ function capturasPendientesTexto_(ctx) {
   if (!ps.length) { L.push('No hay capturas pendientes.'); return L.join('\n') + '\n'; }
   ps.forEach(function (c) {
     var cli = c.cliente_id ? getRow_(ctx, 'CLIENTES', c.cliente_id) : null, tr = c.trabajo_id ? getRow_(ctx, 'TRABAJOS', c.trabajo_id) : null;
-    L.push('## ' + c.codigo + ' · ' + c.tipo + ' · ' + String(c.fecha).slice(0, 16).replace('T', ' ') + ' · ' + c.estado);
+    L.push('## ' + c.codigo + ' · ' + c.tipo + ' · ' + localDate_(c.fecha) + ' ' + localHM_(c.fecha) + ' (hora de Chile) · ' + c.estado);
     if (c.titulo) L.push('- Título: ' + celda(c.titulo, 200));
     L.push('- Destino: ' + (c.destino || 'Por definir') + (c.monto !== '' && c.monto !== null && c.monto !== undefined ? ' · monto ' + pesos(c.monto) + ' (' + (c.monto_tipo || 'Por definir') + ')' : ''));
     if (c.destino === 'Personal') L.push('- Personal (cuentas con mamá): pagó ' + (c.pago_por || '¿?') + ' · mío ' + (pesos(c.monto_mio) || '¿?') + ' · de mamá ' + (pesos(c.monto_mama) || '¿?') + ' → falta completar (paquete "editar" no aplica: pide a Víctor completarlo en la app).');
@@ -4802,7 +4803,7 @@ var S = { token:null, acceso:null, inicio:null, tab:'trabajos', tickTimer:null, 
 var ACCESO_KEY = 'eg_registro_acceso';
 function leerAcceso(){ try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
 function guardarAcceso(v){ S.acceso = v; try { localStorage.setItem(ACCESO_KEY, v); } catch (e) {} }
-function borrarAcceso(){ S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
+function borrarAcceso(){ memoBorrar(); S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
 function nombreEquipo(){ var u = navigator.userAgent || ''; return /iPhone|iPad/.test(u) ? 'iPhone/iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Mac/.test(u) ? 'Mac' : 'Navegador'; }
 if (!DEMO) S.acceso = leerAcceso();
 
@@ -4843,9 +4844,11 @@ function api(action, payload){
   // Con llave de acceso no se manda el token de Google (salvo para sacar la llave).
   var usarLlave = S.acceso && action !== 'acceso_abrir';
   var body = JSON.stringify({ action: action, payload: payload, id_token: usarLlave ? null : S.token, sesion: usarLlave ? S.acceso : null });
+  var t0 = Date.now();
   function intento(n){
     return fetch(APP_CONFIG.API_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: body, redirect:'follow' })
       .then(function(r){ return r.json(); })
+      .then(function(r){ anotarTiempo(action, Date.now() - t0, r && r.ms, n); return r; })
       .catch(function(e){
         // Reintento con el mismo op_id: el servidor no lo aplica dos veces.
         if (n < 2) return new Promise(function(res){ setTimeout(res, 1200); }).then(function(){ return intento(n + 1); });
@@ -4854,8 +4857,71 @@ function api(action, payload){
   }
   return intento(1);
 }
+/* ───── 1.15 velocidad: tiempos medidos y lecturas guardadas en el equipo ───── */
+var TIEMPOS_KEY = 'eg_tiempos';
+function anotarTiempo(accion, total, servidor, intentos){
+  try {
+    var l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]');
+    l.push({ a: accion, t: total, s: servidor || null, n: intentos, f: new Date().toISOString() });
+    localStorage.setItem(TIEMPOS_KEY, JSON.stringify(l.slice(-60)));
+  } catch (e) {}
+}
+// Solo lectura: se pueden mostrar al tiro desde lo guardado y actualizar por detrás.
+var LECTURAS = { inicio:1, ficha:1, clientes:1, listar:1 };
+var MEMO = {};               // lecturas de esta sesión (se borran al guardar cualquier cosa)
+var MEMO_PERSISTE = { inicio:1, clientes:1 }; // estas quedan guardadas en el equipo para abrir la app al tiro
+function memoClave(action, payload){ return 'egc:' + String(S.acceso || '').slice(0, 12) + ':' + action + ':' + JSON.stringify(payload || {}); }
+function memoLeer(k, action){
+  if (MEMO[k]) return MEMO[k];
+  if (!MEMO_PERSISTE[action]) return null;
+  try { var x = JSON.parse(localStorage.getItem(k) || 'null'); if (x && Date.now() - x.f < 12 * 3600000) { MEMO[k] = x; return x; } } catch (e) {}
+  return null;
+}
+function memoGuardar(k, action, r){
+  var x = { r: r, f: Date.now(), j: JSON.stringify(r.data) };
+  MEMO[k] = x;
+  if (MEMO_PERSISTE[action]) try { localStorage.setItem(k, JSON.stringify(x)); } catch (e) {}
+}
+function memoBorrar(){
+  MEMO = {};
+  try { Object.keys(localStorage).forEach(function(k){ if (k.indexOf('egc:') === 0) localStorage.removeItem(k); }); } catch (e) {}
+}
+var syncN = 0;
+function syncVer(d){ syncN = Math.max(0, syncN + d); var el = $('sync'); if (el) el.hidden = syncN === 0; }
+/**
+ * Lectura rápida: si hay una copia, se muestra al tiro (render(r, true)) y se pide la versión nueva por detrás;
+ * si cambió, se vuelve a mostrar (render(r, false)). Sin copia, espera la respuesta como siempre.
+ */
+function leer(action, payload, render, onError){
+  if (DEMO) return call(action, payload).then(function(r){ render(r, false); }).catch(onError || function(){});
+  var k = memoClave(action, payload), m = memoLeer(k, action);
+  if (m) {
+    try { render(m.r, true); } catch (e) { console.error(e); }
+    syncVer(1);
+    return call(action, payload).then(function(r){
+      var nuevo = JSON.stringify(r.data) !== m.j;
+      memoGuardar(k, action, r);
+      if (nuevo) render(r, false, true); // true = es la actualización de algo ya mostrado
+    }).catch(function(){}).then(function(){ syncVer(-1); });
+  }
+  return call(action, payload).then(function(r){ memoGuardar(k, action, r); render(r, false); }).catch(onError || function(){});
+}
+function mostrarTiempos(){
+  var l = []; try { l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]'); } catch (e) {}
+  var por = {};
+  l.forEach(function(x){ var p = por[x.a] = por[x.a] || { n:0, t:0, s:0, sn:0, max:0 }; p.n++; p.t += x.t; p.max = Math.max(p.max, x.t); if (x.s) { p.s += x.s; p.sn++; } });
+  var seg = function(ms){ return (ms / 1000).toFixed(1) + ' s'; };
+  var h = '<p class="s">Últimas ' + l.length + ' consultas en este equipo. "Servidor" es lo que tarda Google; el resto es la red.</p>' +
+    '<div class="tw"><table class="h"><thead><tr><th>Acción</th><th class="n">Veces</th><th class="n">Promedio</th><th class="n">Servidor</th><th class="n">Máx.</th></tr></thead><tbody>' +
+    Object.keys(por).sort().map(function(a){ var p = por[a]; return '<tr><td>' + esc(a) + '</td><td class="n">' + p.n + '</td><td class="n">' + seg(p.t / p.n) + '</td><td class="n">' + (p.sn ? seg(p.s / p.sn) : '—') + '</td><td class="n">' + seg(p.max) + '</td></tr>'; }).join('') +
+    '</tbody></table></div>';
+  abrirHoja('Velocidad de la app', h);
+}
+
 function call(action, payload){
   return api(action, payload).then(function(r){
+    // Cualquier cambio guardado deja viejas las lecturas guardadas: la próxima se pide de nuevo.
+    if (r && r.ok && !LECTURAS[action]) memoBorrar();
     if (!r.ok){
       var e = r.error || {};
       if (e.code === 'NO_AUTENTICADO') { S.token = null; borrarAcceso(); S.inicio = null; cerrarHoja(); renderLogin(); }
@@ -4929,11 +4995,16 @@ function salir(todas, el){
 
 /* ───── carga principal ───── */
 function cargar(){
-  return call('inicio', {}).then(function(r){
-    S.inicio = r.data;
-    $('who').textContent = r.data.usuario.nombre;
-    $('who').title = r.data.rol === 'Tecnico' ? 'Técnico' : r.data.rol === 'Administracion' ? 'Administración' : 'Administrador';
-    renderTabs(); renderRun(); render();
+  return new Promise(function(ok, mal){
+    var listo = false;
+    leer('inicio', {}, function(r){
+      S.inicio = r.data;
+      $('who').textContent = r.data.usuario.nombre;
+      $('who').title = r.data.rol === 'Tecnico' ? 'Técnico' : r.data.rol === 'Administracion' ? 'Administración' : 'Administrador';
+      // Si hay una hoja abierta (ficha, formulario), la pantalla de fondo se actualiza sin cerrarla.
+      renderTabs(); renderRun(); render();
+      if (!listo) { listo = true; ok(); }
+    }, function(e){ if (!listo) { listo = true; mal(e); } });
   });
 }
 
@@ -4994,11 +5065,13 @@ function renderTrabajos(){
 }
 
 function abrirHoja(titulo, html){
+  HOJA_ID = null;
   $('sheetTitle').textContent = titulo; $('sheetBody').innerHTML = html;
   $('sheet').className = 'sheet on'; $('sheetBack').className = 'sheet-back on';
   var f = $('sheetBody').querySelector('button, input, select, textarea'); if (f) f.focus();
 }
-function cerrarHoja(){ $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
+var HOJA_ID = null;
+function cerrarHoja(){ HOJA_ID = null; $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
 
 function abrirTrabajo(id){
   var x = (S.inicio.trabajos || []).filter(function(y){ return y.trabajo.id === id; })[0];
@@ -5152,7 +5225,7 @@ function renderClientes(){
     '<input id="cliBuscar" type="search" placeholder="Buscar cliente o patente" autocomplete="off" style="width:100%;margin-bottom:12px;padding:10px 12px;border:1px solid var(--linea);border-radius:var(--radio);background:var(--chapa);font-size:16px" value="' + esc(S.cliBuscar || '') + '">' +
     '<div id="cliLista" class="empty">Cargando…</div>';
   $('cliBuscar').addEventListener('input', function(){ S.cliBuscar = this.value; pintarClientes(); });
-  call('clientes', {}).then(function(r){ S.clientes = r.data; pintarClientes(); }).catch(function(){ $('cliLista').textContent = 'No se pudo cargar.'; });
+  leer('clientes', {}, function(r){ S.clientes = r.data; if ($('cliLista')) pintarClientes(); }, function(){ if ($('cliLista')) $('cliLista').textContent = 'No se pudo cargar.'; });
 }
 function pintarClientes(){
   var cont = $('cliLista'); if (!cont || !S.clientes) return;
@@ -5398,7 +5471,8 @@ function guardarResumen(btn){
 }
 
 function abrirFicha(equipoId){
-  call('ficha', { equipo_id: equipoId }).then(function(r){
+  leer('ficha', { equipo_id: equipoId }, function(r, copia, actualiza){
+    if (actualiza && HOJA_ID !== 'ficha:' + equipoId) return; // ya la cerró o abrió otra cosa: no se vuelve a abrir
     var f = r.data, e = f.equipo;
     S.ficha = f;
     var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + plate(e.patente, true) + '<dl class="kv">' +
@@ -5417,7 +5491,7 @@ function abrirFicha(equipoId){
         (isAdmin() && f.cliente && t.estado_ejecucion === 'Ejecutado' ? '<button class="btn ghost" type="button" data-act="msg-cliente" data-id="' + esc(t.id) + '" style="margin-top:8px">Mensaje al cliente' + (t.resumen_cliente ? ' ✓' : '') + '</button>' + (t.publicable === true && t.resumen_cliente ? ' <span class="chip ok">En historial</span>' : '') : '') + '</div>';
     }).join('') + '</div>' : '<p style="margin:0;color:var(--acero)">Sin trabajos registrados.</p>') + '</div>';
     if (f.pendientes_historicos.length) h += '<div class="block"><h3>Pendientes cerrados</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_historicos.map(function(p){ return '<li>' + esc(p.descripcion) + ' <span class="chip ok">' + esc(p.estado) + '</span></li>'; }).join('') + '</ul></div>';
-    abrirHoja(e.nombre_corto, h);
+    abrirHoja(e.nombre_corto, h); HOJA_ID = 'ficha:' + equipoId;
   });
 }
 
@@ -5965,7 +6039,7 @@ function renderDatos(){
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div>' +
-    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button><button class="btn ghost" data-act="velocidad">Velocidad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -5975,11 +6049,12 @@ function renderDatos(){
 }
 function cargarDatos(){
   var p = { tabla: D.tabla };
-  call('listar', p).then(function(r){
+  leer('listar', p, function(r, copia, actualiza){
+    if (D.tabla !== p.tabla || !$('dtLista')) return;
     D.filas = r.data.filter(function(x){ return !D.cliente || !('cliente_id' in x) || x.cliente_id === D.cliente || x.id === D.cliente; });
     var h = D.filas.length ? '<div class="list">' + D.filas.slice().reverse().map(function(x){ return '<button class="item" type="button" data-act="dt-editar" data-id="' + esc(x.id) + '"><div class="body"><div class="t">' + esc(etiqueta(x)) + '</div><div class="s">v' + esc(x.version) + (x.editado_en ? ' · editado ' + esc(fmtFecha(x.editado_en)) : '') + '</div></div></button>'; }).join('') + '</div>' : '<div class="empty">No hay registros. Usa "Nuevo registro".</div>';
     $('dtLista').outerHTML = '<div id="dtLista">' + h + '</div>';
-  }).catch(function(e){ $('dtLista').outerHTML = '<div id="dtLista" class="empty">' + esc(e.message) + '</div>'; });
+  }, function(e){ if ($('dtLista')) $('dtLista').outerHTML = '<div id="dtLista" class="empty">' + esc(e.message) + '</div>'; });
 }
 function isoALocal(iso){ if (!iso) return ''; var d = new Date(iso); var z = function(n){ return (n < 10 ? '0' : '') + n; }; return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate()) + 'T' + z(d.getHours()) + ':' + z(d.getMinutes()); }
 function humano(k){ var t = k.replace(/_id$/, '').replace(/_/g, ' '); t = { anio:'año', descripcion:'descripción', fecha_inicio:'inicio real', fecha_fin:'término real', prog_desde:'agendado desde', prog_hasta:'agendado hasta', horas_equipo:'horómetro', proxima_km:'próxima km', proxima_horas:'próximas horas', proxima_fecha:'próxima fecha', min_facturables:'minutos facturables', duracion_min:'duración (min)', valor_hora:'valor hora', monto_cliente:'monto al cliente', visible_tecnico:'visible para técnico' }[k] || t; return t.charAt(0).toUpperCase() + t.slice(1); }
@@ -6406,6 +6481,7 @@ document.addEventListener('click', function(ev){
   else if (a === 'ga-ver') mostrarGastos($('gaMes') ? $('gaMes').value : '');
   else if (a === 'ga-nuevo') { D.tabla = 'GASTOS'; cerrarHoja(); renderDatos(); abrirFormulario(null); }
   else if (a === 'fa-ver') { FA_CORTE = 0; mostrarFamilia(); }
+  else if (a === 'velocidad') mostrarTiempos();
   else if (a === 'fa-corte'){
     if (!FA_CORTE) { FA_CORTE = 1; mostrarFamilia(); return; }
     FA_CORTE = 0;
