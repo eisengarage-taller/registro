@@ -98,8 +98,11 @@ function usuarioGuardado() { try { var u = JSON.parse(localStorage.getItem('eg_c
 function esAdmin(u) { return !!u && (u.rol === 'Administrador' || u.rol === 'Administracion'); }
 function verificarUsuario() {
   if (!navigator.onLine || !llave()) return Promise.resolve(usuarioGuardado());
+  var lv = llave();
   return api('yo', {}).then(function (d) {
-    var u = { id: d.usuario.id, nombre: d.usuario.nombre, rol: d.rol, llave: llave().slice(0, 16) };
+    // 1.16: si la sesión cambió mientras llegaba la respuesta, no se guarda (sería el usuario anterior).
+    if (llave() !== lv) return usuarioGuardado();
+    var u = { id: d.usuario.id, nombre: d.usuario.nombre, rol: d.rol, llave: lv.slice(0, 16) };
     try { localStorage.setItem('eg_captura_usuario', JSON.stringify(u)); } catch (e) {}
     return u;
   });
@@ -175,8 +178,11 @@ function procesar() {
     if (!esAdmin(yo)) { var e = new Error('EG Captura es solo para administración (tu cuenta: ' + ((yo && yo.rol) || 'sin rol') + ').'); e.code = 'NO_AUTORIZADO'; throw e; }
     return cola.todos();
   }).then(function (items) {
+    // 1.16 (R-3): lo de antes de 1.14 (sin dueño) queda a nombre del primer administrador verificado que abre la app aquí.
     // Lo guardado con otra cuenta en este navegador no se envía con la tuya.
-    items = items.filter(function (it) { return !it.usuario || it.usuario === yo.id; });
+    var sinDueno = items.filter(function (it) { return !it.usuario; });
+    sinDueno.forEach(function (it) { it.usuario = yo.id; cola.poner(it); });
+    items = items.filter(function (it) { return it.usuario === yo.id; });
     items.sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
     return items.reduce(function (p, item) {
       return p.then(function () { return procesarItem(item); }).catch(function (e) {
@@ -212,7 +218,7 @@ function procesarItem(item) {
   });
   return pasos.then(function () {
     var codigos = item.archivos.length ? item.archivos.map(function (a) { return a.codigo; }) : [item.codigo];
-    return cola.poner({ id: item.id, creado: item.creado, tipo: item.tipo, titulo: item.titulo || (item.archivos[0] && item.archivos[0].nombre) || (item.texto || item.url || '').slice(0, 60), codigos: codigos }, 'hechas');
+    return cola.poner({ id: item.id, usuario: item.usuario || '', creado: item.creado, tipo: item.tipo, titulo: item.titulo || (item.archivos[0] && item.archivos[0].nombre) || (item.texto || item.url || '').slice(0, 60), codigos: codigos }, 'hechas');
   }).then(function () { return cola.sacar(item.id); }).then(function () { toast('Captura guardada en EG Registro.'); });
 }
 
@@ -235,6 +241,11 @@ function pintar() {
   if (!llave()) {
     $('main').innerHTML = '<div class="aviso"><b>Primero inicia sesión en EG Registro en este celular.</b><br>EG Captura usa la misma sesión. Ábrelo, entra con tu cuenta Google y vuelve aquí.</div>' +
       '<div class="row"><a class="btn go" href="../">Abrir EG Registro</a><button class="btn ghost" data-a="recargar">Ya inicié sesión</button></div>';
+    return;
+  }
+  var uv = usuarioGuardado();
+  if (uv && !esAdmin(uv)) {
+    $('main').innerHTML = '<div class="aviso"><b>EG Captura es solo para administración.</b><br>Tu cuenta (' + esc(uv.nombre || '') + ') no puede usarla.</div>';
     return;
   }
   var tiene = F.archivos.length || F.texto || F.url;
@@ -295,9 +306,12 @@ function numero(v) {
 }
 
 function pintarListas() {
+  // 1.16 (R-3): solo lo tuyo (lo sin dueño, de antes, solo a administración).
+  var u = usuarioGuardado();
+  var mio = function (it) { return !!u && esAdmin(u) && (it.usuario === u.id || !it.usuario); };
   Promise.all([cola.todos(), cola.todos('hechas')]).then(function (r) {
-    var pend = r[0].sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
-    var hechas = r[1].sort(function (a, b) { return a.creado < b.creado ? 1 : -1; }).slice(0, 15);
+    var pend = r[0].filter(mio).sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
+    var hechas = r[1].filter(mio).sort(function (a, b) { return a.creado < b.creado ? 1 : -1; }).slice(0, 15);
     var h = '<h2>Por subir (' + pend.length + ')</h2>';
     h += pend.length ? '<div class="list">' + pend.map(function (it) {
       return '<div class="it" id="it-' + it.id + '"><b>' + esc(it.titulo || it.tipo) + '</b><span class="chip">' + esc(it.tipo) + '</span>' + (it.error ? '<span class="chip err">reintenta</span>' : '') +
@@ -421,7 +435,7 @@ function cargarCompartido() {
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
-cargarCompartido().then(function () { pintar(); procesar(); cargarClientes(); }).catch(function () { pintar(); });
+cargarCompartido().then(function () { pintar(); return verificarUsuario().catch(function () {}); }).then(function () { pintar(); procesar(); cargarClientes(); }).catch(function () { pintar(); });
 </script>
 </body>
 </html>
