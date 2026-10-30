@@ -1864,22 +1864,23 @@ var RULES_ = {
       if (isEmpty_(row.estado)) row.estado = 'Nueva';
       if (row.destino !== 'Personal' && (!isEmpty_(row.pago_por) || !isEmpty_(row.monto_mio) || !isEmpty_(row.monto_mama))) fail_('VALOR_INVALIDO', 'Pagó, monto mío y monto de mamá son solo para destino Personal.');
       if (row.destino === 'Personal' && (!isEmpty_(row.cliente_id) || !isEmpty_(row.trabajo_id))) fail_('VALOR_INVALIDO', 'Lo personal no se asigna a un cliente ni a un trabajo.');
-      // 1.16 (R-8): si un gasto ya usa esta captura, su cliente no puede quedar distinto al del gasto.
-      if (prev && (prev.cliente_id !== row.cliente_id || prev.trabajo_id !== row.trabajo_id) && !isEmpty_(row.cliente_id)) {
-        var gaC = activeRows_(ctx, 'GASTOS').filter(function (g) { return g.captura_id === row.id && !isEmpty_(g.cliente_id) && g.cliente_id !== row.cliente_id; })[0];
-        if (gaC) fail_('CLIENTE_DISTINTO', 'Esta captura está en el gasto ' + gaC.codigo + ' de otro cliente: corrige ese gasto antes.');
-      }
       if (!isEmpty_(row.trabajo_id)) {
         var trC = getRow_(ctx, 'TRABAJOS', row.trabajo_id);
         if (trC && isEmpty_(row.cliente_id)) row.cliente_id = trC.cliente_id;
         if (trC && trC.cliente_id !== row.cliente_id) fail_('CLIENTE_DISTINTO', 'El trabajo ' + trC.codigo + ' es de otro cliente.');
       }
+      // 1.16 (R-8) / 1.17 (R2-1): se revisa con el cliente final (ya derivado del trabajo): si un gasto usa esta captura, no puede quedar en otro cliente.
+      if (prev && (prev.cliente_id !== row.cliente_id || prev.trabajo_id !== row.trabajo_id) && !isEmpty_(row.cliente_id)) {
+        var gaC = activeRows_(ctx, 'GASTOS').filter(function (g) { return g.captura_id === row.id && !isEmpty_(g.cliente_id) && g.cliente_id !== row.cliente_id; })[0];
+        if (gaC) fail_('CLIENTE_DISTINTO', 'Esta captura está en el gasto ' + gaC.codigo + ' de otro cliente: corrige ese gasto antes.');
+      }
       // Un movimiento ya incluido en un corte de cuentas no cambia ni se descarta (el corte quedó cerrado con ese monto). 1.14 (Q-10): tampoco la fila del corte.
       if (prev && !isEmpty_(prev.familia_corte) && !isSystem_(ctx) && (['pago_por', 'monto_mio', 'monto_mama', 'destino', 'monto', 'familia_corte'].some(function (k) { return String(prev[k]) !== String(row[k]); }) || row.estado !== prev.estado)) fail_('CORTE_CERRADO', 'Este movimiento ya está en el corte ' + prev.familia_corte + ': no se cambia. Registra un ajuste nuevo.');
       if (prev && prev.corte === true && !isSystem_(ctx) && (['pago_por', 'monto', 'destino', 'estado', 'corte'].some(function (k) { return String(prev[k]) !== String(row[k]); }))) fail_('CORTE_CERRADO', 'El corte ' + prev.codigo + ' no se cambia. Si hubo un error, registra un ajuste nuevo.');
       if (row.destino === 'Personal' && row.corte !== true) {
+        // 1.17 (R2-6): total vacío = no informado; total 0 sí cuenta (las partes deben sumar 0).
         // 1.14 (Q-9): con el total y una sola parte, la otra se calcula; con las dos, tienen que cuadrar con el total.
-        var hayMio = !isEmpty_(row.monto_mio), hayMama = !isEmpty_(row.monto_mama), hayTotal = !isEmpty_(row.monto) && Number(row.monto) > 0;
+        var hayMio = !isEmpty_(row.monto_mio), hayMama = !isEmpty_(row.monto_mama), hayTotal = !isEmpty_(row.monto);
         if (hayTotal && hayMio !== hayMama) {
           var resto = Number(row.monto) - Number(hayMio ? row.monto_mio : row.monto_mama);
           if (resto < 0) fail_('VALOR_INVALIDO', 'La parte informada supera el total ($' + row.monto + ').');
@@ -4814,7 +4815,7 @@ var S = { token:null, acceso:null, inicio:null, tab:'trabajos', tickTimer:null, 
 var ACCESO_KEY = 'eg_registro_acceso';
 function leerAcceso(){ try { var v = localStorage.getItem(ACCESO_KEY); return /^[0-9a-f]{64}$/.test(v || '') ? v : null; } catch (e) { return null; } }
 function guardarAcceso(v){ GEN.s++; memoBorrar(); S.acceso = v; try { localStorage.setItem(ACCESO_KEY, v); } catch (e) {} }
-function borrarAcceso(){ GEN.s++; memoBorrar(); syncCopia(null); S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
+function borrarAcceso(){ GEN.s++; memoBorrar(); copiasBorrar(); S.acceso = null; try { localStorage.removeItem(ACCESO_KEY); localStorage.removeItem('eg_captura_clientes'); localStorage.removeItem('eg_captura_usuario'); } catch (e) {} }
 function nombreEquipo(){ var u = navigator.userAgent || ''; return /iPhone|iPad/.test(u) ? 'iPhone/iPad' : /Android/.test(u) ? 'Android' : /Windows/.test(u) ? 'Windows' : /Mac/.test(u) ? 'Mac' : 'Navegador'; }
 if (!DEMO) S.acceso = leerAcceso();
 
@@ -4859,10 +4860,11 @@ function api(action, payload){
   function intento(n){
     return fetch(APP_CONFIG.API_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body: body, redirect:'follow' })
       .then(function(r){ return r.json(); })
-      .then(function(r){ anotarTiempo(action, Date.now() - t0, r && r.ms, n); return r; })
+      .then(function(r){ anotarTiempo(action, Date.now() - t0, r && r.ms, n, r && r.ok === false ? ((r.error && r.error.code) || 'ERROR') : null); return r; })
       .catch(function(e){
         // Reintento con el mismo op_id: el servidor no lo aplica dos veces.
         if (n < 2) return new Promise(function(res){ setTimeout(res, 1200); }).then(function(){ return intento(n + 1); });
+        anotarTiempo(action, Date.now() - t0, null, n, 'RED');
         return { ok:false, error:{ code:'RED', message:'Sin conexión con el servidor. Revisa la señal y reintenta.' } };
       });
   }
@@ -4870,10 +4872,11 @@ function api(action, payload){
 }
 /* ───── 1.15 velocidad: tiempos medidos y lecturas guardadas en el equipo ───── */
 var TIEMPOS_KEY = 'eg_tiempos';
-function anotarTiempo(accion, total, servidor, intentos){
+function anotarTiempo(accion, total, servidor, intentos, error){
   try {
     var l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]');
-    l.push({ a: accion, t: total, s: servidor || null, n: intentos, f: new Date().toISOString() });
+    // 1.17 (D-7): 0 ms del servidor es un dato (no "sin dato"); los errores se anotan aparte.
+    l.push({ a: accion, t: total, s: typeof servidor === 'number' ? servidor : null, n: intentos, e: error || null, f: new Date().toISOString() });
     localStorage.setItem(TIEMPOS_KEY, JSON.stringify(l.slice(-60)));
   } catch (e) {}
 }
@@ -4898,18 +4901,24 @@ function memoGuardar(k, action, r){
   if (MEMO_PERSISTE[action]) try { localStorage.setItem(k, JSON.stringify(x)); } catch (e) {}
 }
 function memoBorrar(){
-  MEMO = {}; SEQ = {};
+  // 1.17 (R2-3): SEQ no se borra: así una lectura pedida antes de un guardado sigue viva, nota el cambio (GEN.d) y pide la versión nueva.
+  MEMO = {};
   try { Object.keys(localStorage).forEach(function(k){ if (k.indexOf('egc:') === 0) localStorage.removeItem(k); }); } catch (e) {}
 }
-var syncN = 0, syncViejo = null;
+// 1.17 (R2-4): el aviso "sin actualizar" es por vista (inicio, clientes, listar, ficha) y por lo que esa vista muestra (clave):
+// solo lo quita una actualización correcta de esa misma clave, o que esa vista se reemplace o se cierre.
+var syncN = 0, COPIAS = {};
 function syncPintar(){
   var el = $('sync'); if (!el) return;
+  var f = Object.keys(COPIAS).reduce(function(m, a){ return m == null || COPIAS[a].f < m ? COPIAS[a].f : m; }, null);
   if (syncN > 0) { el.textContent = 'actualizando…'; el.hidden = false; el.style.background = '#1F2A30'; }
-  else if (syncViejo) { el.textContent = 'copia de las ' + syncViejo + ' · sin actualizar'; el.hidden = false; el.style.background = '#8a5a00'; }
+  else if (f != null) { el.textContent = 'copia de las ' + new Date(f).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false }) + ' · sin actualizar'; el.hidden = false; el.style.background = '#8a5a00'; }
   else el.hidden = true;
 }
 function syncVer(d){ syncN = Math.max(0, syncN + d); syncPintar(); }
-function syncCopia(f){ syncViejo = f ? new Date(f).toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', hour12: false }) : null; syncPintar(); }
+function copiaMarcar(vista, k, f){ COPIAS[vista] = { k: k, f: f }; syncPintar(); }
+function copiaQuitar(vista, k){ if (COPIAS[vista] && (!k || COPIAS[vista].k === k)) { delete COPIAS[vista]; syncPintar(); } }
+function copiasBorrar(){ COPIAS = {}; syncPintar(); }
 function esAccesoPerdido(e){ return e && (e.code === 'NO_AUTENTICADO' || e.code === 'NO_AUTORIZADO'); }
 /**
  * Lectura rápida: si hay una copia vigente, se muestra al tiro (render(r, true)) y se pide la versión nueva por detrás;
@@ -4921,10 +4930,12 @@ function leer(action, payload, render, onError){
   var k = memoClave(action, payload), m = memoLeer(k, action);
   var g = { s: GEN.s, d: GEN.d, q: (SEQ[k] = (SEQ[k] || 0) + 1) };
   var vigente = function(){ return g.s === GEN.s && g.q === SEQ[k]; };
+  if (COPIAS[action] && COPIAS[action].k !== k) copiaQuitar(action); // esta vista pasa a mostrar otra cosa
   var fallo = function(e){
     if (!vigente()) return;
     if (esAccesoPerdido(e)) return; // call ya cerró la sesión y borró lo guardado
-    if (m) syncCopia(m.f);
+    // 1.17 (R2-4): con copia en pantalla, se deja la copia con su aviso (no se reemplaza por "no se pudo cargar").
+    if (m) { copiaMarcar(action, k, m.f); return; }
     if (onError) onError(e);
   };
   var traer = function(){
@@ -4932,7 +4943,7 @@ function leer(action, payload, render, onError){
       if (!vigente()) return;                       // otra sesión o una respuesta más nueva: se ignora
       if (g.d !== GEN.d) { g.d = GEN.d; return traer(); } // se guardó algo mientras tanto: se pide de nuevo
       var nuevo = !m || JSON.stringify(r.data) !== m.j;
-      memoGuardar(k, action, r); syncCopia(null);
+      memoGuardar(k, action, r); copiaQuitar(action, k);
       if (!m) render(r, false); else if (nuevo) render(r, false, true);
     });
   };
@@ -4946,17 +4957,20 @@ function leer(action, payload, render, onError){
 function mostrarTiempos(){
   var l = []; try { l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]'); } catch (e) {}
   var por = {};
-  l.forEach(function(x){ var p = por[x.a] = por[x.a] || { n:0, t:0, s:0, sn:0, max:0 }; p.n++; p.t += x.t; p.max = Math.max(p.max, x.t); if (x.s) { p.s += x.s; p.sn++; } });
+  // 1.17 (D-7): los fallos de red no entran al promedio (se cuentan aparte); los rechazos del servidor sí tardaron lo que tardaron.
+  l.forEach(function(x){ var p = por[x.a] = por[x.a] || { n:0, t:0, s:0, sn:0, max:0, err:0, red:0 }; if (x.e) p.err++; if (x.e === 'RED') { p.red++; return; } p.n++; p.t += x.t; p.max = Math.max(p.max, x.t); if (typeof x.s === 'number') { p.s += x.s; p.sn++; } });
   var seg = function(ms){ return (ms / 1000).toFixed(1) + ' s'; };
-  var h = '<p class="s">Últimas ' + l.length + ' consultas en este equipo. "Servidor" es lo que tarda Google; el resto es la red.</p>' +
-    '<div class="tw"><table class="h"><thead><tr><th>Acción</th><th class="n">Veces</th><th class="n">Promedio</th><th class="n">Servidor</th><th class="n">Máx.</th></tr></thead><tbody>' +
-    Object.keys(por).sort().map(function(a){ var p = por[a]; return '<tr><td>' + esc(a) + '</td><td class="n">' + p.n + '</td><td class="n">' + seg(p.t / p.n) + '</td><td class="n">' + (p.sn ? seg(p.s / p.sn) : '—') + '</td><td class="n">' + seg(p.max) + '</td></tr>'; }).join('') +
+  var h = '<p class="s">Últimas ' + l.length + ' consultas en este equipo. "Servidor" es lo que tarda Google; el resto es la red. "Errores" cuenta rechazos y sin conexión (estos no entran al promedio). No distingue primera apertura de reapertura.</p>' +
+    '<div class="tw"><table class="h"><thead><tr><th>Acción</th><th class="n">Veces</th><th class="n">Promedio</th><th class="n">Servidor</th><th class="n">Máx.</th><th class="n">Errores</th></tr></thead><tbody>' +
+    Object.keys(por).sort().map(function(a){ var p = por[a]; return '<tr><td>' + esc(a) + '</td><td class="n">' + p.n + '</td><td class="n">' + (p.n ? seg(p.t / p.n) : '—') + '</td><td class="n">' + (p.sn ? seg(p.s / p.sn) : '—') + '</td><td class="n">' + (p.n ? seg(p.max) : '—') + '</td><td class="n">' + (p.err ? p.err + (p.red ? ' (' + p.red + ' sin conexión)' : '') : '0') + '</td></tr>'; }).join('') +
     '</tbody></table></div>';
   abrirHoja('Velocidad de la app', h);
 }
 
 function call(action, payload){
+  var gs = GEN.s; // 1.17 (R2-5): sesión con la que se pidió
   return api(action, payload).then(function(r){
+    if (gs !== GEN.s) { var ex = new Error('Respuesta de una sesión anterior.'); ex.code = 'SESION_CAMBIADA'; throw ex; } // no toca la sesión vigente
     // Cualquier cambio guardado deja viejas las lecturas guardadas: la próxima se pide de nuevo.
     // 1.16 (R-11): lo decide el servidor (w = fue un cambio); con un servidor anterior, se usa la lista local.
     if (r && r.ok && (r.w === true || (r.w === undefined && !LECTURAS[action]))) { GEN.d++; memoBorrar(); }
@@ -5033,17 +5047,24 @@ function salir(todas, el){
 }
 
 /* ───── carga principal ───── */
+// 1.17 (R2-3): quien espera una carga termina con la primera respuesta válida de "inicio" (aunque venga de una carga pedida después).
+// Las esperas de otra sesión se descartan.
+var CARGA_ESPERAN = [];
+function cargaTerminar(bien, e){
+  var l = CARGA_ESPERAN; CARGA_ESPERAN = [];
+  l.forEach(function(w){ if (w.s === GEN.s) { if (bien) w.ok(); else w.mal(e); } });
+}
 function cargar(){
   return new Promise(function(ok, mal){
-    var listo = false;
+    CARGA_ESPERAN.push({ ok: ok, mal: mal, s: GEN.s });
     leer('inicio', {}, function(r){
       S.inicio = r.data;
       $('who').textContent = r.data.usuario.nombre;
       $('who').title = r.data.rol === 'Tecnico' ? 'Técnico' : r.data.rol === 'Administracion' ? 'Administración' : 'Administrador';
       // Si hay una hoja abierta (ficha, formulario), la pantalla de fondo se actualiza sin cerrarla.
       renderTabs(); renderRun(); render();
-      if (!listo) { listo = true; ok(); }
-    }, function(e){ if (!listo) { listo = true; mal(e); } });
+      cargaTerminar(true);
+    }, function(e){ cargaTerminar(false, e); });
   });
 }
 
@@ -5105,12 +5126,13 @@ function renderTrabajos(){
 
 function abrirHoja(titulo, html, id){
   HOJA_ID = id || null; HOJA_PEDIDA = id || null;
+  if (String(id || '').indexOf('ficha:') !== 0) copiaQuitar('ficha'); // 1.17 (R2-4): la ficha ya no está a la vista
   $('sheetTitle').textContent = titulo; $('sheetBody').innerHTML = html;
   $('sheet').className = 'sheet on'; $('sheetBack').className = 'sheet-back on';
   var f = $('sheetBody').querySelector('button, input, select, textarea'); if (f) f.focus();
 }
 var HOJA_ID = null, HOJA_PEDIDA = null;
-function cerrarHoja(){ HOJA_ID = null; HOJA_PEDIDA = null; $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
+function cerrarHoja(){ HOJA_ID = null; HOJA_PEDIDA = null; copiaQuitar('ficha'); $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
 
 function abrirTrabajo(id){
   var x = (S.inicio.trabajos || []).filter(function(y){ return y.trabajo.id === id; })[0];
