@@ -86,6 +86,16 @@ var MAX_BYTES = 300 * 1024 * 1024;
 var $ = function (id) { return document.getElementById(id); };
 function formNuevo() { return { id: uid(), archivos: [], tipo: 'Nota', origen: 'App', compartidos: [] }; }
 var F = null; // formulario en curso (id fijo hasta guardarlo: un doble toque no duplica)
+// 1.17.1 (R3-1): el borrador es de quien lo empezó (F.dueno). Si cambia la cuenta, se guarda aparte y no se le muestra a la otra.
+var BORRADORES = {};
+function formDelUsuario(u) {
+  if (!u || !F) return;
+  if (!F.dueno) { F.dueno = u.id; return; }
+  if (F.dueno === u.id) return;
+  try { leerForm(); } catch (e) {}
+  BORRADORES[F.dueno] = F;
+  F = BORRADORES[u.id] || formNuevo(); delete BORRADORES[u.id]; F.dueno = u.id;
+}
 var grabador = null, trozosAudio = [], subiendo = false, guardando = false;
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
@@ -256,6 +266,7 @@ function pintar() {
     $('main').innerHTML = '<div class="aviso"><b>EG Captura es solo para administración.</b><br>Tu cuenta (' + esc(uv.nombre || '') + ') no puede usarla.</div>';
     return;
   }
+  formDelUsuario(uv);
   var tiene = F.archivos.length || F.texto || F.url;
   var h = '<div class="grid">' +
     '<button class="tile" data-a="nota">' + ICON.nota + 'Nota</button>' +
@@ -358,6 +369,7 @@ function guardar() {
   if (F.destino === 'Personal' && !F.pago_por && (F.monto_mio !== '' || F.monto_mama !== '')) { toast('Indica quién pagó (Yo o Mamá).', true); return; }
   var tipo = F.archivos.length ? tipoDe(F.archivos[0].mime) : (F.url && !F.texto ? 'Enlace' : 'Nota');
   var u = usuarioGuardado();
+  if (u && F.dueno && F.dueno !== u.id) { pintar(); toast('Cambió la cuenta: revisa el formulario antes de guardar.', true); return; } // 1.17.1 (R3-1)
   // El id del formulario se mantiene: si se repite, cola.poner reemplaza la misma entrada (y el servidor la reconoce por op_id).
   var item = { id: F.id, creado: new Date().toISOString(), fecha: new Date().toISOString(), tipo: tipo, origen: F.origen || 'App', titulo: F.titulo || '', texto: F.texto || '', url: F.url || '', archivos: F.archivos, extra: extraDestino(), usuario: u ? u.id : '' };
   var compartidos = F.compartidos || [];
@@ -435,6 +447,9 @@ function cargarCompartido() {
     if (!mismoUsuario(u, usuarioGuardado())) return [];
     return Promise.all(l.filter(function (c) { return !c.usuario; }).map(function (c) { c.usuario = u.id; return cola.poner(c, 'compartido'); })).then(function () { return l; });
   }).then(function (l) {
+    // 1.17.1 (R3-1): se revisa otra vez la cuenta después de guardar el dueño, y el formulario debe ser de esa cuenta.
+    if (!mismoUsuario(u, usuarioGuardado())) return;
+    formDelUsuario(u);
     l = l.filter(function (c) { return c.usuario === u.id && F.compartidos.indexOf(c.id) < 0; });
     l.forEach(function (c) {
       F.titulo = F.titulo || c.titulo || ''; F.texto = [F.texto, c.texto].filter(Boolean).join('\n');
