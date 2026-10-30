@@ -4918,7 +4918,11 @@ function syncPintar(){
 function syncVer(d){ syncN = Math.max(0, syncN + d); syncPintar(); }
 function copiaMarcar(vista, k, f){ COPIAS[vista] = { k: k, f: f }; syncPintar(); }
 function copiaQuitar(vista, k){ if (COPIAS[vista] && (!k || COPIAS[vista].k === k)) { delete COPIAS[vista]; syncPintar(); } }
-function copiasBorrar(){ COPIAS = {}; syncPintar(); }
+function copiasBorrar(){ COPIAS = {}; ACTIVA = {}; syncPintar(); }
+// 1.17.1 (R3-2): qué clave muestra (o va a mostrar) cada vista. Un fallo tardío solo marca su aviso si esa clave sigue en pantalla;
+// al cerrar la vista (hoja cerrada, otra pestaña) se quita su aviso y sus respuestas tardías ya no la marcan.
+var ACTIVA = {};
+function vistaCerrar(vista){ delete ACTIVA[vista]; copiaQuitar(vista); }
 function esAccesoPerdido(e){ return e && (e.code === 'NO_AUTENTICADO' || e.code === 'NO_AUTORIZADO'); }
 /**
  * Lectura rápida: si hay una copia vigente, se muestra al tiro (render(r, true)) y se pide la versión nueva por detrás;
@@ -4930,12 +4934,16 @@ function leer(action, payload, render, onError){
   var k = memoClave(action, payload), m = memoLeer(k, action);
   var g = { s: GEN.s, d: GEN.d, q: (SEQ[k] = (SEQ[k] || 0) + 1) };
   var vigente = function(){ return g.s === GEN.s && g.q === SEQ[k]; };
-  if (COPIAS[action] && COPIAS[action].k !== k) copiaQuitar(action); // esta vista pasa a mostrar otra cosa
+  ACTIVA[action] = k; // esta vista pasa a pedir esta clave; su aviso anterior se quita recién cuando la nueva se muestra
+  var mostrar = function(r, copia, actualiza){
+    if (ACTIVA[action] === k && COPIAS[action] && COPIAS[action].k !== k) copiaQuitar(action);
+    render(r, copia, actualiza);
+  };
   var fallo = function(e){
     if (!vigente()) return;
     if (esAccesoPerdido(e)) return; // call ya cerró la sesión y borró lo guardado
     // 1.17 (R2-4): con copia en pantalla, se deja la copia con su aviso (no se reemplaza por "no se pudo cargar").
-    if (m) { copiaMarcar(action, k, m.f); return; }
+    if (m) { if (ACTIVA[action] === k) copiaMarcar(action, k, m.f); return; }
     if (onError) onError(e);
   };
   var traer = function(){
@@ -4944,11 +4952,11 @@ function leer(action, payload, render, onError){
       if (g.d !== GEN.d) { g.d = GEN.d; return traer(); } // se guardó algo mientras tanto: se pide de nuevo
       var nuevo = !m || JSON.stringify(r.data) !== m.j;
       memoGuardar(k, action, r); copiaQuitar(action, k);
-      if (!m) render(r, false); else if (nuevo) render(r, false, true);
+      if (!m) mostrar(r, false); else if (nuevo) mostrar(r, false, true);
     });
   };
   if (m) {
-    try { render(m.r, true); } catch (e) { console.error(e); }
+    try { mostrar(m.r, true); } catch (e) { console.error(e); }
     syncVer(1);
     return traer().catch(fallo).then(function(){ syncVer(-1); });
   }
@@ -5126,13 +5134,13 @@ function renderTrabajos(){
 
 function abrirHoja(titulo, html, id){
   HOJA_ID = id || null; HOJA_PEDIDA = id || null;
-  if (String(id || '').indexOf('ficha:') !== 0) copiaQuitar('ficha'); // 1.17 (R2-4): la ficha ya no está a la vista
+  if (String(id || '').indexOf('ficha:') !== 0) vistaCerrar('ficha'); // 1.17 (R2-4) / 1.17.1 (R3-2): la ficha ya no está a la vista
   $('sheetTitle').textContent = titulo; $('sheetBody').innerHTML = html;
   $('sheet').className = 'sheet on'; $('sheetBack').className = 'sheet-back on';
   var f = $('sheetBody').querySelector('button, input, select, textarea'); if (f) f.focus();
 }
 var HOJA_ID = null, HOJA_PEDIDA = null;
-function cerrarHoja(){ HOJA_ID = null; HOJA_PEDIDA = null; copiaQuitar('ficha'); $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
+function cerrarHoja(){ HOJA_ID = null; HOJA_PEDIDA = null; vistaCerrar('ficha'); $('sheet').className = 'sheet'; $('sheetBack').className = 'sheet-back'; }
 
 function abrirTrabajo(id){
   var x = (S.inicio.trabajos || []).filter(function(y){ return y.trabajo.id === id; })[0];
@@ -6462,7 +6470,7 @@ function aplicarPaquete(btn){
 document.addEventListener('click', function(ev){
   var el = ev.target.closest('[data-act]'); if (!el) return;
   var a = el.getAttribute('data-act'), id = el.getAttribute('data-id');
-  if (a === 'tab'){ S.tab = el.getAttribute('data-tab'); renderTabs(); render(); }
+  if (a === 'tab'){ S.tab = el.getAttribute('data-tab'); vistaCerrar('clientes'); vistaCerrar('listar'); renderTabs(); render(); } // 1.17.1 (R3-2)
   else if (a === 'trabajo') abrirTrabajo(id);
   else if (a === 'ficha') abrirFicha(id);
   else if (a === 'cliente') abrirCliente(id);
