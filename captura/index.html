@@ -107,6 +107,17 @@ function verificarUsuario() {
     return u;
   });
 }
+/* 1.16 (R-3) / 1.17 (R2-2): lo de antes de 1.14 (sin dueño), en la cola y en el historial, queda a nombre del primer
+   administrador verificado que abre la app en este celular. Desde ahí cada uno ve solo lo suyo. */
+function adoptarSinDueno(u) {
+  if (!esAdmin(u)) return Promise.resolve();
+  return Promise.all(['cola', 'hechas'].map(function (st) {
+    return cola.todos(st).then(function (l) {
+      return Promise.all(l.filter(function (it) { return !it.usuario; }).map(function (it) { it.usuario = u.id; return cola.poner(it, st); }));
+    });
+  })).catch(function () {});
+}
+function mismoUsuario(a, b) { return !!a && !!b && a.id === b.id && a.llave === b.llave; }
 function mb(b) { return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB'; }
 var tt;
 function toast(m, err) { var t = $('toast'); t.textContent = m; t.className = 'toast on' + (err ? ' err' : ''); clearTimeout(tt); tt = setTimeout(function () { t.className = 'toast'; }, err ? 6000 : 3000); }
@@ -176,12 +187,9 @@ function procesar() {
   return verificarUsuario().then(function (u) {
     yo = u;
     if (!esAdmin(yo)) { var e = new Error('EG Captura es solo para administración (tu cuenta: ' + ((yo && yo.rol) || 'sin rol') + ').'); e.code = 'NO_AUTORIZADO'; throw e; }
-    return cola.todos();
+    return adoptarSinDueno(yo).then(function () { return cola.todos(); });
   }).then(function (items) {
-    // 1.16 (R-3): lo de antes de 1.14 (sin dueño) queda a nombre del primer administrador verificado que abre la app aquí.
-    // Lo guardado con otra cuenta en este navegador no se envía con la tuya.
-    var sinDueno = items.filter(function (it) { return !it.usuario; });
-    sinDueno.forEach(function (it) { it.usuario = yo.id; cola.poner(it); });
+    // Lo guardado con otra cuenta en este navegador no se envía con la tuya (lo sin dueño ya se adoptó en adoptarSinDueno).
     items = items.filter(function (it) { return it.usuario === yo.id; });
     items.sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
     return items.reduce(function (p, item) {
@@ -306,10 +314,11 @@ function numero(v) {
 }
 
 function pintarListas() {
-  // 1.16 (R-3): solo lo tuyo (lo sin dueño, de antes, solo a administración).
+  // 1.16 (R-3) / 1.17 (R2-2): solo lo tuyo; si la cuenta cambió mientras se leía el celular, no se pinta (viene otro pintado).
   var u = usuarioGuardado();
-  var mio = function (it) { return !!u && esAdmin(u) && (it.usuario === u.id || !it.usuario); };
+  var mio = function (it) { return !!u && esAdmin(u) && it.usuario === u.id; };
   Promise.all([cola.todos(), cola.todos('hechas')]).then(function (r) {
+    if (!mismoUsuario(u, usuarioGuardado())) return;
     var pend = r[0].filter(mio).sort(function (a, b) { return a.creado < b.creado ? -1 : 1; });
     var hechas = r[1].filter(mio).sort(function (a, b) { return a.creado < b.creado ? 1 : -1; }).slice(0, 15);
     var h = '<h2>Por subir (' + pend.length + ')</h2>';
@@ -419,8 +428,14 @@ document.addEventListener('visibilitychange', function () { if (document.visibil
 function cargarCompartido() {
   if (/compartido=/.test(location.search)) history.replaceState(null, '', location.pathname);
   // 1.14 (Q-3): se carga todo lo compartido que siga en el celular (aunque se haya cerrado la app) y se borra solo al guardar.
+  // 1.17 (R2-2): lo compartido queda de la cuenta verificada que lo abre primero; otra cuenta no lo ve.
+  var u = usuarioGuardado();
+  if (!esAdmin(u)) return Promise.resolve();
   return cola.todos('compartido').then(function (l) {
-    l = l.filter(function (c) { return F.compartidos.indexOf(c.id) < 0; });
+    if (!mismoUsuario(u, usuarioGuardado())) return [];
+    return Promise.all(l.filter(function (c) { return !c.usuario; }).map(function (c) { c.usuario = u.id; return cola.poner(c, 'compartido'); })).then(function () { return l; });
+  }).then(function (l) {
+    l = l.filter(function (c) { return c.usuario === u.id && F.compartidos.indexOf(c.id) < 0; });
     l.forEach(function (c) {
       F.titulo = F.titulo || c.titulo || ''; F.texto = [F.texto, c.texto].filter(Boolean).join('\n');
       if (c.url) { F.url = c.url; F.mostrarUrl = true; }
@@ -435,7 +450,10 @@ function cargarCompartido() {
 }
 
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
-cargarCompartido().then(function () { pintar(); return verificarUsuario().catch(function () {}); }).then(function () { pintar(); procesar(); cargarClientes(); }).catch(function () { pintar(); });
+// 1.17 (R2-2): primero se sabe quién es (sin señal: el último verificado con esta sesión); después se adopta lo antiguo y se carga lo compartido.
+pintar();
+verificarUsuario().catch(function () { return usuarioGuardado(); }).then(function (u) { return adoptarSinDueno(u); })
+  .then(function () { return cargarCompartido(); }).then(function () { pintar(); procesar(); cargarClientes(); }).catch(function () { pintar(); });
 </script>
 </body>
 </html>
