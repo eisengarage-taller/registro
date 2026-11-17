@@ -4965,6 +4965,22 @@ function leer(action, payload, render, onError){
   }
   return traer().catch(fallo);
 }
+// 1.18 EG Reloj: llaves del reloj (solo Administrador). La llave nueva se muestra una sola vez.
+var RELOJ_NUEVA = null;
+function mostrarReloj(){
+  var nueva = RELOJ_NUEVA; RELOJ_NUEVA = null;
+  abrirHoja('EG Reloj', '<div class="empty">Cargando…</div>');
+  call('reloj_llaves', {}).then(function(r){
+    var f = function(iso){ return iso ? new Date(iso).toLocaleDateString('es-CL') : '—'; };
+    var h = '<p class="s">El reloj (Amazfit, app EG Reloj) usa una llave propia: solo ve trabajos abiertos (sin montos), marca tu tiempo y deja notas y audios como capturas. Vence tras ' + r.data.dias + ' días sin uso. Si pierdes el reloj, revócala.</p>';
+    if (nueva) h += '<div class="card" style="border:2px solid var(--ok,#2E7D4F);padding:10px;margin:8px 0"><b>Llave nueva de "' + esc(nueva.nombre) + '"</b><p class="s">Cópiala y pégala en Zepp → EG Reloj → Ajustes. <b>No se vuelve a mostrar.</b></p><input id="relLlave" readonly value="' + esc(nueva.llave) + '" style="width:100%;font-family:monospace;font-size:15px" onfocus="this.select()"><div class="inline" style="margin-top:6px"><button class="btn" data-act="reloj-copiar">Copiar llave</button></div></div>';
+    h += '<div class="inline" style="flex-wrap:wrap;gap:6px;margin:8px 0"><input id="relNombre" placeholder="Nombre (ej. Bip Max Víctor)" maxlength="40" style="flex:1;min-width:160px"><button class="btn" data-act="reloj-crear">Crear llave</button></div>';
+    h += r.data.llaves.length ? '<div class="tw"><table class="h"><thead><tr><th>Reloj</th><th>Creada</th><th>Último uso</th><th></th></tr></thead><tbody>' + r.data.llaves.map(function(k){
+      return '<tr><td>' + esc(k.nombre) + (k.vigente ? '' : ' <span class="s">(vencida)</span>') + '</td><td>' + f(k.creada) + '</td><td>' + f(k.ultimo_uso) + '</td><td><button class="btn ghost" data-act="reloj-revocar" data-id="' + esc(k.id) + '">Revocar</button></td></tr>';
+    }).join('') + '</tbody></table></div>' : '<p class="s">Aún no hay llaves.</p>';
+    abrirHoja('EG Reloj', h);
+  }).catch(function(){ cerrarHoja(); });
+}
 function mostrarTiempos(){
   var l = []; try { l = JSON.parse(localStorage.getItem(TIEMPOS_KEY) || '[]'); } catch (e) {}
   var por = {};
@@ -6113,7 +6129,7 @@ function renderDatos(){
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div>' +
-    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button><button class="btn ghost" data-act="velocidad">Velocidad</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button><button class="btn ghost" data-act="velocidad">Velocidad</button><button class="btn ghost" data-act="reloj-ver">EG Reloj</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -6556,6 +6572,21 @@ document.addEventListener('click', function(ev){
   else if (a === 'ga-nuevo') { D.tabla = 'GASTOS'; cerrarHoja(); renderDatos(); abrirFormulario(null); }
   else if (a === 'fa-ver') { FA_CORTE = 0; mostrarFamilia(); }
   else if (a === 'velocidad') mostrarTiempos();
+  else if (a === 'reloj-ver') mostrarReloj();
+  else if (a === 'reloj-crear') {
+    var nom = $('relNombre') ? $('relNombre').value.trim() : '';
+    el.disabled = true;
+    call('reloj_llave_crear', { nombre: nom || 'Reloj' }).then(function(r){ RELOJ_NUEVA = r.data; mostrarReloj(); }).catch(function(){ el.disabled = false; });
+  }
+  else if (a === 'reloj-copiar') {
+    var tx = $('relLlave'); if (!tx) return;
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(tx.value).then(function(){ toast('Llave copiada. Pégala en Zepp → EG Reloj → Ajustes.'); }, function(){ tx.select(); toast('Selecciona y copia la llave.', 'err'); });
+    else { tx.select(); toast('Selecciona y copia la llave.', 'err'); }
+  }
+  else if (a === 'reloj-revocar') {
+    if (el.getAttribute('data-ok') !== '1') { el.setAttribute('data-ok', '1'); el.textContent = 'Confirmar revocar'; return; }
+    call('reloj_llave_revocar', { id: id }).then(function(){ toast('Llave revocada: ese reloj ya no entra.'); mostrarReloj(); }).catch(function(){});
+  }
   else if (a === 'fa-corte'){
     if (!FA_CORTE) { FA_CORTE = 1; mostrarFamilia(); return; }
     FA_CORTE = 0;
