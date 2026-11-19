@@ -219,6 +219,8 @@ var CONTRACT = {
     tipo_cobro: ['Transferencia', 'Efectivo', 'Tarjeta', 'Otro'],
     tipo_captura: ['Nota', 'Audio', 'Foto', 'Video', 'Documento', 'Enlace', 'Otro'],
     estado_captura: ['Nueva', 'Asignada', 'Procesada', 'Descartada'],
+    tipo_recordatorio: ['Llamar', 'Cotizar', 'Agendar', 'Otro'],
+    estado_recordatorio: ['Pendiente', 'Hecho', 'Descartado'],
     destino_captura: ['Taller', 'Cliente', 'Personal', 'Por definir'],
     tipo_monto: ['A cobrar', 'Costo real', 'Por definir'],
     pago_familia: ['Yo', 'Mamá'],
@@ -239,7 +241,8 @@ var CONTRACT = {
     ubicaciones: ['Taller', 'Bodega', 'Vehículo del cliente'],
     tipos_referencia: ['Aceite motor', 'Filtro', 'Fluido', 'Torque', 'Procedimiento', 'Herramienta', 'Repuesto', 'Documento', 'Otro'],
     tipos_pendiente: ['Mantención', 'Reparación', 'Revisión', 'Repuesto', 'Administrativo', 'Otro'],
-    tipos_biblioteca: ['Procedimiento', 'Torque', 'Capacidad', 'Diagrama', 'Manual', 'Nota técnica']
+    tipos_biblioteca: ['Procedimiento', 'Torque', 'Capacidad', 'Diagrama', 'Manual', 'Nota técnica'],
+    items_mantencion: ['Aceite motor', 'Filtro de aceite', 'Filtro de aire', 'Filtro de combustible', 'Filtro de cabina', 'Refrigerante', 'Líquido de frenos', 'Aceite de caja/ATF', 'Bujías', 'Correa', 'Otro']
   },
 
   /**
@@ -321,6 +324,8 @@ var CONTRACT = {
         { k: 'historial_autoriza_fecha', t: 'date', d: 'Fecha de la autorización.' },
         { k: 'historial_codigo', t: 'text', calc: true, d: 'Código del enlace del historial. Lo genera el sistema al publicar; se borra al revocar. No compartir fuera del enlace.' },
         { k: 'historial_publicado_en', t: 'datetime', calc: true, d: 'Última publicación del historial.' },
+        { k: 'mantencion_codigo', t: 'text', calc: true, d: '1.20: código del enlace del resumen de mantención (no vence; se revoca). Lo genera el sistema.' },
+        { k: 'mantencion_publicado_en', t: 'datetime', calc: true, d: '1.20: última publicación del resumen de mantención.' },
         { k: 'historial_vence', t: 'date', calc: true, d: '1.19: hasta qué día funciona el enlace del detalle del historial. Al vencer se retira de PUBLICO; "Enviar de nuevo" crea otro enlace.' }
       ]
     },
@@ -421,6 +426,7 @@ var CONTRACT = {
         { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS', req: true, tec: 'w' },
         { k: 'tipo', t: 'enum', e: 'tipo_detalle', req: true, tec: 'w' },
         { k: 'componente', t: 'text', tec: 'w' },
+        { k: 'item_mantencion', t: 'lista', l: 'items_mantencion', tec: 'w', d: '1.20: si este detalle es un cambio de mantención básica (aceite, filtros, fluidos…), cuál. Arma el resumen de mantención del vehículo (fecha y km del trabajo).' },
         { k: 'descripcion', t: 'long', req: true, tec: 'w' },
         { k: 'especificacion', t: 'text', tec: 'w' },
         { k: 'cantidad', t: 'num', tec: 'w' },
@@ -450,6 +456,9 @@ var CONTRACT = {
         { k: 'descripcion', t: 'long', req: true, tec: 'w' },
         { k: 'estado', t: 'enum', e: 'estado_pendiente', req: true, tec: 'r' },
         { k: 'objetivo', t: 'text', tec: 'w', d: 'Condición u objetivo (ej. a los 100.000 km).' },
+        { k: 'item_mantencion', t: 'lista', l: 'items_mantencion', tec: 'w', d: '1.20: ítem de mantención básica de esta próxima mantención (sale en el resumen del cliente como "próxima").' },
+        { k: 'objetivo_km', t: 'int', tec: 'w', d: '1.20: km en que toca (para el resumen del cliente).' },
+        { k: 'objetivo_fecha', t: 'date', tec: 'w', d: '1.20: fecha en que toca (para el resumen del cliente).' },
         { k: 'fecha_cierre', t: 'date', tec: 'r' },
         { k: 'motivo_cierre', t: 'text', tec: 'r' },
         { k: 'estado_aporte', t: 'enum', e: 'estado_aporte', req: true, tec: 'r' },
@@ -827,6 +836,24 @@ var CONTRACT = {
       ]
     },
 
+    RECORDATORIOS: {
+      file: 'BASE', scope: 'central', prefix: 'RD', tecnico: 'ninguno',
+      d: '1.21: recordatorios rápidos (llamar, cotizar, agendar) creados desde EG Reloj o la app. Cada uno se copia como evento con aviso en Google Calendar.',
+      columns: [
+        { k: 'tipo', t: 'enum', e: 'tipo_recordatorio', req: true },
+        { k: 'texto', t: 'text', req: true, d: 'Qué hay que hacer (dictado en el reloj o escrito).' },
+        { k: 'cuando', t: 'datetime', req: true, d: 'Cuándo avisar. Agendar: inicio de la cita.' },
+        { k: 'duracion_min', t: 'int', d: 'Agendar: duración de la cita (por defecto 30). Otros: 15.' },
+        { k: 'estado', t: 'enum', e: 'estado_recordatorio', req: true, d: 'Pendiente → Hecho o Descartado. Si no se indica: Pendiente.' },
+        { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
+        { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
+        { k: 'origen', t: 'text', d: 'EG Reloj o App.' },
+        { k: 'hecho_en', t: 'datetime', calc: true },
+        { k: 'calendario_evento_id', t: 'text', calc: true, d: 'Evento en Google Calendar (lo maneja el sistema).' },
+        { k: 'calendario_estado', t: 'text', calc: true, d: 'OK o el error al copiar al calendario.' },
+        { k: 'calendario_huella', t: 'text', calc: true }
+      ]
+    },
     CAPTURAS: {
       file: 'BASE', scope: 'central', prefix: 'CP', tecnico: 'ninguno',
       d: 'EG Captura: lo que se guarda en terreno desde el celular (nota, audio, foto, documento, enlace) para ordenarlo después. El archivo queda en la carpeta Capturas EG de Drive hasta 90 días después de que la cuenta esté consolidada.',
@@ -925,6 +952,8 @@ var CONTRACT = {
     { clave: 'capturas_origen', valor: 'https://eisengarage-taller.github.io', nota: 'Dirección desde la que la app EG Captura sube archivos a Drive (no cambiar salvo que se mueva la app).' },
     { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Obsoleto desde 1.19 (se usa solicitudes_borrar_dias). Solo rige si solicitudes_borrar_dias está vacío.' },
     { clave: 'solicitudes_borrar_dias', valor: '30', nota: '1.19: días tras los cuales se borran de PUBLICO el nombre, teléfono, correo y mensaje de solicitudes y respuestas web (1 a 365). Las descartadas se borran al tiro.' },
+    { clave: 'recordatorios_calendario', valor: 'Sí', nota: '1.21: Sí = cada recordatorio se copia como evento con aviso en Google Calendar.' },
+    { clave: 'calendario_id', valor: '', nota: '1.21: calendario para los recordatorios (vacío = el calendario principal de la cuenta del taller).' },
     { clave: 'historial_vence_dias', valor: '30', nota: '1.19: días que funciona el enlace del detalle del historial (1 a 365). Al vencer se retira de PUBLICO.' }
   ]
 };
@@ -1356,7 +1385,8 @@ function updateRow_(ctx, table, id, version, changes, meta) {
   var rects = [];
   // Las transiciones de flujo (sesiones, revisión de aportes, confirmar recepción) no son correcciones.
   // Un aporte en borrador aún no es dato oficial: sus cambios no son correcciones.
-  if (table !== 'RECTIFICACIONES' && !meta.noRect && prev.estado_aporte !== 'Borrador') {
+  // 1.21: un recordatorio se mueve o reescribe libremente (no es un dato registrado que se corrija).
+  if (table !== 'RECTIFICACIONES' && table !== 'RECORDATORIOS' && !meta.noRect && prev.estado_aporte !== 'Borrador') {
     Object.keys(cols).forEach(function (k) {
       if (CONTRACT.technicalColumns.some(function (t) { return t.k === k; }) && k !== 'anulado') return;
       var a = prev[k], b = row[k];
@@ -1542,6 +1572,8 @@ var RULES_ = {
       var ahora = now_(ctx);
       ctx.publico.enlacesActivos(row.id, HISTORIAL_TIPO).forEach(function (x) { ctx.publico.enlaceRevocar(x.huella, ahora); });
       if (ctx.publico.publicacionUltima(row.id, HISTORIAL_TIPO)) ctx.publico.publicacionesRetirar(row.id, HISTORIAL_TIPO);
+      ctx.publico.enlacesActivos(row.id, MANTENCION_TIPO).forEach(function (x) { ctx.publico.enlaceRevocar(x.huella, ahora); });
+      if (ctx.publico.publicacionUltima(row.id, MANTENCION_TIPO)) ctx.publico.publicacionesRetirar(row.id, MANTENCION_TIPO);
       if (ctx._clientesPortal) { ctx._clientesPortal[prev.cliente_id] = true; ctx._clientesPortal[row.cliente_id] = true; }
     }
   },
@@ -1563,6 +1595,10 @@ var RULES_ = {
         var abiertas = activeRows_(ctx, 'SESIONES').filter(function (s) { return s.trabajo_id === row.id && s.estado === 'Abierta'; });
         if (abiertas.length) fail_('SESIONES_ABIERTAS', 'Hay ' + abiertas.length + ' sesión(es) abierta(s) en este trabajo. Ciérralas antes de marcarlo ejecutado.');
         if (isEmpty_(row.fecha_fin)) row.fecha_fin = now_(ctx);
+      }
+      // 1.20: una mantención ejecutada sin km (ni horas) no sirve para el resumen de mantención del cliente.
+      if (row.estado_ejecucion === 'Ejecutado' && (pasaAEjecutado || (prev && prev.km !== row.km)) && esMantencion_(row.tipo_trabajo) && isEmpty_(row.km) && isEmpty_(row.horas_equipo)) {
+        w.push({ code: 'KM_FALTA', message: 'Mantención ejecutada sin km: agrégalo para el resumen de mantención del cliente.' });
       }
       if (row.estado_ejecucion === 'Ejecutado' && isEmpty_(row.fecha_fin) && isEmpty_(row.fecha_inicio)) {
         // 1.9.1: un trabajo ejecutado nuevo (o al que se le borra la fecha) se rechaza. Uno antiguo que ya estaba
@@ -1631,8 +1667,24 @@ var RULES_ = {
     }
   },
 
+  RECORDATORIOS: {
+    before: function (ctx, row, prev) {
+      if (isEmpty_(row.estado)) row.estado = 'Pendiente';
+      if (isEmpty_(row.duracion_min)) row.duracion_min = row.tipo === 'Agendar' ? 30 : 15;
+      if (row.estado !== 'Pendiente' && (!prev || prev.estado === 'Pendiente')) row.hecho_en = now_(ctx);
+      if (row.estado === 'Pendiente') row.hecho_en = '';
+      if (isEmpty_(row.cliente_id) && !isEmpty_(row.trabajo_id)) { var t = getRow_(ctx, 'TRABAJOS', row.trabajo_id); if (t) row.cliente_id = t.cliente_id; }
+    }
+  },
   DETALLE: {
-    before: function (ctx, row) { if (isEmpty_(row.estado_aporte)) row.estado_aporte = 'Aprobado'; }
+    before: function (ctx, row, prev, w) {
+      if (isEmpty_(row.estado_aporte)) row.estado_aporte = 'Aprobado';
+      // 1.20: un ítem de mantención sin km en el trabajo no sirve para el resumen del cliente.
+      if (!isEmpty_(row.item_mantencion) && (!prev || prev.item_mantencion !== row.item_mantencion)) {
+        var t = getRow_(ctx, 'TRABAJOS', row.trabajo_id);
+        if (t && isEmpty_(t.km) && isEmpty_(t.horas_equipo) && w) w.push({ code: 'KM_FALTA', message: 'El trabajo ' + (t.codigo || '') + ' no tiene km: agrégalo para que este cambio salga en el resumen de mantención.' });
+      }
+    }
   },
 
   PENDIENTES: {
@@ -2773,7 +2825,7 @@ function historialPublicar_(ctx, p) {
   var huella = historialHuella_(codigo);
   // Un solo enlace activo por vehículo: el anterior (o uno de un intento cortado) se revoca.
   pub.enlacesActivos(e.id, HISTORIAL_TIPO).forEach(function (x) { if (x.huella !== huella) pub.enlaceRevocar(x.huella, ahora); });
-  if (!pub.enlaceActivo(huella)) pub.enlaceCrear({ huella: huella, tipo: HISTORIAL_TIPO, recurso_id: e.id, creado_en: ahora, vence_en: new Date(toMs_(e.historial_vence + 'T23:59:59-03:00')).toISOString() });
+  if (!pub.enlaceActivo(huella)) pub.enlaceCrear({ huella: huella, tipo: HISTORIAL_TIPO, recurso_id: e.id, creado_en: ahora, vence_en: new Date(chileMs_(Number(e.historial_vence.slice(0, 4)), Number(e.historial_vence.slice(5, 7)), Number(e.historial_vence.slice(8, 10)), 23, 59) + 59000).toISOString() });
   var texto = JSON.stringify(contenido), hc = historialSha_(texto);
   var ult = pub.publicacionUltima(e.id, HISTORIAL_TIPO);
   var nueva = !ult || ult.retirada === true || ult.huella_contenido !== hc;
@@ -2792,8 +2844,190 @@ function historialRevocar_(ctx, p) {
   var n = 0;
   pub.enlacesActivos(e.id, HISTORIAL_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
   pub.publicacionesRetirar(e.id, HISTORIAL_TIPO);
-  updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_vence: '', historial_publicable: false }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
+  // 1.20: el resumen de mantención usa la misma autorización del dueño: se retira junto con ella.
+  pub.enlacesActivos(e.id, MANTENCION_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
+  if (pub.publicacionUltima(e.id, MANTENCION_TIPO)) pub.publicacionesRetirar(e.id, MANTENCION_TIPO);
+  updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_vence: '', historial_publicable: false, mantencion_codigo: '' }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
   return { data: { revocados: n }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+}
+
+/* ───────── 1.21: recordatorios (llamar, cotizar, agendar) desde el reloj o la app, con aviso en Google Calendar ───────── */
+/** Partes de fecha y hora en Chile (Apps Script o node). */
+function chilePartes_(ms) {
+  var d = new Date(ms), tz = CONTRACT.timezone, s;
+  if (typeof Utilities !== 'undefined' && Utilities.formatDate) s = Utilities.formatDate(d, tz, 'yyyy-MM-dd-HH-mm-u');
+  else {
+    var p = {}; new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', weekday: 'short', hourCycle: 'h23' }).formatToParts(d).forEach(function (x) { p[x.type] = x.value; });
+    s = p.year + '-' + p.month + '-' + p.day + '-' + p.hour + '-' + p.minute + '-' + ({ Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 })[p.weekday];
+  }
+  var a = s.split('-').map(Number);
+  return { y: a[0], m: a[1], d: a[2], h: a[3], mi: a[4], dow: a[5] % 7 };
+}
+/** Hora local de Chile → ms (con horario de verano o invierno). */
+function chileMs_(y, m, d, h, mi) {
+  var base = Date.UTC(y, m - 1, d, h, mi), ms = base + 3 * 3600000;
+  for (var i = 0; i < 3; i++) { var p = chilePartes_(ms); ms += base - Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi); }
+  return ms;
+}
+/**
+ * Entiende la hora dicha en español: "en 2 horas", "en media hora", "hoy a las 5 de la tarde", "mañana a las 10",
+ * "pasado mañana", "el lunes a las 9:30", "a las 15". Sin hora → 9:00. Sin día y la hora ya pasó → mañana. null si no hay pistas.
+ */
+function interpretarCuando_(texto, ahoraMs) {
+  var t = ' ' + sinTildes_(texto).replace(/[,;]/g, ' ') + ' ';
+  var nums = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, quince: 15, veinte: 20, treinta: 30, cuarenta: 40 };
+  var n = function (s) { return /^\d+$/.test(s) ? Number(s) : nums[s]; };
+  var m = /\sen\s+(media|\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince|veinte|treinta|cuarenta)\s*(hora|horas|minuto|minutos|min)\b(\s+y media)?/.exec(t);
+  if (m) {
+    if (m[1] === 'media') return ahoraMs + 30 * 60000;
+    var horas = /^hora/.test(m[2]), cant = n(m[1]) + (horas && m[3] ? 0.5 : 0);
+    return ahoraMs + Math.round(cant * (horas ? 3600000 : 60000));
+  }
+  var hoy = chilePartes_(ahoraMs), dia = null, deManana = /\sde la manana\s/.test(t), t2 = t.replace(/\sde la manana\s/g, ' ');
+  if (/\spasado manana\s/.test(t2)) dia = 2;
+  else if (/\smanana\s/.test(t2)) dia = 1;
+  else if (/\shoy\s/.test(t2)) dia = 0;
+  var dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  dias.forEach(function (x, i) { if (dia === null && new RegExp('\\s' + x + '\\s').test(t)) dia = ((i - hoy.dow + 7) % 7) || 7; });
+  var hh = null, mm = 0;
+  var r = /\sa las\s+(\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:\s*(?::|\.|y)\s*(\d{1,2}|media|cuarto))?(?:\s*(?:hrs?|horas))?/.exec(t);
+  if (r) {
+    hh = n(r[1]); mm = r[2] === 'media' ? 30 : r[2] === 'cuarto' ? 15 : r[2] ? Number(r[2]) : 0;
+    if (/\sde la (tarde|noche)\s/.test(t) && hh < 12) hh += 12;
+    else if (!deManana && hh >= 1 && hh <= 7) hh += 12; // "a las 5" en el taller = 17:00
+  } else if (/\smediodia\s/.test(t)) hh = 12;
+  if (dia === null && hh === null) return null;
+  if (hh === null) { hh = 9; mm = 0; }
+  if (hh > 23 || mm > 59) return null;
+  var base = new Date(Date.UTC(hoy.y, hoy.m - 1, hoy.d) + (dia || 0) * 86400000);
+  var ms = chileMs_(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), hh, mm);
+  if (dia === null && ms <= ahoraMs) ms += 86400000;
+  return ms;
+}
+function recordatoriosPendientes_(ctx) {
+  if (!isAdmin_(ctx) || !CONTRACT.tables.RECORDATORIOS) return [];
+  return activeRows_(ctx, 'RECORDATORIOS').filter(function (r) { return r.estado === 'Pendiente'; })
+    .sort(function (a, b) { return String(a.cuando).localeCompare(String(b.cuando)); }).slice(0, 40)
+    .map(function (r) { return project_(ctx, 'RECORDATORIOS', r); });
+}
+/** Crea, mueve o borra el evento de Calendar del recordatorio. Nunca hace fallar el guardado: avisa y deja el error en la fila. */
+function recordatorioCalendario_(ctx, id) {
+  var r = getRow_(ctx, 'RECORDATORIOS', id);
+  if (!r) return [];
+  var vivo = r.anulado !== true && (r.estado === 'Pendiente' || (r.estado === 'Hecho' && r.tipo === 'Agendar'));
+  var t = r.trabajo_id ? getRow_(ctx, 'TRABAJOS', r.trabajo_id) : null, cli = r.cliente_id ? getRow_(ctx, 'CLIENTES', r.cliente_id) : null;
+  var ini = toMs_(r.cuando), fin = ini + (Number(r.duracion_min) || 15) * 60000;
+  var o = {
+    titulo: (r.tipo === 'Agendar' ? '' : r.tipo + ': ') + r.texto,
+    inicio: ini, fin: fin, avisos: r.tipo === 'Agendar' ? [30, 0] : [0],
+    descripcion: [r.codigo ? 'EG Registro ' + r.codigo : '', t ? 'Trabajo ' + (t.codigo || '') : '', cli ? 'Cliente: ' + cli.nombre : '', 'Creado desde ' + (r.origen || 'EG Registro')].filter(Boolean).join('\n')
+  };
+  var huella = vivo ? hashTxt_(stableJson_(o)) : 'borrado';
+  if (huella === r.calendario_huella) return [];
+  var cambios = { calendario_huella: huella }, w = [];
+  try {
+    if (!vivo) { if (r.calendario_evento_id) ctx.calendario.borrar(r.calendario_evento_id); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')'; }
+    else {
+      var eid = r.calendario_evento_id && ctx.calendario.actualizar(r.calendario_evento_id, o) ? r.calendario_evento_id : ctx.calendario.crear(o);
+      cambios.calendario_evento_id = eid; cambios.calendario_estado = 'OK';
+    }
+  } catch (x) {
+    cambios.calendario_estado = 'Error: ' + String(x && x.message || x).slice(0, 200); cambios.calendario_huella = '';
+    w.push({ code: 'CALENDARIO', message: 'El recordatorio quedó guardado, pero no se pudo copiar al calendario: ' + (x && x.message) });
+  }
+  sysUpdate_(ctx, 'RECORDATORIOS', r.id, cambios, 'Calendario: ' + (cambios.calendario_estado || ''));
+  return w;
+}
+
+/* ───────── 1.20: resumen permanente de mantención (por vehículo) ─────────
+ * Última fecha y km de cada ítem (aceite, filtros, fluidos…) según el DETALLE de trabajos ejecutados,
+ * y la próxima mantención según los PENDIENTES abiertos. Sin textos libres, sin montos, sin nombres; patente parcial.
+ * Enlace propio (no vence, se revoca) y también dentro del portal. Usa la misma autorización del dueño que el historial.
+ */
+var MANTENCION_TIPO = 'A5';
+var MANTENCION_FORMATO = 'EG-MANTENCION-1';
+function esMantencion_(tipo) { return /mantenci|aceite/i.test(String(tipo || '')); }
+function mantencionContenido_(ctx, e) {
+  var orden = (CONTRACT.listas.items_mantencion || []).filter(function (x) { return x !== 'Otro'; });
+  var trab = {};
+  activeRows_(ctx, 'TRABAJOS').forEach(function (t) { if (t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado') trab[t.id] = t; });
+  var ult = {}, ultimo = null;
+  Object.keys(trab).forEach(function (id) {
+    var t = trab[id], f = localDate_(t.fecha_fin || t.fecha_inicio || ''), km = isEmpty_(t.km) ? null : Number(t.km);
+    if (f && km != null && (!ultimo || f > ultimo.fecha || (f === ultimo.fecha && km > ultimo.km))) ultimo = { fecha: f, km: km };
+  });
+  activeRows_(ctx, 'DETALLE').forEach(function (d) {
+    var t = trab[d.trabajo_id];
+    if (!t || isEmpty_(d.item_mantencion) || d.estado_aporte !== 'Aprobado' || orden.indexOf(d.item_mantencion) < 0) return;
+    var o = { item: d.item_mantencion, fecha: localDate_(t.fecha_fin || t.fecha_inicio || ''), km: isEmpty_(t.km) ? null : Number(t.km) };
+    if (t.fecha_aproximada === true) o.aprox = true;
+    var a = ult[o.item];
+    if (!a || o.fecha > a.fecha || (o.fecha === a.fecha && (o.km || 0) > (a.km || 0))) ult[o.item] = o;
+  });
+  var proximas = activeRows_(ctx, 'PENDIENTES').filter(function (p) {
+    return p.equipo_id === e.id && p.estado_aporte === 'Aprobado' && ['Abierto', 'Programado', 'En curso'].indexOf(p.estado) >= 0 &&
+      (!isEmpty_(p.item_mantencion) || p.tipo === 'Mantención') && (!isEmpty_(p.objetivo_km) || !isEmpty_(p.objetivo_fecha)) && p.item_mantencion !== 'Otro';
+  }).map(function (p) { return { item: p.item_mantencion || 'Mantención', km: isEmpty_(p.objetivo_km) ? null : Number(p.objetivo_km), fecha: p.objetivo_fecha || '' }; })
+    .sort(function (a, b) { return (a.km || 9e9) - (b.km || 9e9) || String(a.fecha).localeCompare(String(b.fecha)); });
+  return {
+    formato: MANTENCION_FORMATO,
+    vehiculo: { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: patenteMascara_(e.patente), nombre: (e.marca || e.modelo) ? '' : sinPatente_(e.nombre_corto || '', e.patente, true) },
+    taller: { nombre: 'Eisen Garage SpA', direccion: 'Gulutren 022, Peumo' },
+    items: orden.filter(function (k) { return ult[k]; }).map(function (k) { return ult[k]; }),
+    proximas: proximas,
+    ultimo: ultimo
+  };
+}
+function mantencionVistaPrevia_(ctx, p) {
+  var e = historialEquipo_(ctx, p), c = mantencionContenido_(ctx, e);
+  var sinKm = activeRows_(ctx, 'TRABAJOS').filter(function (t) { return t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado' && esMantencion_(t.tipo_trabajo) && isEmpty_(t.km) && isEmpty_(t.horas_equipo); }).map(function (t) { return t.codigo; });
+  return { data: {
+    contenido: c, autorizado: e.historial_publicable === true, enlace_activo: !isEmpty_(e.mantencion_codigo),
+    url: enlaceUrl_(ctx, 'mantencion', e.mantencion_codigo), publicado_en: e.mantencion_publicado_en || '', sin_km: sinKm
+  }, warnings: [] };
+}
+function mantencionPublicar_(ctx, p) {
+  var e = historialEquipo_(ctx, p);
+  if (e.historial_publicable !== true || isEmpty_(e.historial_autoriza) || isEmpty_(e.historial_autoriza_fecha)) fail_('SIN_AUTORIZACION', 'Falta registrar la autorización del dueño (quién, cómo y cuándo) antes de publicar el resumen de mantención.');
+  if (isEmpty_(ctx.config && ctx.config.publico_url_base)) fail_('CONFIG', 'Falta CONFIG.publico_url_base.');
+  var pub = historialPublico_(ctx), c = mantencionContenido_(ctx, e);
+  if (!c.items.length && !c.proximas.length) fail_('SIN_CONTENIDO', 'No hay datos de mantención: marca el ítem (aceite, filtros…) en el detalle de los trabajos ejecutados o agrega una próxima mantención.');
+  var ahora = now_(ctx), codigo = e.mantencion_codigo;
+  if (isEmpty_(codigo)) {
+    codigo = historialCodigoNuevo_();
+    e = updateRow_(ctx, 'EQUIPOS', e.id, null, { mantencion_codigo: codigo }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del resumen de mantención creado' }).row;
+    codigo = e.mantencion_codigo;
+  }
+  enlaceAsegurar_(pub, e.id, MANTENCION_TIPO, codigo, ahora);
+  var r = contenidoPublicar_(ctx, pub, e.id, MANTENCION_TIPO, c);
+  sysUpdate_(ctx, 'EQUIPOS', e.id, { mantencion_publicado_en: ahora }, 'Resumen de mantención publicado (revisión ' + r.revision + ')');
+  return { data: { url: enlaceUrl_(ctx, 'mantencion', codigo), revision: r.revision, nueva: r.nueva, items: c.items.length, proximas: c.proximas.length }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+}
+function mantencionRevocar_(ctx, p) {
+  var e = historialEquipo_(ctx, p);
+  if (isEmpty_(p.motivo)) fail_('REQUERIDO', 'Indica por qué se revoca.');
+  var pub = historialPublico_(ctx), ahora = now_(ctx), n = 0;
+  pub.enlacesActivos(e.id, MANTENCION_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
+  if (pub.publicacionUltima(e.id, MANTENCION_TIPO)) pub.publicacionesRetirar(e.id, MANTENCION_TIPO);
+  updateRow_(ctx, 'EQUIPOS', e.id, null, { mantencion_codigo: '' }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Resumen de mantención revocado: ' + p.motivo, fuente: 'App · Mantención' });
+  return { data: { revocados: n }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+}
+/** Tras cualquier cambio: si el vehículo tiene el resumen publicado, se republica (o se retira si ya no hay autorización). */
+function mantencionRefrescar_(ctx, equipoId) {
+  var e = getRow_(ctx, 'EQUIPOS', equipoId);
+  if (!e || isEmpty_(e.mantencion_codigo) || !ctx.publico) return [];
+  try {
+    var pub = ctx.publico, ahora = now_(ctx);
+    if (e.historial_publicable !== true) {
+      pub.enlacesActivos(e.id, MANTENCION_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); });
+      if (pub.publicacionUltima(e.id, MANTENCION_TIPO)) pub.publicacionesRetirar(e.id, MANTENCION_TIPO);
+      sysUpdate_(ctx, 'EQUIPOS', e.id, { mantencion_codigo: '' }, 'Resumen de mantención retirado: sin autorización del dueño');
+      return [{ code: 'MANTENCION_RETIRADA', message: 'Se retiró el resumen de mantención de ' + (e.codigo || '') + ': ya no hay autorización del dueño.' }];
+    }
+    var r = contenidoPublicar_(ctx, pub, e.id, MANTENCION_TIPO, mantencionContenido_(ctx, e));
+    if (r.nueva) sysUpdate_(ctx, 'EQUIPOS', e.id, { mantencion_publicado_en: ahora }, 'Resumen de mantención actualizado (revisión ' + r.revision + ')');
+    return [];
+  } catch (x) { return [{ code: 'MANTENCION', message: 'No se pudo actualizar el resumen de mantención: ' + (x && x.message) }]; }
 }
 
 /* ───────── 1.19: aviso de datos personales en textos que se publican (D) ─────────
@@ -3208,6 +3442,7 @@ function portalContenido_(ctx, c) {
     formato: PORTAL_FORMATO, cliente: { nombre: String(c.nombre_publico || '').trim() },
     equipos: eqs.map(function (e) { return { id: e.id, nombre: sinPatente_(e.nombre_corto || '', e.patente, true), patente: patenteMascara_(e.patente), tipo: e.tipo_vehiculo || '', marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio) }; }),
     historial_ids: eqs.filter(function (e) { return e.historial_publicable === true && !isEmpty_(e.historial_codigo); }).map(function (e) { return e.id; }),
+    mantencion_ids: eqs.filter(function (e) { return e.historial_publicable === true && !isEmpty_(e.mantencion_codigo); }).map(function (e) { return e.id; }),
     presupuesto_ids: pss.map(function (x) { return x.id; }),
     solicitar: c.portal_solicitudes === true,
     cuenta: cuentaOk ? cuentaContenido_(ctx, c, c.portal_cuenta_vence) : null,
@@ -3264,6 +3499,9 @@ function portalVistaPrevia_(ctx, p) {
   var hist = {};
   cont.historial_ids.forEach(function (id) { var e = getRow_(ctx, 'EQUIPOS', id); var h = historialContenido_(ctx, e); if (h.trabajos.length) hist[id] = h; });
   cont.historiales = hist;
+  var mant = {};
+  (cont.mantencion_ids || []).forEach(function (id) { var m = mantencionContenido_(ctx, getRow_(ctx, 'EQUIPOS', id)); if (m.items.length || m.proximas.length) mant[id] = m; });
+  cont.mantenciones = mant;
   cont.presupuestos = cont.presupuesto_ids.map(function (id) { return presupuestoContenido_(ctx, getRow_(ctx, 'PRESUPUESTOS', id)); });
   var cobros = activeRows_(ctx, 'CUENTAS_COBRO').filter(function (x) { return x.activo === true; }).map(function (x) { return { codigo: x.codigo, nombre: x.nombre, tipo: x.tipo }; });
   return { data: {
@@ -4462,7 +4700,7 @@ function capturaMarcarBorrado_(ctx, p, hoyIso) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar', 'mantencion_publicar', 'mantencion_revocar'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -4694,6 +4932,21 @@ function handle_(ctx, action, p) {
       if (cid) c._clientesPortal[cid] = true;
     });
     Object.keys(c._clientesPortal).forEach(function (cid) { (res.warnings = res.warnings || []).push.apply(res.warnings, portalRefrescar_(c, cid)); });
+    // 1.20: el resumen de mantención publicado se mantiene al día solo (trabajos, detalle, pendientes o el vehículo).
+    var eqs = {};
+    tx.log.forEach(function (e) {
+      var f = tx.get(e.table, e.id); if (!f) return;
+      if (e.table === 'EQUIPOS') eqs[f.id] = true;
+      else if (e.table === 'TRABAJOS' || e.table === 'PENDIENTES') { if (f.equipo_id) eqs[f.equipo_id] = true; }
+      else if (e.table === 'DETALLE') { var t = tx.get('TRABAJOS', f.trabajo_id); if (t && t.equipo_id) eqs[t.equipo_id] = true; }
+    });
+    if (action !== 'mantencion_publicar' && action !== 'mantencion_revocar') Object.keys(eqs).forEach(function (eid) { (res.warnings = res.warnings || []).push.apply(res.warnings, mantencionRefrescar_(c, eid)); });
+  }
+  // 1.21: los recordatorios creados o cambiados se copian a Google Calendar (si hay calendario conectado).
+  if (ctx.calendario) {
+    var rcs = {};
+    tx.log.forEach(function (e) { if (e.table === 'RECORDATORIOS') rcs[e.id] = true; });
+    Object.keys(rcs).forEach(function (id) { (res.warnings = res.warnings || []).push.apply(res.warnings, recordatorioCalendario_(c, id)); });
   }
   // Se devuelve la fila tal como queda guardada (versión final), y solo si quien pregunta puede verla.
   var tabla = TABLA_DE_ACCION[action] || p.tabla;
@@ -4720,7 +4973,8 @@ function handleInner_(ctx, action, p) {
           listas: listasActivas_(ctx), enums: CONTRACT.enums,
           sesion_abierta: abierta ? project_(ctx, 'SESIONES', abierta) : null,
           trabajos: vistaMisTrabajos_(ctx, {}).data,
-          resumen: vistaResumen_(ctx, {}).data
+          resumen: vistaResumen_(ctx, {}).data,
+          recordatorios: recordatoriosPendientes_(ctx)
         }, warnings: []
       };
     case 'listas': return { data: listasActivas_(ctx), warnings: [] };
@@ -4786,6 +5040,9 @@ function handleInner_(ctx, action, p) {
     case 'historial_vista_previa': return historialVistaPrevia_(ctx, p);
     case 'historial_publicar': return historialPublicar_(ctx, p);
     case 'historial_revocar': return historialRevocar_(ctx, p);
+    case 'mantencion_vista_previa': return mantencionVistaPrevia_(ctx, p);
+    case 'mantencion_publicar': return mantencionPublicar_(ctx, p);
+    case 'mantencion_revocar': return mantencionRevocar_(ctx, p);
     case 'clientes': return vistaClientes_(ctx, p);
     case 'stock': return vistaStock_(ctx, p);
     case 'horas': return vistaHoras_(ctx, p);
@@ -5215,7 +5472,7 @@ function renderTrabajos(){
   var ts = S.inicio.trabajos || [];
   var abierta = S.inicio.sesion_abierta;
   var h = '<h2 class="section-title">' + (isAdmin() ? 'Trabajos abiertos' : 'Mis trabajos') + '</h2>';
-  if (isAdmin()) h += '<button class="btn big" type="button" data-act="nt-elegir" style="margin-bottom:14px">+ Nuevo trabajo</button>';
+  if (isAdmin()) h += bloqueRecordatorios() + '<button class="btn big" type="button" data-act="nt-elegir" style="margin-bottom:14px">+ Nuevo trabajo</button>';
   if (!ts.length) h += '<div class="empty">' + (isAdmin() ? 'No hay trabajos abiertos. Crea uno con "Nuevo trabajo".' : 'No tienes trabajos asignados. Pide a administración que te asigne uno.') + '</div>';
   h += '<div class="list">' + ts.map(function(x){
     var t = x.trabajo, live = abierta && abierta.trabajo_id === t.id;
@@ -5225,6 +5482,62 @@ function renderTrabajos(){
       (x.asignados.length ? '<span class="chip">' + esc(x.asignados.join(', ')) + '</span>' : '') + (live ? '<span class="chip live">Tu sesión corre aquí</span>' : '') + '</div></div></button>';
   }).join('') + '</div>';
   $('main').innerHTML = h;
+}
+
+/* ───── 1.21: recordatorios (desde el reloj o aquí); cada uno queda con aviso en Google Calendar ───── */
+var RC_ICONO = { Llamar: '☎', Cotizar: '$', Agendar: '📅', Otro: '•' };
+function cuandoTxt(iso){
+  var d = new Date(iso), hoy = new Date(), man = new Date(Date.now() + 86400000);
+  var hh = d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' });
+  if (d.toDateString() === hoy.toDateString()) return 'hoy ' + hh;
+  if (d.toDateString() === man.toDateString()) return 'mañana ' + hh;
+  return d.toLocaleDateString('es-CL', { weekday: 'short', day: 'numeric', month: 'short' }) + ' ' + hh;
+}
+function bloqueRecordatorios(){
+  var rs = (S.inicio && S.inicio.recordatorios) || [], ahora = Date.now();
+  var h = '<div class="block"><div class="inline" style="justify-content:space-between"><h3 style="margin:0">Recordatorios</h3><button class="btn ghost" type="button" data-act="rc-nuevo">+ Recordatorio</button></div>';
+  if (!rs.length) return h + '<p class="s" style="margin:8px 0 0;color:var(--acero)">Sin pendientes. Desde EG Reloj: Recordatorio → tipo → dictar → cuándo.</p></div>';
+  h += rs.map(function(r){
+    var venc = Date.parse(r.cuando) < ahora;
+    return '<div class="inline" style="justify-content:space-between;gap:8px;padding:8px 0;border-top:1px solid var(--linea)">' +
+      '<div><b>' + esc(RC_ICONO[r.tipo] || '•') + ' ' + esc(r.tipo) + ':</b> ' + esc(r.texto) + '<div class="s" style="color:' + (venc ? 'var(--rojo,#b00)' : 'var(--acero)') + '">' + esc(cuandoTxt(r.cuando)) + (venc ? ' · atrasado' : '') + (r.calendario_estado && r.calendario_estado !== 'OK' ? ' · calendario: ' + esc(r.calendario_estado) : '') + '</div></div>' +
+      '<div class="inline" style="gap:6px"><button class="btn go" type="button" data-act="rc-hecho" data-id="' + esc(r.id) + '">Hecho</button><button class="btn ghost" type="button" data-act="rc-editar" data-id="' + esc(r.id) + '">Mover</button></div></div>';
+  }).join('');
+  return h + '</div>';
+}
+function localInput(ms){ var d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000); return d.toISOString().slice(0, 16); }
+function abrirRecordatorio(id){
+  var r = id ? ((S.inicio.recordatorios || []).filter(function(x){ return x.id === id; })[0]) : null;
+  var en1 = Date.now() + 3600000, m9 = new Date(); m9.setDate(m9.getDate() + 1); m9.setHours(9, 0, 0, 0);
+  var t17 = new Date(); t17.setHours(17, 0, 0, 0);
+  abrirHoja(r ? 'Mover recordatorio' : 'Nuevo recordatorio',
+    '<label class="f"><span>Tipo</span><select class="i" id="rcTipo">' + ['Llamar', 'Cotizar', 'Agendar', 'Otro'].map(function(x){ return '<option' + (r && r.tipo === x ? ' selected' : '') + '>' + x + '</option>'; }).join('') + '</select></label>' +
+    '<label class="f"><span>Qué *</span><input class="i" id="rcTexto" value="' + esc(r ? r.texto : '') + '" placeholder="Ej. llamar a don Pedro por el alternador"></label>' +
+    '<label class="f"><span>Cuándo</span><input class="i" id="rcCuando" type="datetime-local" value="' + localInput(r ? Date.parse(r.cuando) : en1) + '"></label>' +
+    '<div class="inline" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">' +
+      '<button class="btn ghost" type="button" data-act="rc-rapido" data-ms="' + en1 + '">En 1 h</button>' +
+      (t17.getTime() > Date.now() ? '<button class="btn ghost" type="button" data-act="rc-rapido" data-ms="' + t17.getTime() + '">Hoy 17:00</button>' : '') +
+      '<button class="btn ghost" type="button" data-act="rc-rapido" data-ms="' + m9.getTime() + '">Mañana 9:00</button></div>' +
+    '<button class="btn big go" type="button" data-act="rc-guardar"' + (r ? ' data-id="' + esc(r.id) + '"' : '') + '>Guardar</button>' +
+    (r ? '<button class="btn big danger" type="button" data-act="rc-descartar" data-id="' + esc(r.id) + '" style="margin-top:8px">Descartar</button>' : '') +
+    '<p class="s" style="color:var(--acero);margin-top:10px">Se copia a tu Google Calendar con aviso a esa hora.</p>');
+}
+function guardarRecordatorio(btn){
+  var texto = $('rcTexto').value.trim(), cu = $('rcCuando').value;
+  if (!texto) { toast('Escribe qué hay que hacer.', 'err'); return $('rcTexto').focus(); }
+  if (!cu) { toast('Elige cuándo.', 'err'); return; }
+  var datos = { tipo: $('rcTipo').value, texto: texto, cuando: new Date(cu).toISOString() }, id = btn.getAttribute('data-id');
+  var r = id ? (S.inicio.recordatorios || []).filter(function(x){ return x.id === id; })[0] : null;
+  btn.disabled = true;
+  (r ? call('editar', { tabla: 'RECORDATORIOS', id: r.id, version: r.version, cambios: datos, op_id: opId() }) : call('crear', { tabla: 'RECORDATORIOS', datos: Object.assign({ origen: 'App' }, datos), op_id: opId() }))
+    .then(function(){ toast('Recordatorio guardado.'); cerrarHoja(); cargar(); }).catch(function(){ btn.disabled = false; });
+}
+function estadoRecordatorio(btn, estado){
+  var id = btn.getAttribute('data-id'), r = (S.inicio.recordatorios || []).filter(function(x){ return x.id === id; })[0];
+  if (!r) return;
+  btn.disabled = true;
+  call('editar', { tabla: 'RECORDATORIOS', id: r.id, version: r.version, cambios: { estado: estado }, op_id: opId() })
+    .then(function(){ toast(estado === 'Hecho' ? 'Listo.' : 'Descartado.'); cerrarHoja(); cargar(); }).catch(function(){ btn.disabled = false; });
 }
 
 function abrirHoja(titulo, html, id){
@@ -5261,6 +5574,7 @@ function abrirTrabajo(id){
     h += '<div class="block"><h3>Agregar al registro</h3>' +
       '<div class="row2"><label class="f"><span>Tipo</span><select class="i" id="dTipo">' + options(S.inicio.enums.tipo_detalle, 'Observación') + '</select></label>' +
       '<label class="f"><span>Componente</span><input class="i" id="dComp" placeholder="Ej. filtro de aceite"></label></div>' +
+      '<label class="f"><span>Ítem de mantención (resumen del cliente)</span><select class="i" id="dItem">' + options(L.items_mantencion || [], '', '— No es cambio de mantención') + '</select></label>' +
       '<label class="f"><span>Descripción</span><textarea class="i" id="dDesc" placeholder="Qué se hizo, midió o encontró"></textarea></label>' +
       '<div class="row2"><label class="f"><span>Cantidad</span><input class="i" id="dCant" inputmode="decimal"></label><label class="f"><span>Unidad</span><select class="i" id="dUni">' + options(L.unidades, '', '—') + '</select></label></div>' +
       '<div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="dictar">Dictar</button>' +
@@ -5271,10 +5585,12 @@ function abrirTrabajo(id){
       (S.inicio.rol === 'Tecnico' ? '<p class="s" style="color:var(--acero);margin:8px 0 0">Tu aporte queda como borrador hasta que administración lo revise.</p>' : '') + '</div>';
     h += '<div class="block"><h3>Nuevo pendiente del vehículo</h3><label class="f"><span>Qué queda por hacer</span><input class="i" id="pDesc" placeholder="Ej. cambiar correa en la próxima visita"></label>' +
       '<label class="f"><span>Objetivo o condición</span><input class="i" id="pObj" placeholder="Ej. a los 110.000 km"></label>' +
+      '<label class="f"><span>Ítem de mantención (sale como "próxima" en el resumen del cliente)</span><select class="i" id="pItem">' + options(L.items_mantencion || [], '', '—') + '</select></label>' +
+      '<div class="row2"><label class="f"><span>A los (km)</span><input class="i" id="pKm" inputmode="numeric" placeholder="Ej. 110000"></label><label class="f"><span>O en fecha</span><input class="i" id="pFecha" type="date"></label></div>' +
       (isAdmin() ? '<label class="f inline" style="gap:8px"><input type="checkbox" id="pVis"> Visible para el técnico asignado</label>' : '') + '<button class="btn" data-act="guardar-pendiente" data-id="' + esc(id) + '" data-eq="' + esc(x.equipo.id) + '">Guardar pendiente</button></div>';
     if (det.length){
       h += '<div class="block"><h3>Detalle registrado</h3><ul style="margin:0;padding-left:18px">' + det.map(function(d){
-        return '<li>' + esc(d.tipo) + (d.componente ? ' · ' + esc(d.componente) : '') + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') +
+        return '<li>' + esc(d.tipo) + (d.item_mantencion ? ' <span class="chip">' + esc(d.item_mantencion) + '</span>' : '') + (d.componente ? ' · ' + esc(d.componente) : '') + ': ' + esc(d.descripcion) + (d.cantidad !== '' && d.cantidad != null ? ' (' + esc(d.cantidad) + ' ' + esc(d.unidad || '') + ')' : '') +
           (d.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') +
           (isAdmin() && d.visible_tecnico !== true && d.estado_aporte !== 'Borrador' ? ' <span class="chip">oculto al técnico</span>' : '') + '</li>';
       }).join('') + '</ul></div>';
@@ -5323,6 +5639,7 @@ function guardarDetalle(trabajoId, btn){
   if (!desc) return toast('Escribe o dicta la descripción.', 'err');
   btn.disabled = true;
   var datos = { trabajo_id: trabajoId, tipo: $('dTipo').value, componente: $('dComp').value.trim(), descripcion: desc, cantidad: $('dCant').value.replace(',', '.'), unidad: $('dUni').value };
+  if ($('dItem') && $('dItem').value) datos.item_mantencion = $('dItem').value;
   if ($('dVis') && $('dVis').checked) datos.visible_tecnico = true;
   var paso = fotoActual ? call('subir_foto', { trabajo_id: trabajoId, base64: fotoActual }).then(function(r){ datos.foto_url = r.data.url; }) : Promise.resolve();
   var op = opId();
@@ -5336,6 +5653,11 @@ function guardarPendiente(trabajoId, equipoId, btn){
   if (!desc) return toast('Describe el pendiente.', 'err');
   btn.disabled = true;
   var datosP = { equipo_id: equipoId, trabajo_origen_id: trabajoId, descripcion: desc, objetivo: $('pObj').value.trim() };
+  var pkm = $('pKm') ? $('pKm').value.replace(/\D/g, '') : '';
+  if ($('pItem') && $('pItem').value) datosP.item_mantencion = $('pItem').value;
+  if (pkm) datosP.objetivo_km = Number(pkm);
+  if ($('pFecha') && $('pFecha').value) datosP.objetivo_fecha = $('pFecha').value;
+  if (datosP.item_mantencion && !datosP.tipo) datosP.tipo = 'Mantención';
   if ($('pVis') && $('pVis').checked) datosP.visible_tecnico = true;
   call('crear', { tabla:'PENDIENTES', datos: datosP, op_id: opId() })
     .then(function(){ toast('Pendiente guardado.'); return cargar().then(function(){ abrirTrabajo(trabajoId); }); })
@@ -5647,7 +5969,7 @@ function abrirFicha(equipoId){
       (e.anio ? '<dt>Año</dt><dd>' + esc(e.anio) + '</dd>' : '') + (e.motor_codigo ? '<dt>Motor</dt><dd>' + esc(e.motor_codigo) + '</dd>' : '') +
       (e.vin ? '<dt>VIN</dt><dd>' + esc(e.vin) + '</dd>' : '') + '</dl></div>';
     if (isAdmin() && f.cliente) h += '<button class="btn big" type="button" data-act="nt-ficha" style="margin-bottom:12px">+ Nuevo trabajo para este vehículo</button>';
-    if (isAdmin() && f.cliente) h += bloqueHistorial(f);
+    if (isAdmin() && f.cliente) h += bloqueHistorial(f) + bloqueMantencion(f);
     if (f.pendientes_vigentes.length) h += '<div class="block"><h3>Pendientes vigentes</h3><ul style="margin:0;padding-left:18px">' + f.pendientes_vigentes.map(function(p){ return '<li>' + esc(p.descripcion) + (p.objetivo ? ' · ' + esc(p.objetivo) : '') + ' <span class="chip">' + esc(p.estado) + '</span>' + (p.estado_aporte === 'Borrador' ? ' <span class="chip warn">borrador</span>' : '') + '</li>'; }).join('') + '</ul></div>';
     if (f.referencias.length) h += '<div class="block"><h3>Datos técnicos</h3><ul style="margin:0;padding-left:18px">' + f.referencias.map(function(rf){ return '<li>' + esc(rf.tipo) + (rf.componente ? ' · ' + esc(rf.componente) : '') + ': ' + esc(rf.especificacion || rf.descripcion || '') + (rf.cantidad !== '' && rf.cantidad != null ? ' · ' + esc(rf.cantidad) + ' ' + esc(rf.unidad || '') : '') + (rf.torque ? ' · torque ' + esc(rf.torque) : '') + '</li>'; }).join('') + '</ul></div>';
     h += '<div class="block"><h3>Historia</h3>' + (f.trabajos.length ? '<div class="history">' + f.trabajos.map(function(tt){
@@ -5684,6 +6006,62 @@ function bloqueHistorial(f){
       (vig ? '<button class="btn danger" type="button" data-act="hi-revocar">Revocar enlace</button>' : '') + '</div>';
   }
   return h + '</div>';
+}
+/* ── 1.20: resumen permanente de mantención (enlace que no vence; también en el portal) ── */
+function bloqueMantencion(f){
+  var e = f.equipo, h = '<div class="block"><h3>Resumen de mantención para el cliente</h3>';
+  if (e.historial_publicable !== true) return h + '<p class="s" style="margin:0;color:var(--acero)">Usa la misma autorización del dueño que el historial (arriba).</p></div>';
+  h += '<p class="s" style="margin:0 0 10px;color:var(--acero)">Última fecha y km de aceite, filtros y fluidos, y la próxima mantención. Se actualiza solo y el enlace no vence. ' + (e.mantencion_codigo ? 'Enlace activo' + (e.mantencion_publicado_en ? ' · actualizado ' + esc(fmtFecha(e.mantencion_publicado_en)) : '') + '.' : 'Sin enlace todavía.') + '</p>' +
+    '<div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="mt-previa">Vista previa</button>' +
+    '<button class="btn go" type="button" data-act="mt-publicar">' + (e.mantencion_codigo ? 'Enviar enlace' : 'Publicar y enviar') + '</button>' +
+    (e.mantencion_codigo ? '<button class="btn danger" type="button" data-act="mt-revocar">Revocar</button>' : '') + '</div>';
+  return h + '</div>';
+}
+function htmlMantencion(c){
+  var km = function(n){ return n == null || n === '' ? '' : fmtKm(n); };
+  var v = c.vehiculo || {}, titulo = [v.marca, v.modelo, v.anio].filter(Boolean).join(' ') || v.nombre || 'Vehículo';
+  var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + (v.patente ? plate(v.patente, true) : '') + '<div style="font-weight:600;font-size:18px">' + esc(titulo) + '</div></div>';
+  if (c.proximas.length) h += '<div class="block"><h3>Próxima mantención</h3>' + c.proximas.map(function(p){ return '<div class="inline" style="justify-content:space-between"><span>' + esc(p.item) + '</span><span class="s">' + esc([km(p.km), p.fecha ? fmtFecha(p.fecha) : ''].filter(Boolean).join(' o ')) + '</span></div>'; }).join('') + '</div>';
+  if (c.items.length) h += '<div class="block"><h3>Último cambio</h3>' + c.items.map(function(x){ return '<div class="inline" style="justify-content:space-between"><span>' + esc(x.item) + '</span><span class="s">' + esc([x.aprox ? 'aprox. ' + String(x.fecha).slice(0, 4) : fmtFecha(x.fecha), km(x.km)].filter(Boolean).join(' · ')) + '</span></div>'; }).join('') + '</div>';
+  if (c.ultimo) h += '<p class="s" style="color:var(--acero)">Último km registrado: ' + esc(km(c.ultimo.km)) + ' (' + esc(fmtFecha(c.ultimo.fecha)) + ').</p>';
+  return h;
+}
+function vistaPreviaMantencion(){
+  call('mantencion_vista_previa', { equipo_id: S.ficha.equipo.id }).then(function(r){
+    var d = r.data, c = d.contenido;
+    var h = '<p class="s" style="margin:0 0 10px;color:var(--acero)">Así lo verá el cliente. Sale del "Ítem de mantención" marcado en el detalle de los trabajos ejecutados y de los pendientes con ítem y km o fecha.</p>';
+    if (d.sin_km && d.sin_km.length) h += '<div class="block" style="border-color:var(--amarillo,#c90)"><b>Mantenciones sin km:</b> ' + esc(d.sin_km.join(', ')) + '. Agrégales el km para que salgan bien.</div>';
+    h += (c.items.length || c.proximas.length) ? htmlMantencion(c) : '<div class="empty">Todavía no hay datos: marca el ítem de mantención en el detalle de los trabajos.</div>';
+    abrirHoja('Vista previa del resumen de mantención', h);
+  }).catch(function(){});
+}
+function publicarMantencion(btn){
+  var f = S.ficha, e = f.equipo; btn.disabled = true;
+  call('mantencion_publicar', { equipo_id: e.id, op_id: opId() }).then(function(r){
+    var d = r.data, c = contactoPrincipal(f), num = waNumero(c && c.telefono);
+    var veh = [e.marca, e.modelo].filter(Boolean).join(' ') || e.nombre_corto || 'vehículo';
+    S.hiMsg = ('Hola ' + primerNombre(c && c.nombre) + ', le compartimos el resumen de mantención de su ' + veh + (e.patente ? ' (' + String(e.patente).toUpperCase() + ')' : '') + ' en Eisen Garage: últimos cambios de aceite y filtros y la próxima mantención. Se actualiza solo:\n' + d.url + '\n\n' + FIRMA_EG).replace('Hola , ', 'Hola, ');
+    S.hiUrl = d.url;
+    var h = '<p style="margin:0 0 8px">' + (d.nueva ? 'Publicado (versión ' + d.revision + ').' : 'Sin cambios desde la última publicación.') + '</p>' +
+      '<label class="f"><span>Mensaje</span><textarea class="i" id="hiTexto" rows="8">' + esc(S.hiMsg) + '</textarea></label>' +
+      '<div style="display:grid;gap:8px"><a class="btn big go" id="hiWa" target="_blank" rel="noopener" style="text-align:center;text-decoration:none" href="https://wa.me/' + num + '?text=' + encodeURIComponent(S.hiMsg) + '">Enviar por WhatsApp' + (c ? ' a ' + esc(primerNombre(c.nombre)) : '') + '</a>' +
+      '<button class="btn big ghost" type="button" data-act="hi-copiar">Copiar enlace</button></div>' +
+      '<p class="s" style="color:var(--acero);margin-top:10px">El enlace no vence y se actualiza solo con cada mantención. También aparece en el portal del cliente.</p>';
+    abrirHoja('Resumen de mantención publicado', h);
+    $('hiTexto').addEventListener('input', function(){ $('hiWa').href = 'https://wa.me/' + num + '?text=' + encodeURIComponent(this.value); });
+    abrirFichaSilenciosa(e.id);
+  }).catch(function(){ btn.disabled = false; });
+}
+function abrirRevocarMantencion(){
+  abrirHoja('Revocar resumen de mantención', '<p style="margin:0 0 10px">El enlace deja de funcionar al tiro y sale del portal. La autorización del dueño se mantiene.</p>' +
+    '<label class="f"><span>Motivo *</span><input class="i" id="mrMotivo" placeholder="Ej. lo pidió el cliente"></label>' +
+    '<button class="btn big danger" type="button" data-act="mt-revocar-ok">Revocar</button>');
+}
+function revocarMantencion(btn){
+  var mot = $('mrMotivo').value.trim();
+  if (!mot) { toast('Indica el motivo.', 'err'); return $('mrMotivo').focus(); }
+  var id = S.ficha.equipo.id; btn.disabled = true;
+  call('mantencion_revocar', { equipo_id: id, motivo: mot, op_id: opId() }).then(function(){ toast('Resumen revocado.'); cerrarHoja(); abrirFicha(id); }).catch(function(){ btn.disabled = false; });
 }
 function abrirAutorizacion(){
   var f = S.ficha, c = contactoPrincipal(f);
@@ -5753,7 +6131,7 @@ function copiarEnlaceHistorial(){
   else toast(u);
 }
 function abrirRevocar(){
-  var h = '<p style="margin:0 0 10px">El enlace deja de funcionar al tiro y se retira lo publicado. Para volver a compartir habrá que registrar de nuevo la autorización y se creará un enlace distinto.</p>' +
+  var h = '<p style="margin:0 0 10px">El enlace deja de funcionar al tiro y se retira lo publicado. Para volver a compartir habrá que registrar de nuevo la autorización y se creará un enlace distinto. Si hay resumen de mantención publicado, también se retira.</p>' +
     '<label class="f"><span>Motivo *</span><input class="i" id="hrMotivo" placeholder="Ej. venta del vehículo, lo pidió el cliente"></label>' +
     '<button class="btn big danger" type="button" data-act="hi-revocar-ok">Revocar enlace</button>';
   abrirHoja('Revocar enlace del historial', h);
@@ -6615,6 +6993,12 @@ document.addEventListener('click', function(ev){
   else if (a === 'ps-retirar-ok') { var rm = $('psrMotivo').value.trim(); if (!rm) { toast('Indica el motivo.', 'err'); return; } el.disabled = true; call('presupuesto_retirar', { presupuesto_id: PSU.actual.presupuesto.id, motivo: rm, op_id: opId() }).then(function(){ toast('Presupuesto retirado.'); abrirPresupuesto(PSU.actual.presupuesto.id); }).catch(function(){ el.disabled = false; }); }
   else if (a === 'cli-toggle'){ S.cliAbiertos = S.cliAbiertos || {}; if (S.cliAbiertos[id]) delete S.cliAbiertos[id]; else S.cliAbiertos[id] = true; pintarClientes(); }
   else if (a === 'nt-elegir') elegirVehiculoNT();
+  else if (a === 'rc-nuevo') abrirRecordatorio();
+  else if (a === 'rc-editar') abrirRecordatorio(el.getAttribute('data-id'));
+  else if (a === 'rc-rapido') $('rcCuando').value = localInput(Number(el.getAttribute('data-ms')));
+  else if (a === 'rc-guardar') guardarRecordatorio(el);
+  else if (a === 'rc-hecho') estadoRecordatorio(el, 'Hecho');
+  else if (a === 'rc-descartar') estadoRecordatorio(el, 'Descartado');
   else if (a === 'nt-vehiculo'){ var v = (S.inicio.resumen || []).filter(function(x){ return x.equipo_id === id; })[0]; if (v) abrirNuevoTrabajo({ id: v.equipo_id, nombre_corto: v.nombre_corto, patente: v.patente, cliente_id: v.cliente_id, cliente: v.cliente }); }
   else if (a === 'nt-ficha'){ var fe = S.ficha; if (fe && fe.cliente) abrirNuevoTrabajo({ id: fe.equipo.id, nombre_corto: fe.equipo.nombre_corto, patente: fe.equipo.patente, cliente_id: fe.cliente.id, cliente: fe.cliente.nombre }); }
   else if (a === 'nt-crear') crearNuevoTrabajo(el);
@@ -6626,6 +7010,10 @@ document.addEventListener('click', function(ev){
   else if (a === 'hi-previa') vistaPreviaHistorial();
   else if (a === 'hi-publicar') publicarHistorial(el);
   else if (a === 'hi-nuevo') abrirHistorialNuevo();
+  else if (a === 'mt-previa') vistaPreviaMantencion();
+  else if (a === 'mt-publicar') publicarMantencion(el);
+  else if (a === 'mt-revocar') abrirRevocarMantencion();
+  else if (a === 'mt-revocar-ok') revocarMantencion(el);
   else if (a === 'hi-nuevo-ok') publicarHistorial(el, true);
   else if (a === 'hi-copiar') copiarEnlaceHistorial();
   else if (a === 'hi-revocar') abrirRevocar();
