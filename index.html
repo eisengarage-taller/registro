@@ -192,7 +192,7 @@ var CONTRACT = {
     estado_revision: ['Sin revisar', 'Revisado', 'Observado'],
     estado_pago_trabajo: ['Por confirmar', 'No aplica', 'Pendiente', 'Parcial', 'Pagado'],
     modalidad_sesion: ['En vivo', 'Posterior'],
-    dispositivo: ['Celular', 'Tablet', 'PC', 'Otro'],
+    dispositivo: ['Celular', 'Tablet', 'PC', 'Reloj', 'Otro'],
     precision_tiempo: ['Exacta', 'Informada', 'Estimada'],
     estado_sesion: ['Abierta', 'Cerrada', 'Anulada'],
     tipo_detalle: ['Procedimiento', 'Herramienta', 'Fluido', 'Medición', 'Repuesto', 'Diagnóstico', 'Hallazgo', 'Observación'],
@@ -256,6 +256,7 @@ var CONTRACT = {
       d: 'Un registro por cliente. Los datos fiscales van en CONTACTOS.',
       columns: [
         { k: 'nombre', t: 'text', req: true },
+        { k: 'nombre_publico', t: 'text', d: '1.19: nombre o apodo que ve el cliente en sus enlaces (portal y presupuestos). Vacío = solo "Hola", sin nombre.' },
         { k: 'tipo', t: 'enum', e: 'tipo_cliente', req: true },
         { k: 'estado', t: 'enum', e: 'estado_cliente', req: true },
         { k: 'historico_id', t: 'text', d: 'ID del archivo HISTÓRICO de este cliente (solo lectura).' },
@@ -319,7 +320,8 @@ var CONTRACT = {
         { k: 'historial_autoriza', t: 'text', d: 'Quién autorizó y cómo (ej. "Juan Pérez · orden de trabajo 0123").' },
         { k: 'historial_autoriza_fecha', t: 'date', d: 'Fecha de la autorización.' },
         { k: 'historial_codigo', t: 'text', calc: true, d: 'Código del enlace del historial. Lo genera el sistema al publicar; se borra al revocar. No compartir fuera del enlace.' },
-        { k: 'historial_publicado_en', t: 'datetime', calc: true, d: 'Última publicación del historial.' }
+        { k: 'historial_publicado_en', t: 'datetime', calc: true, d: 'Última publicación del historial.' },
+        { k: 'historial_vence', t: 'date', calc: true, d: '1.19: hasta qué día funciona el enlace del detalle del historial. Al vencer se retira de PUBLICO; "Enviar de nuevo" crea otro enlace.' }
       ]
     },
     REFERENCIAS: {
@@ -921,7 +923,9 @@ var CONTRACT = {
     { clave: 'capturas_lectores', valor: '', nota: 'Cuentas extra que pueden VER la carpeta Capturas EG en Drive (separadas por coma). Los usuarios activos de administración se agregan solos.' },
     { clave: 'familia_planilla_id', valor: '', nota: 'Planilla aparte "Cuentas con mamá" (saldo y movimientos). La crea crearFamilia(); la app la mantiene al día.' },
     { clave: 'capturas_origen', valor: 'https://eisengarage-taller.github.io', nota: 'Dirección desde la que la app EG Captura sube archivos a Drive (no cambiar salvo que se mueva la app).' },
-    { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Meses tras los cuales se borran los datos personales de las solicitudes web (1 a 60).' }
+    { clave: 'solicitudes_borrar_meses', valor: '12', nota: 'Obsoleto desde 1.19 (se usa solicitudes_borrar_dias). Solo rige si solicitudes_borrar_dias está vacío.' },
+    { clave: 'solicitudes_borrar_dias', valor: '30', nota: '1.19: días tras los cuales se borran de PUBLICO el nombre, teléfono, correo y mensaje de solicitudes y respuestas web (1 a 365). Las descartadas se borran al tiro.' },
+    { clave: 'historial_vence_dias', valor: '30', nota: '1.19: días que funciona el enlace del detalle del historial (1 a 365). Al vencer se retira de PUBLICO.' }
   ]
 };
 
@@ -2713,17 +2717,20 @@ function historialContenido_(ctx, e) {
   var trabajos = activeRows_(ctx, 'TRABAJOS').filter(function (t) {
     return t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado' && t.publicable === true && !isEmpty_(t.resumen_cliente);
   }).map(function (t) {
-    var o = { fecha: localDate_(t.fecha_fin || t.fecha_inicio || ''), km: isEmpty_(t.km) ? null : Number(t.km), horas: isEmpty_(t.horas_equipo) ? null : Number(t.horas_equipo), tipo: t.tipo_trabajo || '', resumen: String(t.resumen_cliente) };
+    var o = { fecha: localDate_(t.fecha_fin || t.fecha_inicio || ''), km: isEmpty_(t.km) ? null : Number(t.km), horas: isEmpty_(t.horas_equipo) ? null : Number(t.horas_equipo), tipo: t.tipo_trabajo || '', resumen: sinPatente_(String(t.resumen_cliente), e.patente) };
     if (t.fecha_aproximada === true) o.aprox = true;
     return o;
   }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
   return {
     formato: HISTORIAL_FORMATO,
-    vehiculo: { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: e.patente || '', nombre: (e.marca || e.modelo) ? '' : (e.nombre_corto || '') },
+    vehiculo: { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: patenteMascara_(e.patente), nombre: (e.marca || e.modelo) ? '' : sinPatente_(e.nombre_corto || '', e.patente, true) },
     taller: { nombre: 'Eisen Garage SpA', direccion: 'Gulutren 022, Peumo' },
-    trabajos: trabajos
+    trabajos: trabajos,
+    vence: e.historial_vence || ''
   };
 }
+/** 1.19: el detalle del historial vence (enlace y contenido). */
+function historialVencido_(ctx, e) { return !isEmpty_(e.historial_codigo) && !isEmpty_(e.historial_vence) && String(e.historial_vence) < today_(ctx); }
 
 function historialEquipo_(ctx, p) {
   requireAdmin_(ctx);
@@ -2736,7 +2743,9 @@ function historialVistaPrevia_(ctx, p) {
   var c = historialContenido_(ctx, e);
   return { data: {
     autorizado: e.historial_publicable === true, autoriza: e.historial_autoriza || '', autoriza_fecha: e.historial_autoriza_fecha || '',
-    contenido: c, enlace_activo: !isEmpty_(e.historial_codigo), url: historialUrl_(ctx, e.historial_codigo), publicado_en: e.historial_publicado_en || ''
+    contenido: c, enlace_activo: !isEmpty_(e.historial_codigo) && !historialVencido_(ctx, e), url: historialVencido_(ctx, e) ? '' : historialUrl_(ctx, e.historial_codigo), publicado_en: e.historial_publicado_en || '',
+    vence: e.historial_vence || '', vencido: historialVencido_(ctx, e), dias_defecto: cfgEntero_(ctx, 'historial_vence_dias', 30, 1, 365),
+    avisos: datosSensibles_(ctx, e.cliente_id, c.trabajos.map(function (t) { return t.resumen; }))
   }, warnings: [] };
 }
 
@@ -2750,23 +2759,29 @@ function historialPublicar_(ctx, p) {
   var pub = historialPublico_(ctx);
   var contenido = historialContenido_(ctx, e);
   if (!contenido.trabajos.length) fail_('SIN_CONTENIDO', 'No hay trabajos para publicar: marca "Incluir en el historial" en el mensaje al cliente de al menos un trabajo ejecutado.');
-  var codigo = e.historial_codigo;
-  if (isEmpty_(codigo)) {
+  // 1.19: cada enlace dura N días (CONFIG.historial_vence_dias o p.dias). "Enviar de nuevo" (p.nuevo) o un enlace vencido → enlace nuevo.
+  var ahora = now_(ctx), codigo = e.historial_codigo, nuevoEnlace = isEmpty_(codigo) || p.nuevo === true || historialVencido_(ctx, e) || isEmpty_(e.historial_vence);
+  if (nuevoEnlace) {
+    var dias = isEmpty_(p.dias) ? cfgEntero_(ctx, 'historial_vence_dias', 30, 1, 365) : Number(p.dias);
+    if (!(Math.floor(dias) === dias && dias >= 1 && dias <= 365)) fail_('VALOR_INVALIDO', 'El historial se puede publicar entre 1 y 365 días.');
+    var venceMs = toMs_(ahora) + dias * 86400000;
     codigo = historialCodigoNuevo_();
-    e = updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: codigo }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial creado' }).row;
+    e = updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: codigo, historial_vence: localDate_(new Date(venceMs).toISOString()) }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial creado (' + dias + ' días)' }).row;
     codigo = e.historial_codigo;
+    contenido = historialContenido_(ctx, e);
   }
-  var ahora = now_(ctx), huella = historialHuella_(codigo);
-  // Un solo enlace activo por vehículo: si en PUBLICO quedó otro (por ejemplo, de un intento cortado), se revoca.
+  var huella = historialHuella_(codigo);
+  // Un solo enlace activo por vehículo: el anterior (o uno de un intento cortado) se revoca.
   pub.enlacesActivos(e.id, HISTORIAL_TIPO).forEach(function (x) { if (x.huella !== huella) pub.enlaceRevocar(x.huella, ahora); });
-  if (!pub.enlaceActivo(huella)) pub.enlaceCrear({ huella: huella, tipo: HISTORIAL_TIPO, recurso_id: e.id, creado_en: ahora });
+  if (!pub.enlaceActivo(huella)) pub.enlaceCrear({ huella: huella, tipo: HISTORIAL_TIPO, recurso_id: e.id, creado_en: ahora, vence_en: new Date(toMs_(e.historial_vence + 'T23:59:59-03:00')).toISOString() });
   var texto = JSON.stringify(contenido), hc = historialSha_(texto);
   var ult = pub.publicacionUltima(e.id, HISTORIAL_TIPO);
-  var nueva = !ult || ult.huella_contenido !== hc;
+  var nueva = !ult || ult.retirada === true || ult.huella_contenido !== hc;
   var revision = nueva ? (ult ? Number(ult.revision) + 1 : 1) : Number(ult.revision);
   if (nueva) pub.publicacionAgregar({ recurso_id: e.id, tipo: HISTORIAL_TIPO, revision: revision, contenido: texto, huella_contenido: hc, publicado_en: ahora, publicado_por: ctx.user.correo });
   sysUpdate_(ctx, 'EQUIPOS', e.id, { historial_publicado_en: ahora }, 'Historial publicado (revisión ' + revision + ')');
-  return { data: { url: historialUrl_(ctx, codigo), revision: revision, nueva: nueva, trabajos: contenido.trabajos.length }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+  var w = datosSensibles_(ctx, e.cliente_id, contenido.trabajos.map(function (t) { return t.resumen; })).map(function (m) { return { code: 'DATO_PERSONAL', message: m }; });
+  return { data: { url: historialUrl_(ctx, codigo), revision: revision, nueva: nueva, trabajos: contenido.trabajos.length, vence: e.historial_vence, enlace_nuevo: nuevoEnlace }, warnings: w.concat(portalRefrescar_(ctx, e.cliente_id)) };
 }
 
 /** Revoca el enlace: deja de funcionar al tiro, se retira lo publicado y se quita la autorización (hay que registrarla de nuevo). */
@@ -2777,8 +2792,43 @@ function historialRevocar_(ctx, p) {
   var n = 0;
   pub.enlacesActivos(e.id, HISTORIAL_TIPO).forEach(function (x) { pub.enlaceRevocar(x.huella, ahora); n++; });
   pub.publicacionesRetirar(e.id, HISTORIAL_TIPO);
-  updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_publicable: false }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
+  updateRow_(ctx, 'EQUIPOS', e.id, null, { historial_codigo: '', historial_vence: '', historial_publicable: false }, { system: true, allowCalc: true, skipVersion: true, noRect: true, opId: p.op_id, motivo: 'Enlace del historial revocado: ' + p.motivo, fuente: 'App · Historial' });
   return { data: { revocados: n }, warnings: portalRefrescar_(ctx, e.cliente_id) };
+}
+
+/* ───────── 1.19: aviso de datos personales en textos que se publican (D) ─────────
+ * No bloquea: avisa si un texto trae RUT, teléfono, correo o el nombre del cliente o de sus contactos.
+ * El nombre o apodo elegido para mostrar (nombre_publico) no se avisa.
+ */
+function sinTildes_(t) { return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
+function datosSensibles_(ctx, clienteId, textos) {
+  var avisos = [], txt = (textos || []).filter(Boolean).join('\n');
+  if (!txt) return avisos;
+  var add = function (m) { if (avisos.indexOf(m) < 0) avisos.push(m); };
+  if (/\b\d{1,2}\.?\d{3}\.?\d{3}\s?-\s?[\dkK]\b/.test(txt)) add('Un texto parece tener un RUT.');
+  if (/(\+?56[\s.-]?)?\b9[\s.-]?\d{4}[\s.-]?\d{4}\b/.test(txt) || /\+56[\s\d.-]{8,}/.test(txt)) add('Un texto parece tener un teléfono.');
+  if (/[^@\s]+@[^@\s]+\.[a-z]{2,}/i.test(txt)) add('Un texto parece tener un correo.');
+  var c = clienteId ? getRow_(ctx, 'CLIENTES', clienteId) : null;
+  if (c) {
+    var permitidas = sinTildes_(c.nombre_publico).split(/[^a-zñ0-9]+/);
+    var nombres = [c.nombre].concat(activeRows_(ctx, 'CONTACTOS').filter(function (x) { return x.cliente_id === c.id; }).map(function (x) { return x.nombre; }));
+    var plano = ' ' + sinTildes_(txt).replace(/[^a-zñ0-9]+/g, ' ') + ' ';
+    nombres.forEach(function (n) {
+      sinTildes_(n).split(/[^a-zñ0-9]+/).filter(function (p) { return p.length >= 4 && permitidas.indexOf(p) < 0 && ['spa', 'ltda', 'limitada', 'empresa', 'servicios', 'transportes', 'sociedad', 'comercial'].indexOf(p) < 0; }).forEach(function (p) {
+        if (plano.indexOf(' ' + p + ' ') >= 0) add('Un texto nombra al cliente o a un contacto ("' + p + '").');
+      });
+    });
+  }
+  return avisos;
+}
+/** 1.19 (C): revoca los enlaces del historial vencidos y retira su contenido de PUBLICO. Lo llama avisosWeb una vez al día. */
+function historialesVencer_(pub, ahoraIso) {
+  var n = 0;
+  pub.enlacesVencidos(HISTORIAL_TIPO, ahoraIso).forEach(function (x) {
+    pub.enlaceRevocar(x.huella, ahoraIso); n++;
+    if (!pub.enlacesActivos(x.recurso_id, HISTORIAL_TIPO).length && pub.publicacionUltima(x.recurso_id, HISTORIAL_TIPO)) pub.publicacionesRetirar(x.recurso_id, HISTORIAL_TIPO);
+  });
+  return n;
 }
 
 /* ───────── 1.10: Portal del cliente, presupuestos (A3), estado de cuenta (A2) y solicitudes web (A4) ─────────
@@ -2883,7 +2933,7 @@ function presupuestoTotales_(items, ivaPct, aceptados) {
 }
 function vehiculoPublico_(e) {
   if (!e) return null;
-  return { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: e.patente || '', nombre: e.nombre_corto || '' };
+  return { marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio), patente: patenteMascara_(e.patente), nombre: sinPatente_(e.nombre_corto || '', e.patente, true) };
 }
 /** Opcionales aceptados de un presupuesto autorizado: los que tienen su cobro creado. */
 function presupuestoAceptados_(ps, items) {
@@ -2897,8 +2947,8 @@ function presupuestoContenido_(ctx, ps) {
   return {
     formato: PRESUPUESTO_FORMATO, codigo: ps.codigo, estado: ps.estado, fecha: localDate_(ps.publicado_en || now_(ctx)), vence: ps.vence_en || '',
     cerrado: ps.cerrado_en ? localDate_(ps.cerrado_en) : '',
-    titulo: ps.titulo, diagnostico: ps.diagnostico || '', condiciones: ps.condiciones || '',
-    cliente: { nombre: cli.nombre || '' }, vehiculo: vehiculoPublico_(getRow_(ctx, 'EQUIPOS', ps.equipo_id)),
+    titulo: sinPatente_(ps.titulo, (getRow_(ctx, 'EQUIPOS', ps.equipo_id) || {}).patente), diagnostico: sinPatente_(ps.diagnostico || '', (getRow_(ctx, 'EQUIPOS', ps.equipo_id) || {}).patente), condiciones: ps.condiciones || '',
+    cliente: { nombre: String(cli.nombre_publico || '').trim() }, vehiculo: vehiculoPublico_(getRow_(ctx, 'EQUIPOS', ps.equipo_id)),
     items: items.map(function (x) {
       var o = { id: x.id, tipo: x.tipo, descripcion: x.descripcion, cantidad: Number(x.cantidad) || 1, unidad: x.unidad || '', precio_unitario: Number(x.precio_unitario) || 0, total: Number(x.total) || 0, opcional: x.opcional === true };
       if (acept && o.opcional) o.aceptado = acept.indexOf(x.id) >= 0;
@@ -3129,7 +3179,7 @@ function cuentaContenido_(ctx, c, vence) {
   var trabajos = orden.map(function (k) {
     var t = k ? getRow_(ctx, 'TRABAJOS', k) : null, e = t ? getRow_(ctx, 'EQUIPOS', t.equipo_id) : null;
     var cobros = porTrabajo[k].map(function (x) { return { descripcion: x.descripcion, monto: Number(x.monto_cliente) || 0 }; });
-    return { codigo: t ? t.codigo : '', fecha: t ? localDate_(t.fecha_fin || t.fecha_inicio || t.creado_en || '') : '', descripcion: t ? t.descripcion : 'Otros cobros', vehiculo: e ? [e.nombre_corto, e.patente].filter(Boolean).join(' · ') : '', cobros: cobros, total: sumBy_(cobros, 'monto') };
+    return { codigo: t ? t.codigo : '', fecha: t ? localDate_(t.fecha_fin || t.fecha_inicio || t.creado_en || '') : '', descripcion: t ? sinPatente_(t.descripcion, e && e.patente) : 'Otros cobros', vehiculo: e ? [sinPatente_(e.nombre_corto, e.patente, true), patenteMascara_(e.patente)].filter(Boolean).join(' · ') : '', cobros: cobros, total: sumBy_(cobros, 'monto') };
   }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : a.fecha > b.fecha ? -1 : 0; });
   var pagos = activeRows_(ctx, 'PAGOS').filter(function (x) { return x.cliente_id === c.id && x.confirmado === true; }).map(function (x) {
     return { fecha: /^\d{4}-\d{2}-\d{2}$/.test(String(x.fecha)) ? String(x.fecha) : localDate_(x.fecha), monto: Number(x.monto) || 0, medio: x.medio || '' };
@@ -3155,8 +3205,8 @@ function portalContenido_(ctx, c) {
   });
   var cuentaOk = c.portal_cuenta === true && !isEmpty_(c.portal_cuenta_vence) && c.portal_cuenta_vence >= hoy && !cuentaProblema_(ctx, c);
   return {
-    formato: PORTAL_FORMATO, cliente: { nombre: c.nombre },
-    equipos: eqs.map(function (e) { return { id: e.id, nombre: e.nombre_corto || '', patente: e.patente || '', tipo: e.tipo_vehiculo || '', marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio) }; }),
+    formato: PORTAL_FORMATO, cliente: { nombre: String(c.nombre_publico || '').trim() },
+    equipos: eqs.map(function (e) { return { id: e.id, nombre: sinPatente_(e.nombre_corto || '', e.patente, true), patente: patenteMascara_(e.patente), tipo: e.tipo_vehiculo || '', marca: e.marca || '', modelo: e.modelo || '', anio: isEmpty_(e.anio) ? null : Number(e.anio) }; }),
     historial_ids: eqs.filter(function (e) { return e.historial_publicable === true && !isEmpty_(e.historial_codigo); }).map(function (e) { return e.id; }),
     presupuesto_ids: pss.map(function (x) { return x.id; }),
     solicitar: c.portal_solicitudes === true,
@@ -3171,6 +3221,7 @@ function portalPublicar_(ctx, p) {
   if (isEmpty_(ctx.config && ctx.config.publico_url_base)) fail_('CONFIG', 'Falta CONFIG.publico_url_base.');
   var pub = historialPublico_(ctx), ahora = now_(ctx), hoy = today_(ctx);
   var cambios = { portal_solicitudes: p.solicitudes === true, portal_cuenta: p.cuenta === true };
+  if (p.nombre_publico !== undefined) cambios.nombre_publico = String(p.nombre_publico || '').trim().slice(0, 60); // 1.19: apodo elegido (vacío = sin nombre)
   if (p.cuenta === true) {
     var dias = isEmpty_(p.cuenta_dias) ? cfgEntero_(ctx, 'cuenta_vence_dias', 30, 1, 365) : Number(p.cuenta_dias);
     if (!(dias >= 1 && dias <= 365)) fail_('VALOR_INVALIDO', 'El estado de cuenta se puede mostrar entre 1 y 365 días.');
@@ -3217,7 +3268,7 @@ function portalVistaPrevia_(ctx, p) {
   var cobros = activeRows_(ctx, 'CUENTAS_COBRO').filter(function (x) { return x.activo === true; }).map(function (x) { return { codigo: x.codigo, nombre: x.nombre, tipo: x.tipo }; });
   return { data: {
     contenido: cont, enlace_activo: !isEmpty_(c.portal_codigo), url: enlaceUrl_(ctx, 'portal', c.portal_codigo), publicado_en: c.portal_publicado_en || '',
-    solicitudes: c.portal_solicitudes === true, cuenta: c.portal_cuenta === true, cuenta_vence: c.portal_cuenta_vence || '', cobro: c.portal_cobro || '',
+    solicitudes: c.portal_solicitudes === true, cuenta: c.portal_cuenta === true, cuenta_vence: c.portal_cuenta_vence || '', cobro: c.portal_cobro || '', nombre_publico: c.nombre_publico || '',
     cuenta_problema: cuentaProblema_(ctx, c), cuenta_dias_defecto: cfgEntero_(ctx, 'cuenta_vence_dias', 30, 1, 365), cobros_disponibles: cobros,
     solicitud_general: enlaceSitio_(ctx, 'solicitud')
   }, warnings: [] };
@@ -3264,6 +3315,8 @@ function solicitudEstado_(ctx, p) {
   var cambios = { estado: p.estado, estado_en: now_(ctx), estado_por: ctx.user.correo };
   if (!isEmpty_(p.motivo)) cambios.motivo = String(p.motivo).slice(0, 500);
   if (!isEmpty_(p.trabajo)) cambios.trabajo = String(p.trabajo).slice(0, 40);
+  // 1.19 (E): lo descartado no se guarda; el nombre, teléfono, correo y mensaje se borran de PUBLICO al tiro.
+  if (p.estado === 'Descartada') { cambios.nombre = ''; cambios.telefono = ''; cambios.correo = ''; cambios.vehiculo = ''; cambios.equipos = ''; cambios.mensaje = ''; }
   pub.solicitudGuardar(s.id, cambios);
   return { data: { id: s.id, estado: p.estado }, warnings: [] };
 }
@@ -3277,7 +3330,7 @@ function respuestaEstado_(ctx, p) {
 }
 
 /* ── Ajustes elegibles (avisos, plazos y vigencias) ── */
-var AJUSTES_WEB = ['avisos_modo', 'avisos_horarios', 'avisos_frecuencia_min', 'avisos_correo', 'solicitudes_borrar_meses', 'presupuesto_validez_dias', 'cuenta_vence_dias'];
+var AJUSTES_WEB = ['avisos_modo', 'avisos_horarios', 'avisos_frecuencia_min', 'avisos_correo', 'solicitudes_borrar_meses', 'solicitudes_borrar_dias', 'historial_vence_dias', 'presupuesto_validez_dias', 'cuenta_vence_dias'];
 function ajustesWeb_(ctx) {
   var c = ctx.config || {}, o = {};
   var def = {}; CONTRACT.config.forEach(function (x) { def[x.clave] = x.valor; });
@@ -3317,6 +3370,8 @@ function ajustesGuardar_(ctx, p) {
     cambios.avisos_correo = cs.join(',');
   }
   ent('solicitudes_borrar_meses', 1, 60, 'El plazo de borrado (meses)');
+  ent('solicitudes_borrar_dias', 1, 365, 'El plazo de borrado (días)');
+  ent('historial_vence_dias', 1, 365, 'La duración del enlace del historial (días)');
   ent('presupuesto_validez_dias', 1, 365, 'La validez del presupuesto (días)');
   ent('cuenta_vence_dias', 1, 365, 'La vigencia del estado de cuenta (días)');
   ctx.config = ctx.config || {};
@@ -3365,8 +3420,9 @@ function avisoCorreo_(solicitudes, respuestas, sitio) {
   return { asunto: 'Eisen Garage · ' + n + ' novedad' + (n === 1 ? '' : 'es') + ' web (' + [solicitudes.length ? solicitudes.length + ' solicitud' + (solicitudes.length === 1 ? '' : 'es') : '', respuestas.length ? respuestas.length + ' respuesta' + (respuestas.length === 1 ? '' : 's') : ''].filter(Boolean).join(', ') + ')', cuerpo: L.join('\n') };
 }
 /** Solicitudes y respuestas cuyos datos personales ya cumplieron el plazo (se borran, la fila queda como constancia). */
-function webVencidas_(filas, meses, ahoraIso) {
-  var d = new Date(toMs_(ahoraIso)); d.setUTCMonth(d.getUTCMonth() - Number(meses));
+function webVencidas_(filas, meses, ahoraIso, dias) {
+  var d = new Date(toMs_(ahoraIso));
+  if (dias >= 1) d = new Date(toMs_(ahoraIso) - Number(dias) * 86400000); else d.setUTCMonth(d.getUTCMonth() - Number(meses));
   var limite = d.toISOString();
   return filas.filter(function (x) { return x.recibido_en && x.recibido_en < limite && x.estado !== 'Borrada'; });
 }
@@ -4742,6 +4798,25 @@ function handleInner_(ctx, action, p) {
   fail_('ACCION', 'Acción desconocida: ' + action);
 }
 
+/* ── 1.18.3: patente parcial en lo que ven los clientes (decisión de Víctor 18-11-2026) ──
+ * Primeros 2 caracteres + asteriscos + el último: FHYW86 → FH***6 · BCDF12 → BC***2 · moto ABC12 → AB**2.
+ * Internamente (app, IA, reloj) la patente sigue completa. */
+function patenteMascara_(p) {
+  var s = String(p == null ? '' : p).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!s) return '';
+  if (s.length < 4) return new Array(s.length + 1).join('*');
+  return s.slice(0, 2) + new Array(s.length - 2).join('*') + s.slice(-1);
+}
+/** Reemplaza la patente completa dentro de un texto (con o sin guiones, puntos o espacios) por su versión parcial. */
+function sinPatente_(txt, p, quitar) {
+  var s = String(p == null ? '' : p).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (txt == null || txt === '' || s.length < 4) return txt == null ? '' : txt;
+  var re = new RegExp(s.split('').join('[\\s.\\-·]?'), 'gi');
+  // quitar = true (nombres de vehículo): se saca la patente del nombre; la parcial ya se muestra aparte.
+  if (quitar === true) return String(txt).replace(re, '').replace(/\s{2,}/g, ' ').replace(/^[\s·\-]+|[\s·\-]+$/g, '');
+  return String(txt).replace(re, patenteMascara_(s));
+}
+
 /* ── apps-script/MemoryStore.gs ── */
 // Almacenamiento en memoria con la misma interfaz que SheetStore. Se usa en pruebas y en el modo demo.
 function MemoryStore(seed) {
@@ -4795,6 +4870,7 @@ PublicoMemory.prototype.enlaceActivo = function (huella) {
   var x = this.ENLACES.filter(function (y) { return y.huella === huella && !y.revocado_en; })[0];
   return x ? JSON.parse(JSON.stringify(x)) : null;
 };
+PublicoMemory.prototype.enlacesVencidos = function (tipo, ahoraIso) { return this.ENLACES.filter(function (x) { return x.tipo === tipo && !x.revocado_en && x.vence_en && String(x.vence_en) < ahoraIso; }); };
 PublicoMemory.prototype.enlaceCrear = function (r) { this.ENLACES.push({ huella: r.huella, tipo: r.tipo, recurso_id: r.recurso_id, creado_en: r.creado_en, vence_en: r.vence_en || '', revocado_en: '', ultimo_uso: '', usos: 0 }); };
 PublicoMemory.prototype.enlaceRevocar = function (huella, ahora) { this.ENLACES.forEach(function (x) { if (x.huella === huella && !x.revocado_en) x.revocado_en = ahora; }); };
 PublicoMemory.prototype.publicacionUltima = function (recursoId, tipo) {
@@ -5591,17 +5667,21 @@ function contactoPrincipal(f){ var cs = (f.contactos || []).slice().sort(functio
 function bloqueHistorial(f){
   var e = f.equipo;
   var n = f.trabajos.filter(function(tt){ var t = tt.trabajo; return t.estado_ejecucion === 'Ejecutado' && t.publicable === true && t.resumen_cliente; }).length;
+  // 1.19: el enlace dura N días; vencido = hay que enviar uno nuevo.
+  var hoyTxt = new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  var venc = !!(e.historial_codigo && e.historial_vence && e.historial_vence < hoyTxt), vig = !!(e.historial_codigo && e.historial_vence && !venc);
   var h = '<div class="block"><h3>Historial para el cliente</h3>';
   if (e.historial_publicable !== true) {
     h += '<p style="margin:0 0 10px;color:var(--acero)">Se comparte por enlace (WhatsApp), sin nombre, teléfono ni montos. Primero hay que registrar que el dueño lo autorizó.</p>' +
       '<button class="btn" type="button" data-act="hi-autorizar">Registrar autorización del dueño</button>';
   } else {
     h += '<p style="margin:0 0 6px">Autorizó: <b>' + esc(e.historial_autoriza) + '</b>' + (e.historial_autoriza_fecha ? ' · ' + esc(fmtFecha(e.historial_autoriza_fecha)) : '') + '</p>' +
-      '<p class="s" style="margin:0 0 10px;color:var(--acero)">' + n + ' trabajo' + (n === 1 ? '' : 's') + ' marcado' + (n === 1 ? '' : 's') + ' para el historial' + (e.historial_codigo ? ' · enlace activo' : ' · sin enlace todavía') + (e.historial_publicado_en ? ' · publicado ' + esc(fmtFecha(e.historial_publicado_en)) : '') + '</p>' +
+      '<p class="s" style="margin:0 0 10px;color:var(--acero)">' + n + ' trabajo' + (n === 1 ? '' : 's') + ' marcado' + (n === 1 ? '' : 's') + ' para el historial' + (vig ? ' · enlace activo hasta el ' + esc(fmtFecha(e.historial_vence)) : venc ? ' · <span class="chip">enlace vencido el ' + esc(fmtFecha(e.historial_vence)) + '</span>' : ' · sin enlace todavía') + (e.historial_publicado_en ? ' · publicado ' + esc(fmtFecha(e.historial_publicado_en)) : '') + '</p>' +
       (n ? '' : '<p class="s" style="margin:0 0 10px">Para incluir un trabajo: ábrelo en "Mensaje al cliente", revisa el resumen y marca "Incluir en el historial".</p>') +
       '<div class="inline" style="flex-wrap:wrap"><button class="btn ghost" type="button" data-act="hi-previa">Vista previa</button>' +
-      (n ? '<button class="btn go" type="button" data-act="hi-publicar">' + (e.historial_codigo ? 'Actualizar y enviar' : 'Publicar y enviar') + '</button>' : '') +
-      (e.historial_codigo ? '<button class="btn danger" type="button" data-act="hi-revocar">Revocar enlace</button>' : '') + '</div>';
+      (n && vig ? '<button class="btn go" type="button" data-act="hi-publicar">Actualizar y enviar</button><button class="btn" type="button" data-act="hi-nuevo">Enviar de nuevo (enlace nuevo)</button>' : '') +
+      (n && !vig ? '<button class="btn go" type="button" data-act="hi-nuevo">Publicar y enviar</button>' : '') +
+      (vig ? '<button class="btn danger" type="button" data-act="hi-revocar">Revocar enlace</button>' : '') + '</div>';
   }
   return h + '</div>';
 }
@@ -5634,24 +5714,33 @@ function htmlHistorial(c){
 function vistaPreviaHistorial(){
   call('historial_vista_previa', { equipo_id: S.ficha.equipo.id }).then(function(r){
     var d = r.data;
-    var h = '<p class="s" style="margin:0 0 10px;color:var(--acero)">Así lo verá el cliente. Solo aparecen los trabajos ejecutados con "Incluir en el historial" marcado; sin nombre, teléfono ni montos.</p>';
+    var h = '<p class="s" style="margin:0 0 10px;color:var(--acero)">Así lo verá el cliente. Solo aparecen los trabajos ejecutados con "Incluir en el historial" marcado; sin nombre, teléfono ni montos, y la patente en parte. ' + (d.vencido ? 'El enlace anterior venció el ' + esc(fmtFecha(d.vence)) + '.' : d.enlace_activo && d.vence ? 'El enlace funciona hasta el ' + esc(fmtFecha(d.vence)) + '.' : 'Un enlace nuevo funciona ' + esc(d.dias_defecto) + ' días.') + '</p>';
+    if (d.avisos && d.avisos.length) h += '<div class="block" style="border-color:var(--amarillo,#c90)"><b>Revisa antes de publicar:</b><ul style="margin:6px 0 0;padding-left:18px">' + d.avisos.map(function(a){ return '<li>' + esc(a) + '</li>'; }).join('') + '</ul><p class="s" style="margin:6px 0 0">Corrige el resumen en "Mensaje al cliente" del trabajo si no debe salir.</p></div>';
     h += d.contenido.trabajos.length ? htmlHistorial(d.contenido) : '<div class="empty">Todavía no hay trabajos marcados para el historial.</div>';
     abrirHoja('Vista previa del historial', h);
   }).catch(function(){});
 }
-function publicarHistorial(btn){
-  var f = S.ficha, e = f.equipo; btn.disabled = true;
-  call('historial_publicar', { equipo_id: e.id, op_id: opId() }).then(function(r){
+function abrirHistorialNuevo(){
+  var e = S.ficha.equipo;
+  abrirHoja(e.historial_codigo ? 'Enviar de nuevo el historial' : 'Publicar el historial', '<p style="margin:0 0 10px">Se crea un enlace nuevo' + (e.historial_codigo ? ' y el anterior deja de funcionar' : '') + '. Al vencer, lo publicado se retira solo.</p>' +
+    '<label class="f"><span>Funciona por (días)</span><input class="i" id="hnDias" inputmode="numeric" placeholder="30 (vacío = el plazo de Ajustes)"></label>' +
+    '<button class="btn big go" type="button" data-act="hi-nuevo-ok">Publicar y enviar</button>');
+}
+function publicarHistorial(btn, nuevo){
+  var f = S.ficha, e = f.equipo, req = { equipo_id: e.id, op_id: opId() };
+  if (nuevo) { var dv = $('hnDias').value.trim(); if (dv && !/^\d+$/.test(dv)) { toast('Días: número entero.', 'err'); return; } req.nuevo = true; if (dv) req.dias = Number(dv); }
+  btn.disabled = true;
+  call('historial_publicar', req).then(function(r){
     var d = r.data, c = contactoPrincipal(f);
     var veh = [e.marca, e.modelo].filter(Boolean).join(' ') || e.nombre_corto || 'vehículo';
-    S.hiMsg = ('Hola ' + primerNombre(c && c.nombre) + ', le compartimos el historial de mantención de su ' + veh + (e.patente ? ' (' + String(e.patente).toUpperCase() + ')' : '') + ' en Eisen Garage. Puede guardar este enlace y revisarlo cuando quiera; siempre muestra lo último:\n' + d.url + '\n\n' + FIRMA_EG).replace('Hola , ', 'Hola, ');
+    S.hiMsg = ('Hola ' + primerNombre(c && c.nombre) + ', le compartimos el historial de mantención de su ' + veh + (e.patente ? ' (' + String(e.patente).toUpperCase() + ')' : '') + ' en Eisen Garage. El enlace funciona hasta el ' + fmtFecha(d.vence) + ':\n' + d.url + '\n\n' + FIRMA_EG).replace('Hola , ', 'Hola, ');
     S.hiUrl = d.url;
     var num = waNumero(c && c.telefono);
     var h = '<p style="margin:0 0 8px">' + (d.nueva ? 'Publicado (versión ' + d.revision + ', ' + d.trabajos + ' trabajo' + (d.trabajos === 1 ? '' : 's') + ').' : 'Sin cambios desde la última publicación.') + '</p>' +
       '<label class="f"><span>Mensaje</span><textarea class="i" id="hiTexto" rows="8">' + esc(S.hiMsg) + '</textarea></label>' +
       '<div style="display:grid;gap:8px"><a class="btn big go" id="hiWa" target="_blank" rel="noopener" style="text-align:center;text-decoration:none" href="https://wa.me/' + num + '?text=' + encodeURIComponent(S.hiMsg) + '">Enviar por WhatsApp' + (c ? ' a ' + esc(primerNombre(c.nombre)) : '') + '</a>' +
       '<button class="btn big ghost" type="button" data-act="hi-copiar">Copiar enlace</button></div>' +
-      '<p class="s" style="color:var(--acero);margin-top:10px">El enlace no cambia al actualizar: el cliente siempre ve lo último publicado.</p>';
+      '<p class="s" style="color:var(--acero);margin-top:10px">' + (d.enlace_nuevo ? 'Enlace nuevo' : 'Mismo enlace') + ', funciona hasta el ' + esc(fmtFecha(d.vence)) + '. Al vencer se retira solo; para compartir otra vez usa "Enviar de nuevo".</p>';
     abrirHoja('Historial publicado', h);
     $('hiTexto').addEventListener('input', function(){ $('hiWa').href = 'https://wa.me/' + num + '?text=' + encodeURIComponent(this.value); });
     abrirFichaSilenciosa(e.id);
@@ -5742,7 +5831,8 @@ function pintarWeb(){
     '<label class="f" id="ajHorF"><span>Horarios (HH:MM, separados por coma)</span><input class="i" id="ajHor" value="' + esc(a.avisos_horarios) + '" placeholder="09:00, 14:00, 19:00"></label>' +
     '<label class="f" id="ajFreF"><span>Cada cuántos minutos (15 a 1440)</span><input class="i" id="ajFre" inputmode="numeric" value="' + esc(a.avisos_frecuencia_min) + '"></label>' +
     '<p class="s" style="color:var(--acero);margin:0 0 8px">Solo se envía si hay algo nuevo. Se revisa cada 15 minutos.</p>' +
-    '<div class="row2"><label class="f"><span>Borrar datos de solicitudes después de (meses)</span><input class="i" id="ajBor" inputmode="numeric" value="' + esc(a.solicitudes_borrar_meses) + '"></label>' +
+    '<div class="row2"><label class="f"><span>Borrar nombre, teléfono y mensaje de solicitudes después de (días)</span><input class="i" id="ajBor" inputmode="numeric" value="' + esc(a.solicitudes_borrar_dias) + '"></label>' +
+    '<label class="f"><span>El enlace del historial funciona (días)</span><input class="i" id="ajHis" inputmode="numeric" value="' + esc(a.historial_vence_dias) + '"></label></div><div class="row2">' +
     '<label class="f"><span>Validez del presupuesto (días)</span><input class="i" id="ajVal" inputmode="numeric" value="' + esc(a.presupuesto_validez_dias) + '"></label></div>' +
     '<label class="f"><span>El estado de cuenta se ve por (días)</span><input class="i" id="ajCta" inputmode="numeric" value="' + esc(a.cuenta_vence_dias) + '"></label>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn go" type="button" data-act="aj-guardar">Guardar ajustes</button><button class="btn ghost" type="button" data-act="web-cobros">Medios de cobro</button></div></div>';
@@ -5751,7 +5841,7 @@ function pintarWeb(){
   $('ajModo').addEventListener('change', modo); modo();
 }
 function guardarAjustes(btn){
-  var aj = { avisos_modo: $('ajModo').value, avisos_correo: $('ajCorreo').value.trim(), avisos_frecuencia_min: Number($('ajFre').value), solicitudes_borrar_meses: Number($('ajBor').value), presupuesto_validez_dias: Number($('ajVal').value), cuenta_vence_dias: Number($('ajCta').value) };
+  var aj = { avisos_modo: $('ajModo').value, avisos_correo: $('ajCorreo').value.trim(), avisos_frecuencia_min: Number($('ajFre').value), solicitudes_borrar_dias: Number($('ajBor').value), historial_vence_dias: Number($('ajHis').value), presupuesto_validez_dias: Number($('ajVal').value), cuenta_vence_dias: Number($('ajCta').value) };
   if (aj.avisos_modo === 'Horarios' || $('ajHor').value.trim()) aj.avisos_horarios = $('ajHor').value.trim();
   btn.disabled = true;
   call('ajustes_guardar', { ajustes: aj, op_id: opId() }).then(function(r){ toast('Ajustes guardados.'); WEB.data.ajustes = r.data.ajustes; btn.disabled = false; }).catch(function(){ btn.disabled = false; });
@@ -5787,6 +5877,7 @@ function abrirPortal(clienteId){
     var h = '<div class="block"><p style="margin:0 0 6px">' + (d.enlace_activo ? '<b>Enlace activo</b>' + (d.publicado_en ? ' · publicado ' + esc(fmtFecha(d.publicado_en)) : '') : 'Sin enlace todavía.') + '</p>' +
       '<p class="s" style="margin:0;color:var(--acero)">Un solo enlace para el cliente: sus vehículos con el historial autorizado, sus presupuestos y, si lo eliges, pedir trabajos y ver su estado de cuenta. Sin costos ni notas internas.</p></div>' +
       '<div class="block"><h3>Qué incluye</h3><ul style="margin:0 0 8px;padding-left:18px"><li>' + cont.equipos.length + ' vehículo' + (cont.equipos.length === 1 ? '' : 's') + ' · ' + Object.keys(cont.historiales).length + ' con historial publicado</li><li>' + cont.presupuestos.length + ' presupuesto' + (cont.presupuestos.length === 1 ? '' : 's') + ' publicado' + (cont.presupuestos.length === 1 ? '' : 's') + '</li></ul>' +
+      '<label class="f"><span>Nombre o apodo que verá el cliente (vacío = solo "Hola")</span><input class="i" id="poApodo" maxlength="60" value="' + esc(d.nombre_publico || '') + '" placeholder="Ej. Don Pedro"></label>' +
       '<label class="f inline" style="gap:8px"><input type="checkbox" id="poSol"' + (d.solicitudes ? ' checked' : '') + '> Puede pedir trabajos desde el enlace</label>' +
       '<label class="f inline" style="gap:8px"><input type="checkbox" id="poCta"' + (d.cuenta ? ' checked' : '') + '> Mostrar su estado de cuenta</label>' +
       '<div id="poCtaOp"><label class="f"><span>Visible por (días)</span><input class="i" id="poDias" inputmode="numeric" value="' + esc(d.cuenta_dias_defecto) + '"></label>' +
@@ -5804,7 +5895,7 @@ function publicarPortal(btn){
   var P = S.portal; if (!P) return;
   var cobro = Array.prototype.map.call(document.querySelectorAll('.poCobro:checked'), function(c){ return c.value; }).join(',');
   btn.disabled = true;
-  call('portal_publicar', { cliente_id: P.cliente_id, solicitudes: $('poSol').checked, cuenta: $('poCta').checked, cuenta_dias: $('poCta').checked ? Number($('poDias').value) : '', cobro: cobro, op_id: opId() }).then(function(r){
+  call('portal_publicar', { cliente_id: P.cliente_id, solicitudes: $('poSol').checked, cuenta: $('poCta').checked, cuenta_dias: $('poCta').checked ? Number($('poDias').value) : '', cobro: cobro, nombre_publico: $('poApodo').value.trim(), op_id: opId() }).then(function(r){
     var c = contactoCliente(P.cliente_id);
     var txt = 'Hola ' + (primerNombre(c && c.nombre) || '') + ', le compartimos su portal de Eisen Garage: ahí puede ver sus vehículos' + ($('poCta').checked ? ', su estado de cuenta' : '') + ' y presupuestos' + ($('poSol').checked ? ', y pedirnos trabajos' : '') + '. Guarde este enlace, es solo para usted:\n' + r.data.url + '\n\n' + FIRMA_EG;
     hojaEnlace('Portal publicado', r.data.nueva ? 'Publicado (versión ' + r.data.revision + ').' : 'Sin cambios desde la última publicación.', txt.replace('Hola , ', 'Hola, '), r.data.url, P.cliente_id);
@@ -6534,6 +6625,8 @@ document.addEventListener('click', function(ev){
   else if (a === 'hi-autorizar-ok') guardarAutorizacion(el);
   else if (a === 'hi-previa') vistaPreviaHistorial();
   else if (a === 'hi-publicar') publicarHistorial(el);
+  else if (a === 'hi-nuevo') abrirHistorialNuevo();
+  else if (a === 'hi-nuevo-ok') publicarHistorial(el, true);
   else if (a === 'hi-copiar') copiarEnlaceHistorial();
   else if (a === 'hi-revocar') abrirRevocar();
   else if (a === 'hi-revocar-ok') revocarHistorial(el);
