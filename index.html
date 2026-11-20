@@ -3849,7 +3849,8 @@ function indiceClientesTexto_(ctx) {
   var enl = ctx.enlacesContexto || {};
   if (enl[CATALOGO_ARCHIVO]) L.push('Proveedores y precios (uso interno): ' + CATALOGO_ARCHIVO + ' — ' + enl[CATALOGO_ARCHIVO]);
   if (enl[CAPTURAS_ARCHIVO]) L.push('Capturas pendientes (EG Captura): ' + CAPTURAS_ARCHIVO + ' — ' + enl[CAPTURAS_ARCHIVO]);
-  if (enl[CATALOGO_ARCHIVO] || enl[CAPTURAS_ARCHIVO]) L.push('');
+  if (enl[RELOJ_ARCHIVO]) L.push('Notas del reloj por registrar: ' + RELOJ_ARCHIVO + ' — ' + enl[RELOJ_ARCHIVO]);
+  if (enl[CATALOGO_ARCHIVO] || enl[CAPTURAS_ARCHIVO] || enl[RELOJ_ARCHIVO]) L.push('');
   L.push('| Código | Cliente | Tipo | Estado | Contactos | Vehículos y equipos | Archivo de contexto |');
   L.push('|---|---|---|---|---|---|---|');
   cls.forEach(function (c) {
@@ -3866,6 +3867,7 @@ function indiceClientesTexto_(ctx) {
 function contextoDocumento_(ctx, id) {
   if (id === CONTEXTO_CATALOGO) return { nombre: CATALOGO_ARCHIVO, texto: catalogoTexto_(ctx) };
   if (id === CONTEXTO_CAPTURAS) return { nombre: CAPTURAS_ARCHIVO, texto: capturasPendientesTexto_(ctx) };
+  if (id === CONTEXTO_RELOJ) return { nombre: RELOJ_ARCHIVO, texto: notasRelojTexto_(ctx) };
   if (id === CONTEXTO_INDICE) return { nombre: INDICE_ARCHIVO, texto: indiceClientesTexto_(ctx) };
   var c = getRow_(ctx, 'CLIENTES', id);
   return c ? { nombre: contextoArchivo_(c), texto: contextoTexto_(ctx, c) } : null;
@@ -4688,6 +4690,47 @@ function capturasPendientesTexto_(ctx) {
   return L.join('\n') + '\n';
 }
 
+/** 1.22: "notas-reloj.md" (Proyectos IA EG / Contextos): solo las notas del reloj que aún no se registran (Nueva o Asignada),
+ *  agrupadas por trabajo, lo más reciente arriba. Cuando una nota se procesa o se descarta, sale sola del archivo. */
+var CONTEXTO_RELOJ = '__reloj';
+var RELOJ_ARCHIVO = 'notas-reloj.md';
+function notasRelojPendientes_(ctx, trabajoId) {
+  return activeRows_(ctx, 'CAPTURAS').filter(function (c) {
+    return c.origen === 'EG Reloj' && c.tipo === 'Nota' && (c.estado === 'Nueva' || c.estado === 'Asignada') && c.corte !== true && !isEmpty_(c.texto) &&
+      (!trabajoId || c.trabajo_id === trabajoId);
+  }).sort(function (a, b) { return String(a.fecha) < String(b.fecha) ? -1 : String(a.fecha) > String(b.fecha) ? 1 : (String(a.codigo) < String(b.codigo) ? -1 : 1); });
+}
+function notasRelojTexto_(ctx) {
+  var celda = function (s, n) { return String(s == null ? '' : s).replace(/\s+/g, ' ').slice(0, n || 2000); };
+  var ns = notasRelojPendientes_(ctx);
+  var L = ['# Notas del reloj — Eisen Garage', '', 'Formato EG-NOTAS-RELOJ-1 · actualizado ' + localDate_(now_(ctx)) + ' ' + localHM_(now_(ctx)) + ' (hora de Chile) por la app EG Registro. SOLO LECTURA.',
+    'Solo las notas del reloj que aún no se registran. Cuando una se usa en un paquete (Procesada) o se descarta, sale de aquí. Para registrarlas: capturas-pendientes.md y regla 31.', ''];
+  if (!ns.length) { L.push('No hay notas del reloj pendientes.'); return L.join('\n') + '\n'; }
+  var grupos = {}, orden = [];
+  ns.forEach(function (c) { var k = c.trabajo_id || ''; if (!grupos[k]) { grupos[k] = []; orden.push(k); } grupos[k].push(c); });
+  // El trabajo con la nota más reciente va primero; "Sin trabajo" al final.
+  orden.sort(function (a, b) {
+    if (!a) return 1; if (!b) return -1;
+    var ua = grupos[a][grupos[a].length - 1].fecha, ub = grupos[b][grupos[b].length - 1].fecha;
+    return String(ua) > String(ub) ? -1 : 1;
+  });
+  orden.forEach(function (k) {
+    var tr = k ? getRow_(ctx, 'TRABAJOS', k) : null, cli = tr && tr.cliente_id ? getRow_(ctx, 'CLIENTES', tr.cliente_id) : null;
+    var eq = tr && tr.equipo_id ? getRow_(ctx, 'EQUIPOS', tr.equipo_id) : null;
+    L.push('## ' + (tr ? tr.codigo + ' · ' + celda(tr.descripcion, 60) + (eq ? ' · ' + celda(eq.nombre_corto, 40) : '') + (cli ? ' · ' + cli.codigo + ' ' + celda(cli.nombre, 60) : '') : 'Sin trabajo asignado'));
+    grupos[k].forEach(function (c) { L.push('- ' + localDate_(c.fecha) + ' ' + localHM_(c.fecha) + ' · ' + c.codigo + ': ' + celda(c.texto, 2000)); });
+    L.push('');
+  });
+  L.push(ns.length + ' nota(s) del reloj pendiente(s).');
+  return L.join('\n') + '\n';
+}
+/** Acción "notas_reloj" (botón en el trabajo): notas pendientes del reloj de ese trabajo (o todas). */
+function vistaNotasReloj_(ctx, p) {
+  requireAdmin_(ctx);
+  var ns = notasRelojPendientes_(ctx, p.trabajo_id || '');
+  return { data: { notas: ns.map(function (c) { return { id: c.id, codigo: c.codigo, fecha: c.fecha, texto: c.texto, estado: c.estado, trabajo_id: c.trabajo_id || '' }; }) }, warnings: [] };
+}
+
 /** Marca el archivo de una captura como borrado (Api.gs lo manda a la papelera de Drive solo si está en la lista de borrables). */
 function capturaMarcarBorrado_(ctx, p, hoyIso) {
   requireAdmin_(ctx);
@@ -5024,6 +5067,7 @@ function handleInner_(ctx, action, p) {
     case 'familia_corte': return familiaCorte_(ctx, p);
     case 'gastos_resumen': return gastosResumen_(ctx, p);
     case 'capturas_pendientes': requireAdmin_(ctx); return { data: { texto: capturasPendientesTexto_(ctx) }, warnings: [] };
+    case 'notas_reloj': return vistaNotasReloj_(ctx, p);
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
@@ -5571,6 +5615,7 @@ function abrirTrabajo(id){
         (abierta ? '<p class="s" style="color:var(--acero);margin:8px 0 0">Tu sesión en otro trabajo se pausará con el motivo "Otro trabajo".</p>' : '') + '</div>';
     }
     if (isAdmin()) h += '<div class="block inline" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><span>Presupuesto para el cliente</span><button class="btn" type="button" data-act="ps-lista-tr" data-id="' + esc(id) + '">Presupuestos</button></div>';
+    if (isAdmin()) h += '<div class="block inline" style="justify-content:space-between;flex-wrap:wrap;gap:8px"><span>Lo dictado en el reloj (sin registrar)</span><button class="btn" type="button" data-act="nr-ver" data-id="' + esc(id) + '">Notas del reloj</button></div>';
     h += '<div class="block"><h3>Agregar al registro</h3>' +
       '<div class="row2"><label class="f"><span>Tipo</span><select class="i" id="dTipo">' + options(S.inicio.enums.tipo_detalle, 'Observación') + '</select></label>' +
       '<label class="f"><span>Componente</span><input class="i" id="dComp" placeholder="Ej. filtro de aceite"></label></div>' +
@@ -5867,6 +5912,21 @@ function crearNuevoTrabajo(btn){
       return cargar().then(function(){ abrirTrabajo(tr.id); });
     });
   }).catch(function(){ btn.disabled = false; });
+}
+
+/* ───── 1.22: Notas del reloj sin registrar (de un trabajo o todas) ───── */
+function abrirNotasReloj(trabajoId){
+  call('notas_reloj', trabajoId ? { trabajo_id: trabajoId } : {}).then(function(r){
+    var ns = r.data.notas || [];
+    var hm = function(iso){ var d = new Date(iso); return isNaN(d) ? '' : d.toLocaleString('es-CL', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); };
+    S.notasReloj = ns.map(function(n){ return hm(n.fecha) + ' · ' + n.codigo + ': ' + n.texto; }).join('\n\n');
+    var h = '<div class="block"><p class="s" style="margin:0">' + (trabajoId ? 'Notas dictadas en el reloj para este trabajo' : 'Todas las notas dictadas en el reloj') + ' que aún no se registran. Al procesarlas o descartarlas, salen de aquí.</p></div>';
+    h += ns.length ? '<div class="block"><ul style="margin:0;padding-left:18px">' + ns.map(function(n){ return '<li style="margin-bottom:8px"><span class="s" style="color:var(--acero)">' + esc(hm(n.fecha)) + ' · ' + esc(n.codigo) + '</span><br>' + esc(n.texto) + '</li>'; }).join('') + '</ul></div>'
+      : '<div class="block"><p style="margin:0">No hay notas del reloj pendientes.</p></div>';
+    h += '<div class="inline" style="flex-wrap:wrap;gap:8px">' + (ns.length ? '<button class="btn" type="button" data-act="nr-copiar">Copiar todo</button>' : '') +
+      (trabajoId ? '<button class="btn ghost" type="button" data-act="nr-ver" data-id="">Ver todas</button><button class="btn ghost" type="button" data-act="nr-volver" data-id="' + esc(trabajoId) + '">Volver al trabajo</button>' : '') + '</div>';
+    abrirHoja('Notas del reloj', h);
+  }).catch(function(e){ toast(e.message || 'Error', 'err'); });
 }
 
 /* ───── Mensaje al cliente (resumen de un trabajo ejecutado) ───── */
@@ -7003,6 +7063,9 @@ document.addEventListener('click', function(ev){
   else if (a === 'nt-ficha'){ var fe = S.ficha; if (fe && fe.cliente) abrirNuevoTrabajo({ id: fe.equipo.id, nombre_corto: fe.equipo.nombre_corto, patente: fe.equipo.patente, cliente_id: fe.cliente.id, cliente: fe.cliente.nombre }); }
   else if (a === 'nt-crear') crearNuevoTrabajo(el);
   else if (a === 'msg-cliente') abrirMensajeCliente(id);
+  else if (a === 'nr-ver') abrirNotasReloj(id);
+  else if (a === 'nr-copiar') copiarTexto(S.notasReloj || '', 'Notas copiadas.');
+  else if (a === 'nr-volver') abrirTrabajo(id);
   else if (a === 'msg-copiar') copiarMensaje();
   else if (a === 'msg-guardar') guardarResumen(el);
   else if (a === 'hi-autorizar') abrirAutorizacion();
