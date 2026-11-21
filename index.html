@@ -1523,6 +1523,9 @@ function sessionInterval_(s) {
 function checkSessionOverlap_(ctx, row) {
   var mine = sessionInterval_(row);
   if (!mine) return;
+  // 1.24: un inicio antiguo llegado tarde desde el reloj (Informada, abierta) solo se compara por su hora de inicio;
+  // el intervalo completo se revisa al cerrarla (su término también viene del reloj).
+  if (row.estado === 'Abierta' && row.precision === 'Informada') mine = [mine[0], mine[0] + 1];
   activeRows_(ctx, 'SESIONES').forEach(function (s) {
     if (s.id === row.id || s.usuario_id !== row.usuario_id || s.estado === 'Anulada') return;
     var o = sessionInterval_(s);
@@ -2173,7 +2176,7 @@ function sesionIniciar_(ctx, p) {
   var res = insertRow_(ctx, 'SESIONES', {
     cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, usuario_id: uid, registrado_por: ctx.user.id,
     actividad: p.actividad || '', modalidad: 'En vivo', dispositivo: p.dispositivo || '', fecha: localDate_(at),
-    inicio: at, estado: 'Abierta', precision: 'Exacta'
+    inicio: at, estado: 'Abierta', precision: p.precision_reloj === 'Informada' ? 'Informada' : 'Exacta'
   }, { system: true, opId: p.op_id });
   if (trabajo.estado_ejecucion === 'Pendiente') {
     var ch = { estado_ejecucion: 'En curso' };
@@ -2197,7 +2200,7 @@ function sesionCerrar_(ctx, p, conMotivo) {
   if (s.estado !== 'Abierta') fail_('YA_CERRADA', 'La sesión ' + s.codigo + ' ya estaba cerrada.');
   if (conMotivo && isEmpty_(p.motivo_pausa)) fail_('REQUERIDO', 'Indica el motivo de la pausa.');
   if (!isEmpty_(p.motivo_pausa)) normalizeValue_(ctx, 'SESIONES', colMap_('SESIONES').motivo_pausa, p.motivo_pausa, undefined);
-  var res = cerrarSesionInterna_(ctx, s, p.motivo_pausa, p.op_id, { notas: p.notas, actividad: p.actividad });
+  var res = cerrarSesionInterna_(ctx, s, p.motivo_pausa, p.op_id, { notas: p.notas, actividad: p.actividad, precision: p.precision_reloj === 'Informada' ? 'Informada' : '' });
   return { data: project_(ctx, 'SESIONES', res.row), warnings: res.warnings };
 }
 
@@ -2873,6 +2876,18 @@ function chileMs_(y, m, d, h, mi) {
  * Entiende la hora dicha en español: "en 2 horas", "en media hora", "hoy a las 5 de la tarde", "mañana a las 10",
  * "pasado mañana", "el lunes a las 9:30", "a las 15". Sin hora → 9:00. Sin día y la hora ya pasó → mañana. null si no hay pistas.
  */
+/** 1.24: número de 0 a 59 en dígitos o en palabras (sin tildes): "diecisiete", "veintitres", "treinta y cinco", "media", "cuarto". null si no. */
+function palabraNum_(s) {
+  s = String(s || '').trim();
+  if (/^\d+$/.test(s)) return Number(s);
+  var base = { un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15,
+    dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24,
+    veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, treinta: 30, cuarenta: 40, cincuenta: 50, media: 30, cuarto: 15 };
+  if (base[s] !== undefined) return base[s];
+  var m = /^(treinta|cuarenta|cincuenta) y (\w+)$/.exec(s);
+  if (m && base[m[2]] !== undefined && base[m[2]] < 10) return base[m[1]] + base[m[2]];
+  return null;
+}
 function interpretarCuando_(texto, ahoraMs) {
   var t = ' ' + sinTildes_(texto).replace(/[,;]/g, ' ') + ' ';
   var nums = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, quince: 15, veinte: 20, veinticinco: 25, treinta: 30, cuarenta: 40, 'cuarenta y cinco': 45, cincuenta: 50, media: 30, cuarto: 15 };
@@ -2890,14 +2905,19 @@ function interpretarCuando_(texto, ahoraMs) {
   var dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
   dias.forEach(function (x, i) { if (dia === null && new RegExp('\\s' + x + '\\s').test(t)) dia = ((i - hoy.dow + 7) % 7) || 7; });
   var hh = null, mm = 0;
-  // 1.23 (revisión GPT 9): "a la una", minutos en palabras ("y quince", "y treinta"), y la hora no puede seguir con más dígitos ("a las 123").
-  var HORA = '(\\d{1,2}(?!\\d)|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)';
-  var MINS = '(\\d{1,2}(?!\\d)|media|cuarto|cinco|diez|quince|veinte|veinticinco|treinta|cuarenta y cinco|cuarenta|cincuenta)';
+  // 1.23/1.24 (revisión GPT 9 y 2-7): hora y minutos en dígitos o en palabras ("a la una", "a las trece", "9 y diecisiete",
+  // "9 y treinta y cinco"); la hora no puede seguir con más dígitos ("a las 123"). Si se dice una hora y no se entiende
+  // completa, devuelve null (SIN_HORA): nunca otra hora inventada.
+  var U = '(?:uno|una|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)';
+  var HORA = '(\\d{1,2}(?!\\d)|veintiuna|veintiuno|veintidos|veintitres|veinte|diecinueve|dieciocho|diecisiete|dieciseis|quince|catorce|trece|doce|once|diez|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve)';
+  var MINS = '(\\d{1,2}(?!\\d)|(?:treinta|cuarenta|cincuenta) y ' + U + '|veinti' + U + '|dieci(?:seis|siete|ocho|nueve)|treinta|cuarenta|cincuenta|veinte|quince|catorce|trece|doce|once|diez|media|cuarto|cinco|seis|siete|ocho|nueve|dos|tres|cuatro|uno|un)';
   var r = new RegExp('\\sa las?\\s+' + HORA + '(?:\\s*(?::|\\.|\\sy\\s|\\s)\\s*' + MINS + '(?=\\s))?(?=\\s)').exec(t);
-  // Dice una hora que no se entendió completa → null (SIN_HORA), nunca otra hora inventada.
-  if (!r && new RegExp('\\sa las?\\s+(\\d|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)').test(t)) return null;
+  if (!r && new RegExp('\\sa las?\\s+(\\d|' + HORA.slice(1, -1).replace('\\d{1,2}(?!\\d)|', '') + ')').test(t)) return null;
+  // Quedó algo de la hora sin leer ("a las 9 y pico", "a las 9 y cuarenta y algo") → no entendida.
+  if (r && /^\s*y\s+(\d|uno|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cuarenta|cincuenta|media|cuarto|pico)/.test(t.slice(r.index + r[0].length))) return null;
   if (r) {
-    hh = n(r[1]); mm = r[2] ? n(r[2]) : 0;
+    hh = palabraNum_(r[1]); mm = r[2] ? palabraNum_(r[2]) : 0;
+    if (hh === null || mm === null) return null;
     if (/\sde la (tarde|noche)\s/.test(t) && hh < 12) hh += 12;
     else if (!deManana && hh >= 1 && hh <= 7) hh += 12; // "a las 5" en el taller = 17:00
   } else if (/\smediodia\s/.test(t)) hh = 12;
@@ -2934,9 +2954,10 @@ function recordatorioCalendario_(ctx, id) {
   var cambios = { calendario_huella: huella }, w = [];
   try {
     // 1.23 (revisión GPT 5): si el borrado falla, lanza y la fila conserva el id (se reintenta al volver a editar).
-    if (!vivo) { if (r.calendario_evento_id) ctx.calendario.borrar(r.calendario_evento_id); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')'; }
+    if (!vivo) { if (r.calendario_evento_id) ctx.calendario.borrar(r.calendario_evento_id, o); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')'; }
     else {
-      var eid = r.calendario_evento_id && ctx.calendario.actualizar(r.calendario_evento_id, o) ? r.calendario_evento_id : ctx.calendario.crear(o);
+      var up = r.calendario_evento_id ? ctx.calendario.actualizar(r.calendario_evento_id, o) : false;
+      var eid = up === true ? r.calendario_evento_id : (typeof up === 'string' ? up : ctx.calendario.crear(o));
       cambios.calendario_evento_id = eid; cambios.calendario_estado = 'OK';
     }
   } catch (x) {
@@ -2959,8 +2980,10 @@ var MANTENCION_FORMATO = 'EG-MANTENCION-1';
 function esMantencion_(tipo) { return /mantenci|aceite/i.test(String(tipo || '')); }
 function mantencionContenido_(ctx, e) {
   // 1.23 (revisión GPT 11): los ítems publicables salen de la lista editable vigente (LISTAS), igual para últimos y próximos.
-  var vig = listasActivas_(ctx).items_mantencion;
-  var orden = (vig && vig.length ? vig : (CONTRACT.listas.items_mantencion || [])).filter(function (x) { return x !== 'Otro'; });
+  // 1.24 (revisión GPT 2-8): si el taller ya tiene esa lista en LISTAS, se respeta tal cual (aunque quede vacía);
+  // la lista de fábrica solo se usa si la lista no existe en LISTAS.
+  var enListas = activeRows_(ctx, 'LISTAS').some(function (l) { return l.lista === 'items_mantencion'; });
+  var orden = (enListas ? (listasActivas_(ctx).items_mantencion || []) : (CONTRACT.listas.items_mantencion || [])).filter(function (x) { return x !== 'Otro'; });
   var trab = {};
   activeRows_(ctx, 'TRABAJOS').forEach(function (t) { if (t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado') trab[t.id] = t; });
   var ult = {}, ultimo = null;
@@ -4756,7 +4779,7 @@ function capturaMarcarBorrado_(ctx, p, hoyIso) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar', 'mantencion_publicar', 'mantencion_revocar'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar', 'mantencion_publicar', 'mantencion_revocar', 'mantencion_refrescar_todos'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -4999,6 +5022,13 @@ function handle_(ctx, action, p) {
       else if (table === 'DETALLE') [tx, tx.base].forEach(function (s2) { var t = s2.get('TRABAJOS', f.trabajo_id); if (t && t.equipo_id) eqs[t.equipo_id] = true; });
     };
     tx.log.forEach(function (e) { anotar(tx, e.table, e.id); anotar(tx.base, e.table, e.id); });
+    // 1.24 (revisión GPT 2-8): un cambio en la lista de ítems (o la orden de rehacer todo) refresca todos los resúmenes publicados.
+    var cambiaLista = action === 'mantencion_refrescar_todos' || tx.log.some(function (e) {
+      if (e.table !== 'LISTAS') return false;
+      var a = tx.get('LISTAS', e.id), b = tx.base.get('LISTAS', e.id);
+      return (a && a.lista === 'items_mantencion') || (b && b.lista === 'items_mantencion');
+    });
+    if (cambiaLista) activeRows_(c, 'EQUIPOS').forEach(function (x) { if (!isEmpty_(x.mantencion_codigo)) eqs[x.id] = true; });
     if (action !== 'mantencion_publicar' && action !== 'mantencion_revocar') Object.keys(eqs).forEach(function (eid) { (res.warnings = res.warnings || []).push.apply(res.warnings, mantencionRefrescar_(c, eid)); });
   }
   // 1.21: los recordatorios creados o cambiados se copian a Google Calendar (si hay calendario conectado).
@@ -5084,6 +5114,8 @@ function handleInner_(ctx, action, p) {
     case 'gastos_resumen': return gastosResumen_(ctx, p);
     case 'capturas_pendientes': requireAdmin_(ctx); return { data: { texto: capturasPendientesTexto_(ctx) }, warnings: [] };
     case 'notas_reloj': return vistaNotasReloj_(ctx, p);
+    // 1.24: rehace todos los resúmenes de mantención publicados (lo hace handle_ al cerrar la operación).
+    case 'mantencion_refrescar_todos': requireAdmin_(ctx); return { data: { equipos: activeRows_(ctx, 'EQUIPOS').filter(function (x) { return !isEmpty_(x.mantencion_codigo); }).length }, warnings: [] };
     case 'recepcion_confirmar':
       requireAdmin_(ctx);
       var cambiosRc = { estado: 'Confirmada' };
