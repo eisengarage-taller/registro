@@ -2176,7 +2176,7 @@ function sesionIniciar_(ctx, p) {
   var res = insertRow_(ctx, 'SESIONES', {
     cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, usuario_id: uid, registrado_por: ctx.user.id,
     actividad: p.actividad || '', modalidad: 'En vivo', dispositivo: p.dispositivo || '', fecha: localDate_(at),
-    inicio: at, estado: 'Abierta', precision: p.precision_reloj === 'Informada' ? 'Informada' : 'Exacta'
+    inicio: at, estado: 'Abierta', precision: ctx.precisionReloj === 'Informada' ? 'Informada' : 'Exacta'
   }, { system: true, opId: p.op_id });
   if (trabajo.estado_ejecucion === 'Pendiente') {
     var ch = { estado_ejecucion: 'En curso' };
@@ -2200,7 +2200,7 @@ function sesionCerrar_(ctx, p, conMotivo) {
   if (s.estado !== 'Abierta') fail_('YA_CERRADA', 'La sesión ' + s.codigo + ' ya estaba cerrada.');
   if (conMotivo && isEmpty_(p.motivo_pausa)) fail_('REQUERIDO', 'Indica el motivo de la pausa.');
   if (!isEmpty_(p.motivo_pausa)) normalizeValue_(ctx, 'SESIONES', colMap_('SESIONES').motivo_pausa, p.motivo_pausa, undefined);
-  var res = cerrarSesionInterna_(ctx, s, p.motivo_pausa, p.op_id, { notas: p.notas, actividad: p.actividad, precision: p.precision_reloj === 'Informada' ? 'Informada' : '' });
+  var res = cerrarSesionInterna_(ctx, s, p.motivo_pausa, p.op_id, { notas: p.notas, actividad: p.actividad, precision: ctx.precisionReloj === 'Informada' ? 'Informada' : '' });
   return { data: project_(ctx, 'SESIONES', res.row), warnings: res.warnings };
 }
 
@@ -2211,9 +2211,9 @@ function sesionPosterior_(ctx, p) {
   var d = {
     cliente_id: trabajo.cliente_id, trabajo_id: trabajo.id, usuario_id: p.usuario_id || ctx.user.id,
     registrado_por: ctx.user.id === 'sistema' ? (p.usuario_id || '') : ctx.user.id,
-    actividad: p.actividad || '', modalidad: 'Posterior', dispositivo: p.dispositivo || '',
+    actividad: p.actividad || '', modalidad: p.dispositivo === 'Reloj' ? 'En vivo' : 'Posterior', dispositivo: p.dispositivo || '',
     inicio: p.inicio || '', fin: p.fin || '', duracion_min: isEmpty_(p.inicio) ? p.duracion_min : '',
-    fecha: p.fecha || '', precision: p.precision || 'Informada', estado: 'Cerrada', notas: p.notas || ''
+    fecha: p.fecha || '', precision: p.precision || 'Informada', estado: 'Cerrada', notas: p.notas || '', motivo_pausa: p.motivo_pausa || ''
   };
   var res = insertRow_(ctx, 'SESIONES', d, { system: true, opId: p.op_id });
   return { data: res.row, warnings: res.warnings };
@@ -2914,11 +2914,18 @@ function interpretarCuando_(texto, ahoraMs) {
   var r = new RegExp('\\sa las?\\s+' + HORA + '(?:\\s*(?::|\\.|\\sy\\s|\\s)\\s*' + MINS + '(?=\\s))?(?=\\s)').exec(t);
   if (!r && new RegExp('\\sa las?\\s+(\\d|' + HORA.slice(1, -1).replace('\\d{1,2}(?!\\d)|', '') + ')').test(t)) return null;
   // Quedó algo de la hora sin leer ("a las 9 y pico", "a las 9 y cuarenta y algo") → no entendida.
-  if (r && /^\s*y\s+(\d|uno|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cuarenta|cincuenta|media|cuarto|pico)/.test(t.slice(r.index + r[0].length))) return null;
+  var resto = r ? t.slice(r.index + r[0].length) : '';
+  if (r && /^\s*y\s+(\d|uno|un|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cuarenta|cincuenta|media|cuarto|pico|algo|tantos)/.test(resto)) return null;
+  // 1.25 (revisión GPT 3-5): "nueve menos cuarto" = 08:45, "diez menos veinte" = 09:40.
+  var menos = r && !r[2] ? new RegExp('^\\s*menos\\s+' + MINS + '(?=\\s)').exec(resto) : null;
+  if (r && !menos && /^\s*menos\s/.test(resto)) return null;
   if (r) {
     hh = palabraNum_(r[1]); mm = r[2] ? palabraNum_(r[2]) : 0;
     if (hh === null || mm === null) return null;
-    if (/\sde la (tarde|noche)\s/.test(t) && hh < 12) hh += 12;
+    if (menos) { var mn = palabraNum_(menos[1]); if (mn === null || mn >= 60 || mn === 0) return null; hh = (hh + 23) % 24; mm = 60 - mn; if (hh === 0 && /\sde la (tarde|noche)\s/.test(t) === false && !deManana) hh = 12; }
+    // "doce de la noche" = 00:00 del día siguiente.
+    if ((hh === 12 || hh === 0) && /\sde la noche\s/.test(t)) { hh = 0; dia = (dia || 0) + 1; }
+    else if (/\sde la (tarde|noche)\s/.test(t) && hh < 12) hh += 12;
     else if (!deManana && hh >= 1 && hh <= 7) hh += 12; // "a las 5" en el taller = 17:00
   } else if (/\smediodia\s/.test(t)) hh = 12;
   if (dia === null && hh === null) return null;
@@ -2954,7 +2961,8 @@ function recordatorioCalendario_(ctx, id) {
   var cambios = { calendario_huella: huella }, w = [];
   try {
     // 1.23 (revisión GPT 5): si el borrado falla, lanza y la fila conserva el id (se reintenta al volver a editar).
-    if (!vivo) { if (r.calendario_evento_id) ctx.calendario.borrar(r.calendario_evento_id, o); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')'; }
+    // 1.25 (revisión GPT 3-4): al cerrar se busca el evento aunque la fila no tenga id (el alta pudo quedar a medias).
+    if (!vivo) { var b = ctx.calendario.borrar(r.calendario_evento_id || '', o); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')' + (b === 'no_encontrado' && r.calendario_evento_id ? ' · no se encontró el evento' : ''); }
     else {
       var up = r.calendario_evento_id ? ctx.calendario.actualizar(r.calendario_evento_id, o) : false;
       var eid = up === true ? r.calendario_evento_id : (typeof up === 'string' ? up : ctx.calendario.crear(o));
@@ -2982,7 +2990,8 @@ function mantencionContenido_(ctx, e) {
   // 1.23 (revisión GPT 11): los ítems publicables salen de la lista editable vigente (LISTAS), igual para últimos y próximos.
   // 1.24 (revisión GPT 2-8): si el taller ya tiene esa lista en LISTAS, se respeta tal cual (aunque quede vacía);
   // la lista de fábrica solo se usa si la lista no existe en LISTAS.
-  var enListas = activeRows_(ctx, 'LISTAS').some(function (l) { return l.lista === 'items_mantencion'; });
+  // 1.25 (revisión GPT 3-7): cuentan también las filas anuladas (el taller vació su lista; no es una instalación sin lista).
+  var enListas = ctx.store.list('LISTAS').some(function (l) { return l.lista === 'items_mantencion'; });
   var orden = (enListas ? (listasActivas_(ctx).items_mantencion || []) : (CONTRACT.listas.items_mantencion || [])).filter(function (x) { return x !== 'Otro'; });
   var trab = {};
   activeRows_(ctx, 'TRABAJOS').forEach(function (t) { if (t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado') trab[t.id] = t; });
@@ -5029,7 +5038,16 @@ function handle_(ctx, action, p) {
       return (a && a.lista === 'items_mantencion') || (b && b.lista === 'items_mantencion');
     });
     if (cambiaLista) activeRows_(c, 'EQUIPOS').forEach(function (x) { if (!isEmpty_(x.mantencion_codigo)) eqs[x.id] = true; });
-    if (action !== 'mantencion_publicar' && action !== 'mantencion_revocar') Object.keys(eqs).forEach(function (eid) { (res.warnings = res.warnings || []).push.apply(res.warnings, mantencionRefrescar_(c, eid)); });
+    if (action !== 'mantencion_publicar' && action !== 'mantencion_revocar') Object.keys(eqs).forEach(function (eid) {
+      var w = mantencionRefrescar_(c, eid);
+      (res.warnings = res.warnings || []).push.apply(res.warnings, w);
+      if (action === 'mantencion_refrescar_todos' && !w.length && res.data) res.data.verificados = (res.data.verificados || 0) + 1;
+    });
+  }
+  // 1.25 (revisión GPT 3-7): "rehacer todos" informa por separado los encontrados y los verificados.
+  if (action === 'mantencion_refrescar_todos' && res.data) {
+    res.data.verificados = res.data.verificados || 0;
+    if (!ctx.publico && res.data.equipos) (res.warnings = res.warnings || []).push({ code: 'SIN_PUBLICO', message: 'No hay conexión con la planilla pública: no se actualizó ningún resumen.' });
   }
   // 1.21: los recordatorios creados o cambiados se copian a Google Calendar (si hay calendario conectado).
   if (ctx.calendario) {
