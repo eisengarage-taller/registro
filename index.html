@@ -2875,7 +2875,7 @@ function chileMs_(y, m, d, h, mi) {
  */
 function interpretarCuando_(texto, ahoraMs) {
   var t = ' ' + sinTildes_(texto).replace(/[,;]/g, ' ') + ' ';
-  var nums = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, quince: 15, veinte: 20, treinta: 30, cuarenta: 40 };
+  var nums = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, quince: 15, veinte: 20, veinticinco: 25, treinta: 30, cuarenta: 40, 'cuarenta y cinco': 45, cincuenta: 50, media: 30, cuarto: 15 };
   var n = function (s) { return /^\d+$/.test(s) ? Number(s) : nums[s]; };
   var m = /\sen\s+(media|\d+|un|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|quince|veinte|treinta|cuarenta)\s*(hora|horas|minuto|minutos|min)\b(\s+y media)?/.exec(t);
   if (m) {
@@ -2890,18 +2890,24 @@ function interpretarCuando_(texto, ahoraMs) {
   var dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
   dias.forEach(function (x, i) { if (dia === null && new RegExp('\\s' + x + '\\s').test(t)) dia = ((i - hoy.dow + 7) % 7) || 7; });
   var hh = null, mm = 0;
-  var r = /\sa las\s+(\d{1,2}|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)(?:\s*(?::|\.|y)\s*(\d{1,2}|media|cuarto))?(?:\s*(?:hrs?|horas))?/.exec(t);
+  // 1.23 (revisión GPT 9): "a la una", minutos en palabras ("y quince", "y treinta"), y la hora no puede seguir con más dígitos ("a las 123").
+  var HORA = '(\\d{1,2}(?!\\d)|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)';
+  var MINS = '(\\d{1,2}(?!\\d)|media|cuarto|cinco|diez|quince|veinte|veinticinco|treinta|cuarenta y cinco|cuarenta|cincuenta)';
+  var r = new RegExp('\\sa las?\\s+' + HORA + '(?:\\s*(?::|\\.|\\sy\\s|\\s)\\s*' + MINS + '(?=\\s))?(?=\\s)').exec(t);
+  // Dice una hora que no se entendió completa → null (SIN_HORA), nunca otra hora inventada.
+  if (!r && new RegExp('\\sa las?\\s+(\\d|una|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce)').test(t)) return null;
   if (r) {
-    hh = n(r[1]); mm = r[2] === 'media' ? 30 : r[2] === 'cuarto' ? 15 : r[2] ? Number(r[2]) : 0;
+    hh = n(r[1]); mm = r[2] ? n(r[2]) : 0;
     if (/\sde la (tarde|noche)\s/.test(t) && hh < 12) hh += 12;
     else if (!deManana && hh >= 1 && hh <= 7) hh += 12; // "a las 5" en el taller = 17:00
   } else if (/\smediodia\s/.test(t)) hh = 12;
   if (dia === null && hh === null) return null;
   if (hh === null) { hh = 9; mm = 0; }
   if (hh > 23 || mm > 59) return null;
-  var base = new Date(Date.UTC(hoy.y, hoy.m - 1, hoy.d) + (dia || 0) * 86400000);
-  var ms = chileMs_(base.getUTCFullYear(), base.getUTCMonth() + 1, base.getUTCDate(), hh, mm);
-  if (dia === null && ms <= ahoraMs) ms += 86400000;
+  var enDia = function (k) { var b = new Date(Date.UTC(hoy.y, hoy.m - 1, hoy.d) + k * 86400000); return chileMs_(b.getUTCFullYear(), b.getUTCMonth() + 1, b.getUTCDate(), hh, mm); };
+  var ms = enDia(dia || 0);
+  // 1.23 (revisión GPT 10): "mañana" es el día civil siguiente a la misma hora local (no +24 h: el cambio de horario lo corre).
+  if (dia === null && ms <= ahoraMs) ms = enDia(1);
   return ms;
 }
 function recordatoriosPendientes_(ctx) {
@@ -2924,14 +2930,18 @@ function recordatorioCalendario_(ctx, id) {
   };
   var huella = vivo ? hashTxt_(stableJson_(o)) : 'borrado';
   if (huella === r.calendario_huella) return [];
+  o.clave = r.op_id || r.id; // 1.23: identidad estable del evento (no entra en la huella)
   var cambios = { calendario_huella: huella }, w = [];
   try {
+    // 1.23 (revisión GPT 5): si el borrado falla, lanza y la fila conserva el id (se reintenta al volver a editar).
     if (!vivo) { if (r.calendario_evento_id) ctx.calendario.borrar(r.calendario_evento_id); cambios.calendario_evento_id = ''; cambios.calendario_estado = 'Sin evento (' + r.estado + ')'; }
     else {
       var eid = r.calendario_evento_id && ctx.calendario.actualizar(r.calendario_evento_id, o) ? r.calendario_evento_id : ctx.calendario.crear(o);
       cambios.calendario_evento_id = eid; cambios.calendario_estado = 'OK';
     }
   } catch (x) {
+    // 1.23 (revisión GPT 6): si el evento alcanzó a crearse, su id queda en la fila (el reintento lo actualiza, no crea otro).
+    if (x && x.eventoId) cambios.calendario_evento_id = x.eventoId;
     cambios.calendario_estado = 'Error: ' + String(x && x.message || x).slice(0, 200); cambios.calendario_huella = '';
     w.push({ code: 'CALENDARIO', message: 'El recordatorio quedó guardado, pero no se pudo copiar al calendario: ' + (x && x.message) });
   }
@@ -2948,13 +2958,16 @@ var MANTENCION_TIPO = 'A5';
 var MANTENCION_FORMATO = 'EG-MANTENCION-1';
 function esMantencion_(tipo) { return /mantenci|aceite/i.test(String(tipo || '')); }
 function mantencionContenido_(ctx, e) {
-  var orden = (CONTRACT.listas.items_mantencion || []).filter(function (x) { return x !== 'Otro'; });
+  // 1.23 (revisión GPT 11): los ítems publicables salen de la lista editable vigente (LISTAS), igual para últimos y próximos.
+  var vig = listasActivas_(ctx).items_mantencion;
+  var orden = (vig && vig.length ? vig : (CONTRACT.listas.items_mantencion || [])).filter(function (x) { return x !== 'Otro'; });
   var trab = {};
   activeRows_(ctx, 'TRABAJOS').forEach(function (t) { if (t.equipo_id === e.id && t.estado_comercial !== 'Anulado' && t.estado_ejecucion === 'Ejecutado') trab[t.id] = t; });
   var ult = {}, ultimo = null;
   Object.keys(trab).forEach(function (id) {
     var t = trab[id], f = localDate_(t.fecha_fin || t.fecha_inicio || ''), km = isEmpty_(t.km) ? null : Number(t.km);
-    if (f && km != null && (!ultimo || f > ultimo.fecha || (f === ultimo.fecha && km > ultimo.km))) ultimo = { fecha: f, km: km };
+    // 1.23 (revisión GPT 13): si el trabajo tiene fecha aproximada, el "último km" también la muestra como aproximada.
+    if (f && km != null && (!ultimo || f > ultimo.fecha || (f === ultimo.fecha && km > ultimo.km))) { ultimo = { fecha: f, km: km }; if (t.fecha_aproximada === true) ultimo.aprox = true; }
   });
   activeRows_(ctx, 'DETALLE').forEach(function (d) {
     var t = trab[d.trabajo_id];
@@ -2966,7 +2979,7 @@ function mantencionContenido_(ctx, e) {
   });
   var proximas = activeRows_(ctx, 'PENDIENTES').filter(function (p) {
     return p.equipo_id === e.id && p.estado_aporte === 'Aprobado' && ['Abierto', 'Programado', 'En curso'].indexOf(p.estado) >= 0 &&
-      (!isEmpty_(p.item_mantencion) || p.tipo === 'Mantención') && (!isEmpty_(p.objetivo_km) || !isEmpty_(p.objetivo_fecha)) && p.item_mantencion !== 'Otro';
+      (isEmpty_(p.item_mantencion) ? p.tipo === 'Mantención' : orden.indexOf(p.item_mantencion) >= 0) && (!isEmpty_(p.objetivo_km) || !isEmpty_(p.objetivo_fecha));
   }).map(function (p) { return { item: p.item_mantencion || 'Mantención', km: isEmpty_(p.objetivo_km) ? null : Number(p.objetivo_km), fecha: p.objetivo_fecha || '' }; })
     .sort(function (a, b) { return (a.km || 9e9) - (b.km || 9e9) || String(a.fecha).localeCompare(String(b.fecha)); });
   return {
@@ -4976,13 +4989,16 @@ function handle_(ctx, action, p) {
     });
     Object.keys(c._clientesPortal).forEach(function (cid) { (res.warnings = res.warnings || []).push.apply(res.warnings, portalRefrescar_(c, cid)); });
     // 1.20: el resumen de mantención publicado se mantiene al día solo (trabajos, detalle, pendientes o el vehículo).
+    // 1.23 (revisión GPT 7): vehículos de origen (como estaban antes de esta operación) y de destino (como quedan):
+    // mover un trabajo, detalle o pendiente a otro vehículo refresca los dos resúmenes.
     var eqs = {};
-    tx.log.forEach(function (e) {
-      var f = tx.get(e.table, e.id); if (!f) return;
-      if (e.table === 'EQUIPOS') eqs[f.id] = true;
-      else if (e.table === 'TRABAJOS' || e.table === 'PENDIENTES') { if (f.equipo_id) eqs[f.equipo_id] = true; }
-      else if (e.table === 'DETALLE') { var t = tx.get('TRABAJOS', f.trabajo_id); if (t && t.equipo_id) eqs[t.equipo_id] = true; }
-    });
+    var anotar = function (st, table, id) {
+      var f = st.get(table, id); if (!f) return;
+      if (table === 'EQUIPOS') eqs[f.id] = true;
+      else if (table === 'TRABAJOS' || table === 'PENDIENTES') { if (f.equipo_id) eqs[f.equipo_id] = true; }
+      else if (table === 'DETALLE') [tx, tx.base].forEach(function (s2) { var t = s2.get('TRABAJOS', f.trabajo_id); if (t && t.equipo_id) eqs[t.equipo_id] = true; });
+    };
+    tx.log.forEach(function (e) { anotar(tx, e.table, e.id); anotar(tx.base, e.table, e.id); });
     if (action !== 'mantencion_publicar' && action !== 'mantencion_revocar') Object.keys(eqs).forEach(function (eid) { (res.warnings = res.warnings || []).push.apply(res.warnings, mantencionRefrescar_(c, eid)); });
   }
   // 1.21: los recordatorios creados o cambiados se copian a Google Calendar (si hay calendario conectado).
@@ -6083,7 +6099,7 @@ function htmlMantencion(c){
   var h = '<div class="block inline" style="gap:14px;flex-wrap:wrap">' + (v.patente ? plate(v.patente, true) : '') + '<div style="font-weight:600;font-size:18px">' + esc(titulo) + '</div></div>';
   if (c.proximas.length) h += '<div class="block"><h3>Próxima mantención</h3>' + c.proximas.map(function(p){ return '<div class="inline" style="justify-content:space-between"><span>' + esc(p.item) + '</span><span class="s">' + esc([km(p.km), p.fecha ? fmtFecha(p.fecha) : ''].filter(Boolean).join(' o ')) + '</span></div>'; }).join('') + '</div>';
   if (c.items.length) h += '<div class="block"><h3>Último cambio</h3>' + c.items.map(function(x){ return '<div class="inline" style="justify-content:space-between"><span>' + esc(x.item) + '</span><span class="s">' + esc([x.aprox ? 'aprox. ' + String(x.fecha).slice(0, 4) : fmtFecha(x.fecha), km(x.km)].filter(Boolean).join(' · ')) + '</span></div>'; }).join('') + '</div>';
-  if (c.ultimo) h += '<p class="s" style="color:var(--acero)">Último km registrado: ' + esc(km(c.ultimo.km)) + ' (' + esc(fmtFecha(c.ultimo.fecha)) + ').</p>';
+  if (c.ultimo) h += '<p class="s" style="color:var(--acero)">Último km registrado: ' + esc(km(c.ultimo.km)) + ' (' + esc(c.ultimo.aprox ? 'aprox. ' + String(c.ultimo.fecha || '').slice(0, 4) : fmtFecha(c.ultimo.fecha)) + ').</p>';
   return h;
 }
 function vistaPreviaMantencion(){
