@@ -94,7 +94,10 @@ textarea.i{min-height:90px;resize:vertical}
 .hist.ej{border-left-color:var(--ok)}
 .hist .d{font-size:14px;color:var(--acero)}
 .hist ul{margin:6px 0 0;padding-left:18px;font-size:15px}
-.toast{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);background:var(--asfalto);color:#fff;padding:10px 16px;border-radius:8px;z-index:60;max-width:92vw;display:none;font-size:15px}
+.toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top,0px) + 64px);transform:translateX(-50%);background:var(--asfalto);color:#fff;padding:12px 18px;border-radius:12px;z-index:70;max-width:92vw;display:none;font-size:16px;font-weight:600;box-shadow:0 6px 24px rgba(0,0,0,.35)}
+.btn.ocupado{opacity:.75;cursor:progress}
+.btn.ocupado::before{content:'';display:inline-block;width:14px;height:14px;margin-right:8px;vertical-align:-2px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:giro .8s linear infinite}
+@keyframes giro{to{transform:rotate(360deg)}}
 .toast.on{display:block}
 .toast.err{background:var(--freno)}
 .toast.warn{background:#7A5200}
@@ -5270,9 +5273,32 @@ function esc(s){ return String(s == null ? '' : s).replace(/[&<>"']/g, function(
 function opId(){ return (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2); }
 var toastTimer;
 function toast(msg, kind){
-  var t = $('toast'); t.textContent = msg; t.className = 'toast on' + (kind ? ' ' + kind : '');
+  // 1.28: aviso flotante arriba (sobre las hojas), con ✓ o ⚠ para saber al tiro si resultó.
+  var t = $('toast'); t.textContent = (kind === 'err' || kind === 'warn' ? '⚠ ' : (/^(✓|⚠)/.test(msg) ? '' : '✓ ')) + msg; t.className = 'toast on' + (kind ? ' ' + kind : '');
   clearTimeout(toastTimer); toastTimer = setTimeout(function(){ t.className = 'toast'; }, kind === 'err' ? 6000 : 3500);
 }
+/* 1.28: el botón recién tocado que se desactiva mientras guarda muestra "Creando… / Guardando…" con una ruedita
+ * (y no se puede tocar dos veces). Al reactivarse vuelve su texto. Vale para todos los botones .btn de la app. */
+function verboOcupado(txt){
+  var t = String(txt || '').trim(), m = /^(\S+)/.exec(t), v = m ? m[1].toLowerCase() : '';
+  var mapa = { crear:'Creando…', guardar:'Guardando…', aplicar:'Aplicando…', enviar:'Enviando…', subir:'Subiendo…', borrar:'Borrando…', eliminar:'Eliminando…', anular:'Anulando…', cerrar:'Cerrando…', registrar:'Registrando…', agregar:'Agregando…', confirmar:'Confirmando…', publicar:'Publicando…', revocar:'Revocando…', iniciar:'Iniciando…', terminar:'Terminando…', pausar:'Pausando…', marcar:'Marcando…', validar:'Revisando…', revisar:'Revisando…', descartar:'Descartando…', convertir:'Convirtiendo…', asignar:'Asignando…', cambiar:'Cambiando…', copiar:'Copiando…', generar:'Generando…' };
+  return mapa[v] || 'Procesando…';
+}
+var ULTIMO_CLIC = { b: null, f: 0 };
+document.addEventListener('click', function(ev){ var b = ev.target && ev.target.closest && ev.target.closest('button.btn'); if (b) ULTIMO_CLIC = { b: b, f: Date.now() }; }, true);
+(function(){
+  try {
+    var d = Object.getOwnPropertyDescriptor(HTMLButtonElement.prototype, 'disabled');
+    if (!d || !d.set) return;
+    Object.defineProperty(HTMLButtonElement.prototype, 'disabled', { configurable: true, enumerable: d.enumerable, get: d.get, set: function(v){
+      d.set.call(this, v);
+      if (!this.classList || !this.classList.contains('btn') || this.hasAttribute('data-sin-ocupado')) return;
+      // Solo el botón recién tocado (no los que se desactivan por validación, como "Aplicar (faltan…)").
+      if (v && !this.classList.contains('ocupado') && ULTIMO_CLIC.b === this && Date.now() - ULTIMO_CLIC.f < 2000) { this.setAttribute('data-txt', this.textContent); this.textContent = verboOcupado(this.textContent); this.classList.add('ocupado'); }
+      else if (!v && this.classList.contains('ocupado')) { this.textContent = this.getAttribute('data-txt') || this.textContent; this.removeAttribute('data-txt'); this.classList.remove('ocupado'); }
+    } });
+  } catch (e) {}
+})();
 function showWarnings(ws){ if (ws && ws.length) toast(ws.map(function(w){ return w.message; }).join(' · '), 'warn'); }
 function plate(p, big){
   var txt = String(p || '').toUpperCase().replace(/\s+/g,'').replace(/-/g,'·');
