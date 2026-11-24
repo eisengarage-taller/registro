@@ -2304,6 +2304,40 @@ function aporteRevisarLote_(ctx, p) {
   return { data: { decision: p.decision, hechos: hechos, saltados: saltados }, warnings: warnings };
 }
 
+/** 1.31: pendientes abiertos (no Resuelto ni Descartado) con cliente y vehículo, para descartarlos en lote. */
+function vistaPendientesAbiertos_(ctx, p) {
+  requireAdmin_(ctx);
+  var items = activeRows_(ctx, 'PENDIENTES').filter(function (r) { return ESTADOS_PENDIENTE_CERRADOS.indexOf(r.estado) < 0; }).map(function (r) {
+    var eq = r.equipo_id ? getRow_(ctx, 'EQUIPOS', r.equipo_id) : null, cl = r.cliente_id ? getRow_(ctx, 'CLIENTES', r.cliente_id) : null;
+    return { id: r.id, version: r.version, codigo: r.codigo, descripcion: r.descripcion, estado: r.estado, tipo: r.tipo || '', fecha: r.fecha || '', objetivo: r.objetivo || '',
+      objetivo_fecha: r.objetivo_fecha || '', objetivo_km: isEmpty_(r.objetivo_km) ? '' : r.objetivo_km, creado_en: r.creado_en, estado_aporte: r.estado_aporte || '',
+      patente: eq ? eq.patente || '' : '', equipo: eq ? eq.nombre_corto : '', cliente: cl ? cl.nombre : '', cliente_codigo: cl ? cl.codigo : '' };
+  });
+  items.sort(function (a, b) { return (a.cliente + a.patente + a.codigo) < (b.cliente + b.patente + b.codigo) ? -1 : 1; });
+  return { data: items, warnings: [] };
+}
+/** 1.31: descartar varios pendientes de una vez (ej. los de prueba). Motivo obligatorio; salta lo cerrado o cambiado. */
+function pendientesDescartarLote_(ctx, p) {
+  requireAdmin_(ctx);
+  var motivo = String(p.motivo || '').trim();
+  if (!motivo) fail_('REQUERIDO', 'Indica por qué se descartan.');
+  var items = Array.isArray(p.items) ? p.items : [];
+  if (!items.length) fail_('REQUERIDO', 'Selecciona al menos un pendiente.');
+  if (items.length > 200) fail_('VALOR_INVALIDO', 'Máximo 200 pendientes por vez.');
+  var hechos = [], saltados = [], warnings = [];
+  items.forEach(function (it) {
+    var r = mustGet_(ctx, 'PENDIENTES', it && it.id);
+    if (r.ultima_op === p.op_id) { hechos.push(r.codigo); return; }  // reintento de la misma solicitud
+    if (r.anulado === true) { saltados.push({ codigo: r.codigo, motivo: 'anulado' }); return; }
+    if (ESTADOS_PENDIENTE_CERRADOS.indexOf(r.estado) >= 0) { saltados.push({ codigo: r.codigo, motivo: 'ya ' + String(r.estado).toLowerCase() }); return; }
+    if (Number(it.version) !== Number(r.version)) { saltados.push({ codigo: r.codigo, motivo: 'cambió mientras lo revisabas' }); return; }
+    var res = updateRow_(ctx, 'PENDIENTES', r.id, it.version, { estado: 'Descartado', motivo_cierre: motivo.slice(0, 200) }, { opId: p.op_id, motivo: motivo, noRect: true });
+    hechos.push(r.codigo); warnings = warnings.concat(res.warnings || []);
+  });
+  if (saltados.length) warnings.push({ code: 'SALTADOS', message: saltados.length + ' pendiente(s) no se cambiaron: ' + saltados.map(function (s) { return s.codigo + ' ' + s.motivo; }).join('; ') + '.' });
+  return { data: { hechos: hechos, saltados: saltados }, warnings: warnings };
+}
+
 /** Aportes en borrador con su contexto (cliente, vehículo y trabajo) para la pestaña Revisar. */
 function vistaAportesPorRevisar_(ctx, p) {
   requireAdmin_(ctx);
@@ -4629,7 +4663,7 @@ function capturaCrear_(ctx, p, archivo) {
   var c = p.captura || {};
   if (TIPOS_CAPTURA_().indexOf(c.tipo) < 0) fail_('VALOR_INVALIDO', 'Tipo de captura no válido.');
   if (!archivo && isEmpty_(c.texto) && isEmpty_(c.url)) fail_('REQUERIDO', 'La captura está vacía: escribe una nota, un enlace o adjunta un archivo.');
-  var datos = { fecha: isEmpty_(c.fecha) ? now_(ctx) : c.fecha, tipo: c.tipo, titulo: c.titulo || '', texto: c.texto || '', url: c.url || '', origen: c.origen || '', estado: 'Nueva', notas: c.notas || '' };
+  var datos = { fecha: isEmpty_(c.fecha) ? now_(ctx) : c.fecha, tipo: c.tipo, titulo: c.titulo || '', texto: c.texto || '', url: c.url || '', origen: c.origen || '', estado: ctx._notaRapida ? 'Procesada' : 'Nueva', notas: c.notas || '' };
   // 1.13: para qué es (Taller, Cliente, Personal) y montos.
   ['destino', 'monto', 'monto_tipo', 'pago_por', 'monto_mio', 'monto_mama', 'cliente_id', 'trabajo_id'].forEach(function (k) { if (!isEmpty_(c[k])) datos[k] = c[k]; });
   if (datos.cliente_id && !getRow_(ctx, 'CLIENTES', datos.cliente_id)) fail_('NO_EXISTE', 'El cliente elegido no existe.');
@@ -4829,7 +4863,7 @@ function capturaMarcarBorrado_(ctx, p, hoyIso) {
 
 /* ───────────────────────── punto de entrada ───────────────────────── */
 
-var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar', 'mantencion_publicar', 'mantencion_revocar', 'mantencion_refrescar_todos'];
+var ACCIONES_ESCRITURA = ['crear', 'editar', 'anular', 'sesion_iniciar', 'sesion_pausar', 'sesion_terminar', 'sesion_posterior', 'concepto_desde_sesiones', 'aporte_revisar', 'aporte_revisar_lote', 'pendientes_descartar_lote', 'presupuesto_guardar', 'presupuesto_publicar', 'presupuesto_cerrar', 'presupuesto_retirar', 'portal_publicar', 'portal_revocar', 'solicitud_estado', 'respuesta_estado', 'ajustes_guardar', 'concepto_anular_pagado', 'captura_crear', 'captura_borrar_archivo', 'familia_corte', 'recepcion_confirmar', 'paquete_aplicar', 'historial_publicar', 'historial_revocar', 'mantencion_publicar', 'mantencion_revocar', 'mantencion_refrescar_todos'];
 
 var TABLA_DE_ACCION = {
   sesion_iniciar: 'SESIONES', sesion_pausar: 'SESIONES', sesion_terminar: 'SESIONES', sesion_posterior: 'SESIONES',
@@ -5152,6 +5186,8 @@ function handleInner_(ctx, action, p) {
     case 'aporte_revisar': return aporteRevisar_(ctx, p);
     case 'aporte_revisar_lote': return aporteRevisarLote_(ctx, p);
     case 'aportes_por_revisar': return vistaAportesPorRevisar_(ctx, p);
+    case 'pendientes_abiertos': return vistaPendientesAbiertos_(ctx, p);
+    case 'pendientes_descartar_lote': return pendientesDescartarLote_(ctx, p);
     case 'presupuestos': return vistaPresupuestos_(ctx, p);
     case 'presupuesto_guardar': return presupuestoGuardar_(ctx, p);
     case 'presupuesto_publicar': return presupuestoPublicar_(ctx, p);
@@ -5646,7 +5682,7 @@ function renderTrabajos(){
   var ts = S.inicio.trabajos || [];
   var abierta = S.inicio.sesion_abierta;
   var h = '<h2 class="section-title">' + (isAdmin() ? 'Trabajos abiertos' : 'Mis trabajos') + '</h2>';
-  if (isAdmin()) h += bloqueRecordatorios() + '<button class="btn big" type="button" data-act="nt-elegir" style="margin-bottom:14px">+ Nuevo trabajo</button>';
+  if (isAdmin()) h += '<div id="bandejaAviso">' + avisoBandejaHtml() + '</div>' + bloqueRecordatorios() + '<div class="inline" style="flex-wrap:wrap;margin-bottom:14px"><button class="btn big" type="button" data-act="nt-elegir">+ Nuevo trabajo</button><button class="btn big ghost" type="button" data-act="nr-abrir">🎙 Nota rápida</button></div>';
   if (!ts.length) h += '<div class="empty">' + (isAdmin() ? 'No hay trabajos abiertos. Crea uno con "Nuevo trabajo".' : 'No tienes trabajos asignados. Pide a administración que te asigne uno.') + '</div>';
   h += '<div class="list">' + ts.map(function(x){
     var t = x.trabajo, live = abierta && abierta.trabajo_id === t.id;
@@ -5656,6 +5692,109 @@ function renderTrabajos(){
       (x.asignados.length ? '<span class="chip">' + esc(x.asignados.join(', ')) + '</span>' : '') + (live ? '<span class="chip live">Tu sesión corre aquí</span>' : '') + '</div></div></button>';
   }).join('') + '</div>';
   $('main').innerHTML = h;
+  if (isAdmin()) avisoBandeja();
+}
+
+/* ───── 1.31: aviso al entrar de los paquetes por revisar (Bandeja EG) y de qué cliente es cada uno ───── */
+var BANDEJA = { f: 0, l: null };
+function avisoBandejaHtml(){
+  var l = BANDEJA.l; if (!l || !l.length) return '';
+  var nombres = l.slice(0, 6).map(function(x){ return esc(x.cliente || x.nombre) + (x.agenda ? ' <span class="chip">se aplica sola</span>' : ''); });
+  return '<button type="button" class="item" data-act="pq-abrir" style="width:100%;margin-bottom:12px;border-left:4px solid var(--ambar,#e8a317)"><div class="body"><div class="t">📥 ' + l.length + ' paquete' + (l.length > 1 ? 's' : '') + ' por revisar</div>' +
+    '<div class="s">' + nombres.join(' · ') + (l.length > 6 ? ' · y ' + (l.length - 6) + ' más' : '') + '</div></div></button>';
+}
+function avisoBandeja(forzar){
+  if (DEMO || !isAdmin()) return;
+  if (!forzar && Date.now() - BANDEJA.f < 120000) return;
+  BANDEJA.f = Date.now();
+  api('bandeja_listar', {}).then(function(r){
+    if (!r.ok) return;
+    BANDEJA.l = r.data;
+    var el = $('bandejaAviso'); if (el) el.innerHTML = avisoBandejaHtml();
+  });
+}
+
+/* ───── 1.31: Nota rápida (dictado → recordatorio para Víctor, Victoria o los dos; copia como captura) ───── */
+function paraQuienNota(texto){
+  var m = { 'á':'a','é':'e','í':'i','ó':'o','ú':'u','ü':'u','ñ':'n' };
+  var p = String(texto || '').toLowerCase().replace(/[áéíóúüñ]/g, function(c){ return m[c]; }).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 4);
+  var vr = p.indexOf('victor') >= 0, va = p.indexOf('victoria') >= 0;
+  return vr && !va ? 'Víctor' : (va && !vr ? 'Victoria' : 'Víctor y Victoria');
+}
+var NR = { op: null, rec: null };
+function abrirNotaRapida(){
+  NR.op = opId();
+  var hayVoz = !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  abrirHoja('Nota rápida', '<p style="margin-top:0;color:var(--acero)">Di al comienzo "Victoria, …" o "Víctor, …". Sin nombre: para los dos. Sin hora: mañana a las 9:00. Solo crea un recordatorio (y una copia en Capturas).</p>' +
+    (hayVoz ? '<button class="btn big go" type="button" data-act="nr-dictar" id="nrDictar" style="margin-bottom:10px">🎙 Dictar</button>' : '<p class="s" style="color:var(--acero)">Este navegador no dicta: escribe o usa el micrófono del teclado.</p>') +
+    '<label class="f"><span>Nota</span><textarea class="i" id="nrTexto" maxlength="300" style="min-height:110px" placeholder="Victoria, llamar a Narciso mañana a las 10"></textarea></label>' +
+    '<div class="s" id="nrPara" style="margin:-4px 0 10px;font-weight:600">Para: Víctor y Victoria</div>' +
+    '<div class="inline"><button class="btn go" type="button" data-act="nr-enviar" id="nrEnviar">Enviar</button><button class="btn ghost" type="button" data-act="nr-cancelar">Cancelar</button></div>');
+  var ta = $('nrTexto');
+  ta.addEventListener('input', function(){ $('nrPara').textContent = 'Para: ' + paraQuienNota(ta.value); });
+  ta.focus();
+}
+function dictarNota(btn){
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
+  if (NR.rec) { try { NR.rec.stop(); } catch (e) {} return; }
+  var rec = new SR(), ta = $('nrTexto'), base = ta.value ? ta.value.trim() + ' ' : '';
+  rec.lang = 'es-CL'; rec.interimResults = true; rec.continuous = false;
+  rec.onresult = function(e){ var s = ''; for (var i = 0; i < e.results.length; i++) s += e.results[i][0].transcript; ta.value = (base + s).slice(0, 300); $('nrPara').textContent = 'Para: ' + paraQuienNota(ta.value); };
+  rec.onerror = function(e){ toast('No se pudo dictar' + (e && e.error === 'not-allowed' ? ': permite el micrófono' : '') + '.', 'err'); };
+  rec.onend = function(){ NR.rec = null; var b = $('nrDictar'); if (b) b.textContent = '🎙 Dictar'; };
+  NR.rec = rec; btn.textContent = '■ Detener';
+  try { rec.start(); } catch (e) { NR.rec = null; btn.textContent = '🎙 Dictar'; }
+}
+function enviarNota(btn){
+  var texto = String($('nrTexto').value || '').replace(/\s+/g, ' ').trim();
+  if (!texto) { toast('Escribe o dicta la nota.', 'err'); return; }
+  if (NR.rec) { try { NR.rec.stop(); } catch (e) {} }
+  btn.disabled = true;
+  call('nota_rapida', { op_id: NR.op, texto: texto, ahora: Date.now() }).then(function(r){
+    var sinHora = (r.warnings || []).some(function(w){ return w.code === 'SIN_HORA'; });
+    cerrarHoja();
+    toast('Nota enviada · para ' + (r.data.para || []).join(' y ') + (sinHora ? ' · mañana 9:00' : ' · ' + fmtFecha(r.data.cuando)) + '.');
+    cargar();
+  }).catch(function(){ btn.disabled = false; });
+}
+
+/* ───── 1.31: descartar pendientes en lote ───── */
+function abrirPendientesLote(){
+  abrirHoja('Pendientes abiertos', '<p style="margin-top:0;color:var(--acero)">Marca los que no corresponden (por ejemplo, los de prueba) y descártalos de una vez. Quedan guardados como Descartados con el motivo.</p><div id="plBody" class="empty">Cargando…</div>');
+  call('pendientes_abiertos', {}).then(function(r){
+    S.pl = r.data; S.plSel = {};
+    var b = $('plBody'); if (!b) return;
+    if (!S.pl.length) { b.textContent = 'No hay pendientes abiertos.'; return; }
+    b.outerHTML = '<div id="plBody">' +
+      '<label class="f"><span>Motivo</span><input class="i" id="plMotivo" maxlength="200" value="Datos de prueba"></label>' +
+      '<div class="inline" style="flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:10px"><label style="display:inline-flex;align-items:center;gap:6px;min-height:36px"><input type="checkbox" id="plTodos" style="width:20px;height:20px"> Todos</label>' +
+      '<button class="btn ghost" data-act="pl-descartar" disabled>Descartar seleccionados</button></div>' +
+      '<div class="list">' + S.pl.map(function(it, i){
+        return '<label class="item" style="cursor:pointer;align-items:flex-start"><input type="checkbox" class="pl-chk" data-i="' + i + '" style="width:22px;height:22px;margin:4px 10px 0 0;flex:none">' +
+          '<div class="body"><div class="t">' + esc(it.descripcion) + '</div>' +
+          '<div class="s" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px">' + (it.patente ? plate(it.patente) : '') + (it.equipo ? '<span>' + esc(it.equipo) + '</span>' : '') + (it.cliente ? '<span>· ' + esc(it.cliente) + '</span>' : '') + '</div>' +
+          '<div class="s">' + esc(it.codigo) + ' · ' + esc(it.estado) + (it.objetivo_fecha ? ' · para ' + esc(it.objetivo_fecha) : '') + (it.estado_aporte === 'Borrador' ? ' · borrador de técnico' : '') + '</div></div></label>';
+      }).join('') + '</div></div>';
+    var marcar = function(){
+      var n = Object.keys(S.plSel).length, bt = document.querySelector('[data-act="pl-descartar"]');
+      if (bt) { bt.disabled = !n; bt.textContent = 'Descartar seleccionados' + (n ? ' (' + n + ')' : ''); }
+      $('plTodos').checked = n === S.pl.length;
+    };
+    document.querySelectorAll('.pl-chk').forEach(function(c){ c.addEventListener('change', function(){ var i = this.getAttribute('data-i'); if (this.checked) S.plSel[i] = true; else delete S.plSel[i]; marcar(); }); });
+    $('plTodos').addEventListener('change', function(){ var on = this.checked; S.plSel = {}; document.querySelectorAll('.pl-chk').forEach(function(c){ c.checked = on; if (on) S.plSel[c.getAttribute('data-i')] = true; }); marcar(); });
+  }).catch(function(){ var b = $('plBody'); if (b) b.textContent = 'No se pudo cargar.'; });
+}
+function descartarPendientesLote(btn){
+  var sel = Object.keys(S.plSel || {}).map(function(i){ return S.pl[i]; }), mot = String(($('plMotivo') || {}).value || '').trim();
+  if (!sel.length) return;
+  if (!mot) { toast('Escribe el motivo.', 'err'); return; }
+  if (!confirm('¿Descartar ' + sel.length + ' pendiente' + (sel.length > 1 ? 's' : '') + '? Motivo: ' + mot)) return;
+  btn.disabled = true;
+  call('pendientes_descartar_lote', { items: sel.map(function(x){ return { id: x.id, version: x.version }; }), motivo: mot, op_id: opId() }).then(function(r){
+    var n = r.data.hechos.length, s = r.data.saltados.length;
+    toast('Descartados: ' + n + (s ? ' · ' + s + ' sin cambiar (ya cerrados o modificados)' : '') + '.');
+    abrirPendientesLote();
+  }).catch(function(){ btn.disabled = false; });
 }
 
 /* ───── 1.21: recordatorios (desde el reloj o aquí); cada uno queda con aviso en Google Calendar ───── */
@@ -6788,7 +6927,7 @@ function renderDatos(){
   $('main').innerHTML = '<h2 class="section-title">Datos</h2><div class="block"><div class="row2"><label class="f"><span>Tabla</span><select class="i" id="dtTabla">' + opts + '</select></label>' +
     '<label class="f"><span>Cliente</span><select class="i" id="dtCliente"><option value="">Todos</option></select></label></div>' +
     '<div class="inline" style="flex-wrap:wrap"><button class="btn go" data-act="pq-abrir">Cargar desde IA</button><button class="btn" data-act="dt-nuevo">Nuevo registro</button><button class="btn ghost" data-act="cat-abrir">Catálogo y precios</button><button class="btn ghost" data-act="dt-control">Control económico</button><button class="btn ghost" data-act="dt-stock">Stock</button><button class="btn ghost" data-act="dt-integridad">Revisar integridad</button></div>' +
-    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button><button class="btn ghost" data-act="velocidad">Velocidad</button><button class="btn ghost" data-act="reloj-ver">EG Reloj</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
+    '<div class="inline" style="flex-wrap:wrap;margin-top:8px"><button class="btn ghost" data-act="cp-nuevas">Capturas nuevas</button><button class="btn ghost" data-act="ga-mes">Gastos del mes</button><button class="btn ghost" data-act="fa-ver">Cuentas con mamá</button><button class="btn ghost" data-act="velocidad">Velocidad</button><button class="btn ghost" data-act="reloj-ver">EG Reloj</button><button class="btn ghost" data-act="pl-abrir">Descartar pendientes</button></div></div><div id="dtLista" class="empty">Cargando…</div>';
   $('dtTabla').addEventListener('change', function(){ D.tabla = this.value; cargarDatos(); });
   $('dtCliente').addEventListener('change', function(){ D.cliente = this.value; cargarDatos(); });
   D.refs = {};
@@ -7017,7 +7156,7 @@ function abrirPaquete(){
     if (!r.ok) { el.textContent = r.error && r.error.code === 'CONFIG' ? 'La Bandeja aún no está creada.' : (DEMO ? 'La Bandeja no está disponible en modo demostración.' : (r.error && r.error.message) || 'No se pudo leer la Bandeja.'); return; }
     if (!r.data.length) { el.textContent = 'No hay paquetes por revisar.'; return; }
     el.outerHTML = '<div class="list">' + r.data.map(function(f){
-      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + esc(f.nombre) + '</div><div class="s">' + esc(fmtFecha(f.creado)) + (f.autor ? ' · ' + esc(f.autor) : '') + '</div>' +
+      return '<div class="item" style="cursor:default"><div class="body"><div class="t">' + esc(f.nombre) + '</div><div class="s">' + (f.cliente ? '<b>' + esc(f.cliente) + '</b> · ' : '') + (f.agenda ? 'agenda, se aplica sola · ' : '') + esc(fmtFecha(f.creado)) + (f.autor ? ' · ' + esc(f.autor) : '') + '</div>' +
         '<div class="inline" style="margin-top:8px"><button class="btn go" data-act="pq-archivo" data-id="' + esc(f.id) + '" data-n="' + esc(f.nombre) + '">Revisar</button></div></div></div>';
     }).join('') + '</div>';
   });
@@ -7153,6 +7292,12 @@ document.addEventListener('click', function(ev){
   else if (a === 'ficha') abrirFicha(id);
   else if (a === 'cliente') abrirCliente(id);
   else if (a === 'rev-lote') revisarLote(el);
+  else if (a === 'nr-abrir') abrirNotaRapida();
+  else if (a === 'nr-cancelar') { if (NR.rec) { try { NR.rec.stop(); } catch (e) {} } cerrarHoja(); }
+  else if (a === 'nr-dictar') dictarNota(el);
+  else if (a === 'nr-enviar') enviarNota(el);
+  else if (a === 'pl-abrir') abrirPendientesLote();
+  else if (a === 'pl-descartar') descartarPendientesLote(el);
   else if (a === 'en-copiar') copiarTexto(S.enlaceUrl, 'Enlace copiado.');
   else if (a === 'web-general') { var ug = WEB.data && WEB.data.solicitud_general; if (ug) copiarTexto(ug, 'Enlace del formulario copiado.'); }
   else if (a === 'web-cobros') { D.tabla = 'CUENTAS_COBRO'; S.tab = 'datos'; renderTabs(); render(); }
