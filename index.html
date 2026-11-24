@@ -850,7 +850,8 @@ var CONTRACT = {
         { k: 'estado', t: 'enum', e: 'estado_recordatorio', req: true, d: 'Pendiente → Hecho o Descartado. Si no se indica: Pendiente.' },
         { k: 'cliente_id', t: 'ref', ref: 'CLIENTES' },
         { k: 'trabajo_id', t: 'ref', ref: 'TRABAJOS' },
-        { k: 'origen', t: 'text', d: 'EG Reloj o App.' },
+        { k: 'responsable_id', t: 'ref', ref: 'USUARIOS', d: '1.30: a quién le toca (Víctor, Victoria o técnico). Su nombre va en el título del evento y se le invita al evento.' },
+        { k: 'origen', t: 'text', d: 'EG Reloj, App o IA (agenda).' },
         { k: 'hecho_en', t: 'datetime', calc: true },
         { k: 'calendario_evento_id', t: 'text', calc: true, d: 'Evento en Google Calendar (lo maneja el sistema).' },
         { k: 'calendario_estado', t: 'text', calc: true, d: 'OK o el error al copiar al calendario.' },
@@ -1680,6 +1681,8 @@ var RULES_ = {
       if (row.estado !== 'Pendiente' && (!prev || prev.estado === 'Pendiente')) row.hecho_en = now_(ctx);
       if (row.estado === 'Pendiente') row.hecho_en = '';
       if (isEmpty_(row.cliente_id) && !isEmpty_(row.trabajo_id)) { var t = getRow_(ctx, 'TRABAJOS', row.trabajo_id); if (t) row.cliente_id = t.cliente_id; }
+      if (!prev && ctx._agendaIA) row.origen = 'IA (agenda)';
+      if (!isEmpty_(row.responsable_id)) { var u = getRow_(ctx, 'USUARIOS', row.responsable_id); if (!u || u.activo !== true) fail_('VALOR_INVALIDO', 'El responsable no es un usuario activo.'); }
     }
   },
   DETALLE: {
@@ -2953,11 +2956,14 @@ function recordatorioCalendario_(ctx, id) {
   var vivo = r.anulado !== true && (r.estado === 'Pendiente' || (r.estado === 'Hecho' && r.tipo === 'Agendar'));
   var t = r.trabajo_id ? getRow_(ctx, 'TRABAJOS', r.trabajo_id) : null, cli = r.cliente_id ? getRow_(ctx, 'CLIENTES', r.cliente_id) : null;
   var ini = toMs_(r.cuando), fin = ini + (Number(r.duracion_min) || 15) * 60000;
+  // 1.30: responsable → "[Victoria] …" en el título y se le invita (le suena en su propio calendario).
+  var resp = r.responsable_id ? getRow_(ctx, 'USUARIOS', r.responsable_id) : null;
   var o = {
-    titulo: (r.tipo === 'Agendar' ? '' : r.tipo + ': ') + r.texto,
+    titulo: (resp ? '[' + String(resp.nombre || '').split(' ')[0] + '] ' : '') + (r.tipo === 'Agendar' ? '' : r.tipo + ': ') + r.texto,
     inicio: ini, fin: fin, avisos: r.tipo === 'Agendar' ? [30, 0] : [0],
-    descripcion: [r.codigo ? 'EG Registro ' + r.codigo : '', t ? 'Trabajo ' + (t.codigo || '') : '', cli ? 'Cliente: ' + cli.nombre : '', 'Creado desde ' + (r.origen || 'EG Registro')].filter(Boolean).join('\n')
+    descripcion: [r.codigo ? 'EG Registro ' + r.codigo : '', resp ? 'Responsable: ' + resp.nombre : '', t ? 'Trabajo ' + (t.codigo || '') : '', cli ? 'Cliente: ' + cli.nombre : '', 'Creado desde ' + (r.origen || 'EG Registro')].filter(Boolean).join('\n')
   };
+  if (resp && !isEmpty_(resp.correo)) o.invitados = [String(resp.correo).toLowerCase()]; // el adaptador no invita al dueño del calendario
   var huella = vivo ? hashTxt_(stableJson_(o)) : 'borrado';
   if (huella === r.calendario_huella) return [];
   o.clave = r.op_id || r.id; // 1.23: identidad estable del evento (no entra en la huella)
@@ -4487,6 +4493,35 @@ function paqueteValidar_(ctx, p) {
   return { data: out, warnings: avisos };
 }
 
+/* ───────── 1.30: paquete de agenda (solo crear recordatorios) que se aplica solo ─────────
+ * Un paquete califica SOLO si todas sus operaciones son "crear" en RECORDATORIOS, sin capturas, sin "buscar",
+ * con campos permitidos, máximo AGENDA_MAX_OPS, texto corto y fecha entre ahora y un año. Cualquier otra cosa → null
+ * (motivo en .por) y queda para revisión manual en la app. Lo peor posible: un recordatorio mal entendido, que se borra. */
+var AGENDA_MAX_OPS = 10, AGENDA_MAX_TEXTO = 200, AGENDA_MAX_DIA = 30;
+var AGENDA_CAMPOS = ['tipo', 'texto', 'cuando', 'duracion_min', 'responsable_id', 'cliente_id', 'trabajo_id', 'estado'];
+function paqueteAgendaMotivo_(pq, ahora) {
+  if (!pq || typeof pq !== 'object' || Array.isArray(pq)) return 'no es un paquete';
+  if (pq.capturas && pq.capturas.length) return 'trae capturas';
+  var ops = pq.operaciones;
+  if (!Array.isArray(ops) || !ops.length) return 'sin operaciones';
+  if (ops.length > AGENDA_MAX_OPS) return 'más de ' + AGENDA_MAX_OPS + ' recordatorios';
+  for (var i = 0; i < ops.length; i++) {
+    var o = ops[i] || {}, n = 'operación ' + (i + 1);
+    if (o.tabla !== 'RECORDATORIOS') return n + ': no es un recordatorio (' + o.tabla + ')';
+    if ((o.accion || 'crear') !== 'crear') return n + ': acción ' + o.accion;
+    if (o.buscar || o.cambios || o.esperado) return n + ': busca o cambia registros';
+    var d = o.datos || {};
+    var otros = Object.keys(d).filter(function (k) { return AGENDA_CAMPOS.indexOf(k) < 0; });
+    if (otros.length) return n + ': campo no permitido ' + otros.join(', ');
+    if (!isEmpty_(d.estado) && d.estado !== 'Pendiente') return n + ': estado ' + d.estado;
+    if (isEmpty_(d.texto) || String(d.texto).length > AGENDA_MAX_TEXTO) return n + ': texto vacío o de más de ' + AGENDA_MAX_TEXTO + ' caracteres';
+    var ms = toMs_(d.cuando);
+    if (!ms || ms < ahora - 5 * 60000 || ms > ahora + 366 * 86400000) return n + ': fecha pasada, inválida o a más de un año';
+    if (['responsable_id', 'cliente_id', 'trabajo_id'].some(function (k) { return typeof d[k] === 'string' && d[k].charAt(0) === '@' && d[k] !== '@yo' && d[k].indexOf('@usuario:') !== 0; })) return n + ': referencia a otra operación';
+  }
+  return '';
+}
+
 /** Aplica el paquete: todo junto o nada (la transacción la abre handle_). */
 function paqueteAplicar_(ctx, p) {
   requireAdmin_(ctx);
@@ -4496,6 +4531,8 @@ function paqueteAplicar_(ctx, p) {
   var huella = paqueteHuella_(pq);
   if (!isEmpty_(p.archivo_id) && isEmpty_(p.huella)) fail_('REQUERIDO', 'Falta la huella de la vista previa: revisa el paquete antes de aplicarlo.');
   if (!isEmpty_(p.huella) && String(p.huella) !== huella) fail_('PAQUETE_CAMBIO', 'El paquete cambió después de la vista previa. Revísalo de nuevo antes de aplicar.');
+  // 1.30: aplicación automática de agenda: se vuelve a exigir que el paquete sea solo de recordatorios.
+  if (p.automatico === true) { var mot = paqueteAgendaMotivo_(pq, Date.now()); if (mot) fail_('NO_AGENDA', 'No es un paquete solo de agenda: ' + mot + '.'); }
   var opPq = p.op_id + '#paquete';
   // Un archivo (o un mismo contenido) se aplica una sola vez, aunque no se haya podido marcar en Drive. Un reintento con el mismo op_id sí pasa.
   var previo = activeRows_(ctx, 'PAQUETES').filter(function (x) {
@@ -4503,6 +4540,7 @@ function paqueteAplicar_(ctx, p) {
   })[0];
   if (previo) fail_('YA_PROCESADO', (previo.archivo_id && previo.archivo_id === String(p.archivo_id) ? 'Este archivo' : 'Este mismo paquete') + ' ya se aplicó como ' + previo.codigo + '.', { codigo: previo.codigo, archivo_id: previo.archivo_id || '' });
   var capturas = paqueteCapturas_(ctx, pq);
+  if (p.automatico === true) ctx._agendaIA = true;
   var r = paqueteEjecutar_(ctx, pq, p.op_id, null, D.dec);
   var faltan = paqueteFaltan_(r.resultados);
   if (faltan.length) {
@@ -4518,7 +4556,7 @@ function paqueteAplicar_(ctx, p) {
     archivo_id: isEmpty_(p.archivo_id) ? '' : String(p.archivo_id), huella: huella,
     fuente: String(pq.fuente).slice(0, 500), autor_ia: String(pq.autor_ia || '').slice(0, 100), operaciones: pq.operaciones.length,
     resumen: resumen, dudas: [].concat(pq.dudas || []).join('\n'), texto_original: tt.texto,
-    notas: 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s)' + (modificados ? ', ' + modificados + ' corregido(s)' : '') + '.' + (decTxt ? ' Decisiones: ' + decTxt + '.' : '') + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
+    notas: (p.automatico === true ? 'APLICADO AUTOMÁTICO (agenda IA, solo recordatorios). ' : '') + 'Aplicado por ' + ctx.user.correo + '. ' + nuevos + ' registro(s) nuevo(s)' + (modificados ? ', ' + modificados + ' corregido(s)' : '') + '.' + (decTxt ? ' Decisiones: ' + decTxt + '.' : '') + (tt.cortado ? ' Texto original cortado.' : '') + (p.archivo_id ? ' Archivo de la Bandeja EG: ' + p.archivo_id + '.' : '')
   }, { opId: opPq });
   var avisos = [];
   r.resultados.forEach(function (x) { (x.avisos || []).forEach(function (w) { avisos.push({ code: w.code, message: 'Op. ' + x.n + ' ' + x.tabla + ': ' + w.message }); }); });
