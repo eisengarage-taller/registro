@@ -267,8 +267,9 @@ function pintar() {
     return;
   }
   formDelUsuario(uv);
+  if (NRC.on) { pintarNotaRapida(); return; }
   var tiene = F.archivos.length || F.texto || F.url;
-  var h = '<div class="grid">' +
+  var h = '<button class="btn go" data-a="nr" style="width:100%;margin-bottom:12px">🎙 Nota rápida (recordatorio)</button><div class="grid">' +
     '<button class="tile" data-a="nota">' + ICON.nota + 'Nota</button>' +
     '<button class="tile" data-a="foto">' + ICON.foto + 'Foto</button>' +
     '<button class="tile' + (grabador ? ' rec' : '') + '" data-a="audio">' + ICON.audio + (grabador ? 'Detener' : 'Audio') + '</button>' +
@@ -413,9 +414,55 @@ function grabar() {
   }).catch(function () { toast('Sin permiso para el micrófono.', true); });
 }
 
+/* ───── 1.31: Nota rápida (dictado → recordatorio para Víctor, Victoria o los dos; el servidor guarda la copia en Capturas) ───── */
+var NRC = { on: false, op: null, rec: null, enviando: false };
+function paraQuienNota(texto) {
+  var m = { 'á': 'a', 'é': 'e', 'í': 'i', 'ó': 'o', 'ú': 'u', 'ü': 'u', 'ñ': 'n' };
+  var p = String(texto || '').toLowerCase().replace(/[áéíóúüñ]/g, function (c) { return m[c]; }).replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean).slice(0, 4);
+  var vr = p.indexOf('victor') >= 0, va = p.indexOf('victoria') >= 0;
+  return vr && !va ? 'Víctor' : (va && !vr ? 'Victoria' : 'Víctor y Victoria');
+}
+function pintarNotaRapida() {
+  var voz = !!(window.SpeechRecognition || window.webkitSpeechRecognition), prev = $('nrcTexto') ? $('nrcTexto').value : '';
+  $('main').innerHTML = '<div class="aviso" style="margin-bottom:10px">Di al comienzo "Victoria, …" o "Víctor, …". Sin nombre: para los dos. Sin hora: mañana a las 9:00.</div>' +
+    (voz ? '<button class="btn go" data-a="nr-dictar" id="nrcDictar" style="width:100%;margin-bottom:10px">' + (NRC.rec ? '■ Detener' : '🎙 Dictar') + '</button>' : '') +
+    '<textarea id="nrcTexto" maxlength="300" style="width:100%;min-height:120px" placeholder="Victoria, llamar a Narciso mañana a las 10">' + esc(prev) + '</textarea>' +
+    '<div id="nrcPara" style="margin:6px 0 12px;font-weight:600">Para: ' + paraQuienNota(prev) + '</div>' +
+    '<div class="row"><button class="btn go" data-a="nr-enviar"' + (NRC.enviando ? ' disabled' : '') + '>' + (NRC.enviando ? 'Enviando…' : 'Enviar') + '</button><button class="btn ghost" data-a="nr-cancelar">Cancelar</button></div>';
+  $('nrcTexto').addEventListener('input', function () { $('nrcPara').textContent = 'Para: ' + paraQuienNota(this.value); });
+}
+function dictarNotaC() {
+  var SR = window.SpeechRecognition || window.webkitSpeechRecognition; if (!SR) return;
+  if (NRC.rec) { try { NRC.rec.stop(); } catch (e) {} return; }
+  var rec = new SR(), ta = $('nrcTexto'), base = ta.value ? ta.value.trim() + ' ' : '';
+  rec.lang = 'es-CL'; rec.interimResults = true; rec.continuous = false;
+  rec.onresult = function (e) { var s = ''; for (var i = 0; i < e.results.length; i++) s += e.results[i][0].transcript; var x = $('nrcTexto'); if (!x) return; x.value = (base + s).slice(0, 300); $('nrcPara').textContent = 'Para: ' + paraQuienNota(x.value); };
+  rec.onerror = function (e) { toast('No se pudo dictar' + (e && e.error === 'not-allowed' ? ': permite el micrófono' : '') + '.', true); };
+  rec.onend = function () { NRC.rec = null; var b = $('nrcDictar'); if (b) b.textContent = '🎙 Dictar'; };
+  NRC.rec = rec; var b = $('nrcDictar'); if (b) b.textContent = '■ Detener';
+  try { rec.start(); } catch (e) { NRC.rec = null; if (b) b.textContent = '🎙 Dictar'; }
+}
+function enviarNotaC() {
+  var texto = String(($('nrcTexto') || {}).value || '').replace(/\s+/g, ' ').trim();
+  if (!texto) { toast('Escribe o dicta la nota.', true); return; }
+  if (NRC.rec) { try { NRC.rec.stop(); } catch (e) {} }
+  NRC.enviando = true; pintarNotaRapida();
+  api('nota_rapida', { op_id: NRC.op, texto: texto, ahora: Date.now() }).then(function (d) {
+    NRC = { on: false, op: null, rec: null, enviando: false }; pintar();
+    toast('Nota enviada · para ' + (d.para || []).join(' y ') + (d.sin_hora ? ' · mañana 9:00' : '') + '.');
+  }).catch(function (e) {
+    NRC.enviando = false; pintarNotaRapida();
+    toast((navigator.onLine ? 'No se envió: ' + ((e && e.message) || 'error') : 'Sin señal: no se envió. Inténtalo de nuevo con señal') + '.', true);
+  });
+}
+
 document.addEventListener('click', function (ev) {
   var el = ev.target.closest('[data-a]'); if (!el) return;
   var a = el.getAttribute('data-a');
+  if (a === 'nr') { NRC = { on: true, op: uid(), rec: null, enviando: false }; pintar(); var tx = $('nrcTexto'); if (tx) tx.focus(); return; }
+  if (a === 'nr-dictar') { dictarNotaC(); return; }
+  if (a === 'nr-enviar') { enviarNotaC(); return; }
+  if (a === 'nr-cancelar') { if (NRC.rec) { try { NRC.rec.stop(); } catch (e) {} } NRC = { on: false, op: null, rec: null, enviando: false }; pintar(); return; }
   if (a !== 'quitar') leerForm();
   if (a === 'nota') { var t = $('cTexto'); if (t) t.focus(); }
   else if (a === 'foto') $('fFoto').click();
